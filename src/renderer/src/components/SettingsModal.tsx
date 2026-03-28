@@ -4,8 +4,8 @@ import {
   GearSix,
   Keyboard,
   Info,
-  CaretDown,
 } from '@phosphor-icons/react'
+import { SelectField } from './SelectField'
 
 const MODEL_OPTIONS = [
   { value: 'auto', label: 'Auto (recommended)' },
@@ -92,8 +92,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     saveSettings(updated)
   }
 
-  const selectClasses =
-    'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring appearance-none cursor-pointer'
+  const selectButtonClasses =
+    'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
+
+  const selectMenuClasses =
+    'absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   const inputClasses =
     'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle'
@@ -146,20 +149,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   Default Model
                 </label>
                 <div className="relative">
-                  <select
+                  <SelectField
                     value={settings.model}
-                    onChange={(event) => updateSettings({ model: event.target.value })}
-                    className={selectClasses}
-                  >
-                    {MODEL_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <CaretDown
-                    size={14}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+                    onChange={(value) => updateSettings({ model: value })}
+                    options={MODEL_OPTIONS}
+                    buttonClassName={selectButtonClasses}
+                    menuClassName={selectMenuClasses}
                   />
                 </div>
               </div>
@@ -170,20 +165,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   Default Editor
                 </label>
                 <div className="relative">
-                  <select
+                  <SelectField
                     value={settings.editor}
-                    onChange={(event) => updateSettings({ editor: event.target.value })}
-                    className={selectClasses}
-                  >
-                    {EDITOR_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <CaretDown
-                    size={14}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+                    onChange={(value) => updateSettings({ editor: value })}
+                    options={EDITOR_OPTIONS}
+                    buttonClassName={selectButtonClasses}
+                    menuClassName={selectMenuClasses}
                   />
                 </div>
                 {settings.editor === 'custom' && (
