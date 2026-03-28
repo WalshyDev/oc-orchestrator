@@ -6,6 +6,42 @@ import type {
   AgentStatusesPayload
 } from '../types/api'
 
+interface HistoricalMessageInfo {
+  id: string
+  sessionID: string
+  role: 'user' | 'assistant'
+  time?: {
+    created?: number
+  }
+  modelID?: string
+  cost?: number
+  tokens?: {
+    input: number
+    output: number
+  }
+}
+
+interface HistoricalMessagePart {
+  id: string
+  type: string
+  text?: string
+  tool?: string
+  state?: {
+    status?: string
+    output?: string
+    error?: string
+    title?: string
+    raw?: string
+  }
+  reason?: string
+  snapshot?: string
+}
+
+interface HistoricalSessionMessage {
+  info: HistoricalMessageInfo
+  parts: HistoricalMessagePart[]
+}
+
 // ── Agent State ──
 
 export interface LiveAgent {
@@ -137,7 +173,7 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
     case 'session.idle':
       return 'Session became idle'
     case 'session.error':
-      return `Session encountered an error`
+      return 'Session encountered an error'
     case 'session.completed':
       return 'Session completed'
     case 'session.updated':
@@ -155,7 +191,7 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
     case 'permission.updated':
       return `Permission requested: ${props.title ?? props.type ?? 'unknown'}`
     case 'permission.replied':
-      return `Permission resolved`
+      return 'Permission resolved'
     case 'file.edited':
       return `File edited: ${props.file ?? props.path ?? 'unknown'}`
     case 'file.created':
@@ -211,6 +247,95 @@ function trackFileChange(sessionId: string, filePath: string, action: FileChange
     timestamp: Date.now()
   })
   state.fileChanges.set(sessionId, changes)
+}
+
+function upsertMessage(message: LiveMessage): LiveMessage {
+  const messages = state.messages.get(message.sessionId) ?? []
+  const existingMessage = messages.find((candidate) => candidate.id === message.id)
+
+  if (existingMessage) {
+    existingMessage.role = message.role
+    existingMessage.createdAt = message.createdAt
+    return existingMessage
+  }
+
+  messages.push(message)
+  messages.sort((left, right) => left.createdAt - right.createdAt)
+  state.messages.set(message.sessionId, messages)
+  return message
+}
+
+function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): void {
+  const existingPart = message.parts.find((candidate) => candidate.id === nextPart.id)
+  if (existingPart) {
+    existingPart.type = nextPart.type
+    existingPart.text = nextPart.text
+    existingPart.toolName = nextPart.toolName
+    existingPart.toolState = nextPart.toolState
+    return
+  }
+
+  message.parts.push(nextPart)
+}
+
+function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
+  const nextPart: LiveMessagePart = {
+    id: part.id,
+    type: part.type,
+    text: part.text ?? part.reason ?? part.snapshot
+  }
+
+  if (part.type === 'tool') {
+    nextPart.toolName = part.tool
+    nextPart.toolState = part.state?.status
+    nextPart.text = part.text ?? part.state?.output ?? part.state?.error ?? part.state?.title ?? part.state?.raw
+  }
+
+  return nextPart
+}
+
+function hydrateHistoricalMessages(entries: unknown): void {
+  if (!Array.isArray(entries)) return
+
+  for (const entry of entries as HistoricalSessionMessage[]) {
+    if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
+
+    const createdAt = entry.info.time?.created ?? Date.now()
+    const message = upsertMessage({
+      id: entry.info.id,
+      role: entry.info.role,
+      sessionId: entry.info.sessionID,
+      createdAt,
+      parts: []
+    })
+
+    for (const part of entry.parts) {
+      if (!part?.id || !part.type) continue
+      upsertMessagePart(message, mapHistoricalPart(part))
+    }
+
+    const agent = findAgentBySession(entry.info.sessionID)
+    if (!agent) continue
+
+    agent.lastActivityAt = Math.max(agent.lastActivityAt, createdAt)
+
+    if (entry.info.role === 'assistant') {
+      if (typeof entry.info.cost === 'number') {
+        agent.cost = entry.info.cost
+      }
+
+      if (entry.info.tokens) {
+        agent.tokens = {
+          input: entry.info.tokens.input,
+          output: entry.info.tokens.output
+        }
+      }
+
+      if (entry.info.modelID) {
+        agent.model = formatModelName(entry.info.modelID)
+      }
+    }
+  }
 }
 
 // ── Event Processing ──
@@ -654,7 +779,21 @@ export function useAgentStore() {
 
       if (agentsResult.ok && agentsResult.data) {
         for (const agent of agentsResult.data) {
-          upsertAgent(agent)
+          upsertAgent(agent, 'idle')
+          shouldEmit = true
+        }
+
+        const messageResults = await Promise.all(
+          agentsResult.data.map(async (agent) => ({
+            result: await window.api.getMessages(agent.id)
+          }))
+        )
+
+        if (cancelled) return
+
+        for (const { result } of messageResults) {
+          if (!result.ok) continue
+          hydrateHistoricalMessages(result.data)
           shouldEmit = true
         }
       }
