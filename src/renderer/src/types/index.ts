@@ -1,3 +1,5 @@
+import type { ToolCall } from '../components/ToolsUsage'
+
 export type AgentStatus =
   | 'starting'
   | 'running'
@@ -50,11 +52,12 @@ export interface Interrupt {
 
 export interface Message {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'tool-group'
   content: string
   timestamp: string
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
+  toolCalls?: ToolCall[]
 }
 
 export function isBlocked(status: AgentStatus): boolean {

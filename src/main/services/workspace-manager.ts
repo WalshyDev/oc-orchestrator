@@ -8,6 +8,10 @@ export interface WorktreeInfo {
   branchName: string
 }
 
+export interface FreshWorktreeInfo extends WorktreeInfo {
+  baseRef: string
+}
+
 export interface WorktreeListEntry {
   path: string
   head: string
@@ -73,6 +77,47 @@ class WorkspaceManager {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`[WorkspaceManager] Failed to create worktree: ${message}`)
       throw new Error(`Failed to create worktree: ${message}`)
+    }
+  }
+
+  /**
+   * Creates a fresh worktree based on the latest default branch from origin.
+   */
+  createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string): FreshWorktreeInfo {
+    const timestamp = Date.now()
+    const branchName = `${projectSlug}/${taskSlug}-${timestamp}`
+    const worktreeRoot = this.getWorktreeRoot()
+    const worktreePath = path.join(worktreeRoot, projectSlug, `${taskSlug}-${timestamp}`)
+
+    try {
+      const parentDir = path.dirname(worktreePath)
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true })
+      }
+
+      execSync('git fetch origin --prune', {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      })
+
+      const baseRef = this.getDefaultBaseRef(repoRoot)
+
+      console.log(`[WorkspaceManager] Creating fresh worktree at ${worktreePath} from ${baseRef}`)
+
+      execSync(`git worktree add -b "${branchName}" "${worktreePath}" "${baseRef}"`, {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      })
+
+      console.log('[WorkspaceManager] Fresh worktree created successfully')
+
+      return { worktreePath, branchName, baseRef }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[WorkspaceManager] Failed to create fresh worktree: ${message}`)
+      throw new Error(`Failed to create fresh worktree: ${message}`)
     }
   }
 
@@ -200,6 +245,20 @@ class WorkspaceManager {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`[WorkspaceManager] Failed to get current branch: ${message}`)
       throw new Error(`Failed to get current branch: ${message}`)
+    }
+  }
+
+  private getDefaultBaseRef(repoRoot: string): string {
+    try {
+      const remoteHead = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      }).trim()
+
+      return remoteHead.replace('refs/remotes/', '')
+    } catch {
+      return 'origin/main'
     }
   }
 

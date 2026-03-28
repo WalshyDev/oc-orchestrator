@@ -163,6 +163,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('workspace:repo-root', async (_event, directory: string) => {
+    try {
+      const repoRoot = workspaceManager.getRepoRoot(directory)
+      return { ok: true, data: repoRoot }
+    } catch (error) {
+      console.error('[IPC] workspace:repo-root failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('workspace:create', async (_event, options: {
     repoRoot: string
     projectSlug: string
@@ -173,6 +183,20 @@ export function registerIpcHandlers(): void {
       return { ok: true, data: result }
     } catch (error) {
       console.error('[IPC] workspace:create failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('workspace:create-fresh', async (_event, options: {
+    repoRoot: string
+    projectSlug: string
+    taskSlug: string
+  }) => {
+    try {
+      const result = workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] workspace:create-fresh failed:', error)
       return { ok: false, error: String(error) }
     }
   })

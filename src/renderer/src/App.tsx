@@ -28,6 +28,36 @@ const CREATE_PR_PROMPT = `Prepare this work for review.
 
 Return the final PR URL or manual URL, plus a short note on what you committed.`
 
+const NEW_AGENT_COMMAND = '/new'
+
+function sanitizeSlugSegment(value: string, fallback: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  return sanitized || fallback
+}
+
+function mapToolState(toolState?: string): ToolCall['state'] {
+  if (toolState === 'completed') return 'completed'
+  if (toolState === 'error' || toolState === 'failed') return 'failed'
+  return 'running'
+}
+
+function buildToolCall(partId: string, toolName: string | undefined, toolState: string | undefined, text: string | undefined, timestamp: number): ToolCall {
+  return {
+    id: partId,
+    name: toolName ?? 'unknown',
+    state: mapToolState(toolState),
+    input: undefined,
+    output: text ?? undefined,
+    timestamp
+  }
+}
+
 export function App() {
   const [filter, setFilter] = useState<FilterValue>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -165,15 +195,36 @@ export function App() {
     if (!liveAgent) return []
 
     const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
-    return liveMessages.flatMap((msg): Message[] => {
+    const transcriptItems: Message[] = []
+    let pendingToolCalls: ToolCall[] = []
+
+    const flushPendingToolCalls = (anchorId: string, timestamp: number) => {
+      if (pendingToolCalls.length === 0) return
+
+      transcriptItems.push({
+        id: `${anchorId}-tools`,
+        role: 'tool-group',
+        content: `${pendingToolCalls.length} tool call${pendingToolCalls.length === 1 ? '' : 's'}`,
+        timestamp: formatTimeAgo(timestamp),
+        toolCalls: pendingToolCalls
+      })
+
+      pendingToolCalls = []
+    }
+
+    for (const msg of liveMessages) {
       const textContent = msg.parts
         .filter((part) => part.type === 'text' && part.text)
         .map((part) => part.text!)
         .join('\n')
 
-      const transcriptItems: Message[] = []
+      const toolCalls = msg.parts
+        .filter((part) => part.type === 'tool')
+        .map((part) => buildToolCall(part.id, part.toolName, part.toolState, part.text, msg.createdAt))
 
       if (textContent.trim()) {
+        flushPendingToolCalls(msg.id, msg.createdAt)
+
         transcriptItems.push({
           id: msg.id,
           role: msg.role,
@@ -182,27 +233,21 @@ export function App() {
         })
       }
 
-      for (const part of msg.parts) {
-        if (part.type !== 'tool' || !part.toolName) continue
-
-        const toolState = part.toolState === 'completed'
-          ? 'completed'
-          : part.toolState === 'error'
-            ? 'failed'
-            : 'running'
-
-        transcriptItems.push({
-          id: part.id,
-          role: 'tool',
-          content: part.text ?? '',
-          timestamp: formatTimeAgo(msg.createdAt),
-          toolName: part.toolName,
-          toolState
-        })
+      if (toolCalls.length > 0) {
+        pendingToolCalls.push(...toolCalls)
       }
 
-      return transcriptItems
-    })
+      if (!textContent.trim() && pendingToolCalls.length > 0 && msg === liveMessages[liveMessages.length - 1]) {
+        flushPendingToolCalls(msg.id, msg.createdAt)
+      }
+    }
+
+    if (liveMessages.length > 0) {
+      const lastMessage = liveMessages[liveMessages.length - 1]
+      flushPendingToolCalls(lastMessage.id, lastMessage.createdAt)
+    }
+
+    return transcriptItems
   }, [selectedAgent, store])
 
   // ── Extract file changes from store messages ──
@@ -246,20 +291,7 @@ export function App() {
     for (const msg of liveMessages) {
       for (const part of msg.parts) {
         if (part.type === 'tool') {
-          const toolState = part.toolState === 'completed'
-            ? 'completed'
-            : part.toolState === 'error'
-              ? 'failed'
-              : 'running'
-
-          tools.push({
-            id: part.id,
-            name: part.toolName ?? 'unknown',
-            state: toolState as 'running' | 'completed' | 'failed',
-            input: undefined,
-            output: part.text ?? undefined,
-            timestamp: msg.createdAt
-          })
+          tools.push(buildToolCall(part.id, part.toolName, part.toolState, part.text, msg.createdAt))
         }
       }
     }
@@ -384,8 +416,47 @@ export function App() {
   // ── Detail drawer actions ──
   const handleSendMessage = useCallback(async (text: string) => {
     if (!selectedAgentId) return
+    const trimmedText = text.trim()
+
+    if (trimmedText === NEW_AGENT_COMMAND || trimmedText.startsWith(`${NEW_AGENT_COMMAND} `)) {
+      const liveAgent = findLiveAgent(selectedAgentId)
+      if (!liveAgent) return
+
+      const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim()
+      const repoRootResult = await window.api.getRepoRoot(liveAgent.directory)
+      if (!repoRootResult.ok || !repoRootResult.data) {
+        console.error('Failed to resolve repo root for /new:', repoRootResult.error)
+        return
+      }
+
+      const projectSlug = sanitizeSlugSegment(liveAgent.projectName, 'project')
+      const taskSlug = sanitizeSlugSegment(followUpPrompt || 'next-feature', 'next-feature')
+      const worktreeResult = await window.api.createFreshWorktree({
+        repoRoot: repoRootResult.data,
+        projectSlug,
+        taskSlug
+      })
+
+      if (!worktreeResult.ok || !worktreeResult.data) {
+        console.error('Failed to create fresh worktree for /new:', worktreeResult.error)
+        return
+      }
+
+      const launchResult = await store.launchAgent(
+        worktreeResult.data.worktreePath,
+        followUpPrompt || undefined,
+        undefined
+      )
+
+      if (launchResult?.ok && launchResult.data) {
+        const data = launchResult.data as { id: string }
+        setSelectedAgentId(data.id)
+      }
+      return
+    }
+
     await store.sendMessage(selectedAgentId, text)
-  }, [selectedAgentId, store])
+  }, [findLiveAgent, selectedAgentId, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
