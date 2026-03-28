@@ -47,12 +47,15 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Initialize the database (constructor runs migrations)
   console.log('[Main] Database initialized')
   database.logEvent(null, 'app:started')
 
   registerIpcHandlers()
+
+  await agentController.restorePersistedAgents()
+  console.log('[Main] Restored persisted agents')
 
   mainWindowRef = createWindow()
 

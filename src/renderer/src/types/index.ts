@@ -53,6 +53,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   timestamp: string
+  toolName?: string
+  toolState?: 'running' | 'completed' | 'failed'
 }
 
 export function isBlocked(status: AgentStatus): boolean {

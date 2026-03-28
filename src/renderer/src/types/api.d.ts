@@ -10,14 +10,15 @@ export interface OrchestratorApi {
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
-  listAgents: () => Promise<IpcResult>
-  getStatuses: () => Promise<IpcResult>
+  listAgents: () => Promise<IpcResult<ListAgentsPayload>>
+  getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
 
   // ── Workspace Operations ──
   validateGitRepo: (directory: string) => Promise<IpcResult<boolean>>
+  getWorktreeRoot: () => Promise<IpcResult<string>>
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string }>>
   removeWorktree: (options: { repoRoot: string; worktreePath: string }) => Promise<IpcResult>
   listWorktrees: (repoRoot: string) => Promise<IpcResult<WorktreeListEntry[]>>
@@ -99,6 +100,15 @@ export interface AgentLaunchedPayload {
   prompt: string
   title: string
 }
+
+export type ListAgentsPayload = AgentLaunchedPayload[]
+
+export type AgentStatusesPayload = Record<string, {
+  agentId: string
+  status: {
+    type: string
+  }
+}>
 
 export interface RuntimeStartedPayload {
   id: string

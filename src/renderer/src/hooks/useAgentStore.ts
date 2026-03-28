@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import type { AgentStatus, Interrupt } from '../types'
-import type { OpenCodeEventPayload, AgentLaunchedPayload } from '../types/api'
+import type { AgentStatus } from '../types'
+import type {
+  OpenCodeEventPayload,
+  AgentLaunchedPayload,
+  AgentStatusesPayload
+} from '../types/api'
 
 // ── Agent State ──
 
@@ -493,9 +497,15 @@ function processEvent(payload: OpenCodeEventPayload): void {
 }
 
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
+  upsertAgent(payload)
+  emit()
+}
+
+function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus): void {
   const directoryParts = payload.directory.split('/')
   const projectName = directoryParts[directoryParts.length - 1] ?? payload.directory
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
+  const existingAgent = state.agents.get(payload.id)
 
   // If the agent was launched with a prompt but no explicit title, derive name from prompt
   // If launched without either, mark as autoNamed so the first prompt can rename it
@@ -512,21 +522,35 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
     directory: payload.directory,
     name: hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName,
     projectName,
-    branchName: '',
-    taskSummary: hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...',
-    status: hasPrompt ? 'running' : 'idle',
-    model: 'starting...',
-    lastActivityAt: Date.now(),
-    cost: 0,
-    tokens: { input: 0, output: 0 },
+    branchName: existingAgent?.branchName ?? '',
+    taskSummary: existingAgent?.taskSummary ?? (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
+    status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
+    model: existingAgent?.model ?? 'starting...',
+    lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
+    cost: existingAgent?.cost ?? 0,
+    tokens: existingAgent?.tokens ?? { input: 0, output: 0 },
     autoNamed: !hasExplicitTitle
   }
 
   state.agents.set(payload.id, agent)
-  state.messages.set(payload.sessionId, [])
-  state.fileChanges.set(payload.sessionId, [])
-  state.eventLog.set(payload.sessionId, [])
-  emit()
+  if (!state.messages.has(payload.sessionId)) state.messages.set(payload.sessionId, [])
+  if (!state.fileChanges.has(payload.sessionId)) state.fileChanges.set(payload.sessionId, [])
+  if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
+}
+
+function applyStatuses(statuses: AgentStatusesPayload): void {
+  for (const statusEntry of Object.values(statuses)) {
+    const agent = state.agents.get(statusEntry.agentId)
+    if (!agent) continue
+
+    const nextStatus = mapSessionStatus(statusEntry.status.type)
+    agent.status = nextStatus
+    if (nextStatus === 'needs_input' || nextStatus === 'needs_approval') {
+      agent.blockedSince = agent.blockedSince ?? Date.now()
+    } else {
+      agent.blockedSince = undefined
+    }
+  }
 }
 
 // ── Helpers ──
@@ -616,6 +640,33 @@ export function useAgentStore() {
   useEffect(() => {
     if (!window.api) return
 
+    let cancelled = false
+
+    const initializeAgents = async (): Promise<void> => {
+      const [agentsResult, statusesResult] = await Promise.all([
+        window.api.listAgents(),
+        window.api.getStatuses()
+      ])
+
+      if (cancelled) return
+
+      let shouldEmit = false
+
+      if (agentsResult.ok && agentsResult.data) {
+        for (const agent of agentsResult.data) {
+          upsertAgent(agent)
+          shouldEmit = true
+        }
+      }
+
+      if (statusesResult.ok && statusesResult.data) {
+        applyStatuses(statusesResult.data)
+        shouldEmit = true
+      }
+
+      if (shouldEmit) emit()
+    }
+
     const cleanups = [
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
@@ -626,7 +677,10 @@ export function useAgentStore() {
       })
     ]
 
+    void initializeAgents()
+
     return () => {
+      cancelled = true
       for (const cleanup of cleanups) cleanup()
     }
   }, [])

@@ -44,6 +44,9 @@ const api = {
   validateGitRepo: (directory: string): Promise<IpcResult<boolean>> =>
     ipcRenderer.invoke('workspace:validate-git', directory),
 
+  getWorktreeRoot: (): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('workspace:root'),
+
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string }>> =>
     ipcRenderer.invoke('workspace:create', options),
 

@@ -75,7 +75,8 @@ export function registerIpcHandlers(): void {
         runtimeId: agent.runtimeId,
         sessionId: agent.sessionId,
         directory: agent.directory,
-        prompt: agent.prompt
+        prompt: agent.prompt,
+        title: agent.title
       }))
     }
   })
@@ -136,6 +137,16 @@ export function registerIpcHandlers(): void {
       return { ok: true, data: isRepo }
     } catch (error) {
       console.error('[IPC] workspace:validate-git failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('workspace:root', async () => {
+    try {
+      const root = workspaceManager.getWorktreeRoot()
+      return { ok: true, data: root }
+    } catch (error) {
+      console.error('[IPC] workspace:root failed:', error)
       return { ok: false, error: String(error) }
     }
   })

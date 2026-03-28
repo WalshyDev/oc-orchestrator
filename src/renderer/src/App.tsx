@@ -165,15 +165,44 @@ export function App() {
     if (!liveAgent) return []
 
     const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
-    return liveMessages.map((msg): Message => ({
-      id: msg.id,
-      role: msg.role,
-      content: msg.parts
+    return liveMessages.flatMap((msg): Message[] => {
+      const textContent = msg.parts
         .filter((part) => part.type === 'text' && part.text)
         .map((part) => part.text!)
-        .join('\n'),
-      timestamp: formatTimeAgo(msg.createdAt)
-    }))
+        .join('\n')
+
+      const transcriptItems: Message[] = []
+
+      if (textContent.trim()) {
+        transcriptItems.push({
+          id: msg.id,
+          role: msg.role,
+          content: textContent,
+          timestamp: formatTimeAgo(msg.createdAt)
+        })
+      }
+
+      for (const part of msg.parts) {
+        if (part.type !== 'tool' || !part.toolName) continue
+
+        const toolState = part.toolState === 'completed'
+          ? 'completed'
+          : part.toolState === 'error'
+            ? 'failed'
+            : 'running'
+
+        transcriptItems.push({
+          id: part.id,
+          role: 'tool',
+          content: part.text ?? '',
+          timestamp: formatTimeAgo(msg.createdAt),
+          toolName: part.toolName,
+          toolState
+        })
+      }
+
+      return transcriptItems
+    })
   }, [selectedAgent, store])
 
   // ── Extract file changes from store messages ──

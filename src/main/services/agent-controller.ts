@@ -3,6 +3,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk/client'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
+import { database } from './database'
 
 export interface AgentHandle {
   id: string
@@ -10,8 +11,19 @@ export interface AgentHandle {
   sessionId: string
   directory: string
   prompt: string
+  title: string
   bridge: EventBridge
 }
+
+interface PersistedAgentHandle {
+  id: string
+  sessionId: string
+  directory: string
+  prompt: string
+  title: string
+}
+
+const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
 
 /**
  * High-level controller for managing individual agent instances.
@@ -21,6 +33,33 @@ class AgentController {
   private agents = new Map<string, AgentHandle>()
   private bridges = new Map<string, EventBridge>()
   private nextId = 1
+
+  async restorePersistedAgents(): Promise<void> {
+    const persistedAgents = this.loadPersistedAgents()
+    if (persistedAgents.length === 0) return
+
+    for (const persistedAgent of persistedAgents) {
+      try {
+        const runtime = await this.ensureBridgeForDirectory(persistedAgent.directory)
+        const handle: AgentHandle = {
+          id: persistedAgent.id,
+          runtimeId: runtime.id,
+          sessionId: persistedAgent.sessionId,
+          directory: persistedAgent.directory,
+          prompt: persistedAgent.prompt,
+          title: persistedAgent.title,
+          bridge: this.bridges.get(runtime.id)!
+        }
+
+        this.agents.set(handle.id, handle)
+        this.bumpNextId(handle.id)
+      } catch (error) {
+        console.error(`[AgentController] Failed to restore agent ${persistedAgent.id}:`, error)
+      }
+    }
+
+    this.persistAgents()
+  }
 
   /**
    * Launch a new agent in the given project directory.
@@ -35,15 +74,8 @@ class AgentController {
     const { directory, prompt, title } = options
 
     // Ensure we have a runtime for this directory
-    const runtime = await runtimeManager.ensureRuntime(directory)
+    const runtime = await this.ensureBridgeForDirectory(directory)
     const client = runtime.client
-
-    // Ensure we have an event bridge for this runtime
-    if (!this.bridges.has(runtime.id)) {
-      const bridge = new EventBridge(runtime.id, directory, client)
-      this.bridges.set(runtime.id, bridge)
-      bridge.start()
-    }
 
     // Derive a session title
     const projectSlug = directory.split('/').pop() ?? 'project'
@@ -69,10 +101,12 @@ class AgentController {
       sessionId: session.id,
       directory,
       prompt: prompt ?? '',
+      title: sessionTitle,
       bridge: this.bridges.get(runtime.id)!
     }
 
     this.agents.set(agentId, handle)
+    this.persistAgents()
 
     // Only send the initial prompt if one was provided
     if (prompt && prompt.trim()) {
@@ -88,10 +122,10 @@ class AgentController {
     this.broadcastToRenderer('agent:launched', {
       id: agentId,
       runtimeId: runtime.id,
-      sessionId: session.id,
-      directory,
-      prompt: prompt ?? '',
-      title: sessionTitle
+        sessionId: session.id,
+        directory,
+        prompt: prompt ?? '',
+        title: sessionTitle
     })
 
     console.log(`[AgentController] Launched agent ${agentId} (session ${session.id}) in ${directory}`)
@@ -240,6 +274,7 @@ class AgentController {
    */
   removeAgent(agentId: string): void {
     this.agents.delete(agentId)
+    this.persistAgents()
   }
 
   /**
@@ -280,6 +315,62 @@ class AgentController {
    */
   updateBadgeCount(blockedCount: number): void {
     notificationService.updateBadgeCount(blockedCount)
+  }
+
+  private async ensureBridgeForDirectory(directory: string): Promise<RuntimeInfo> {
+    const runtime = await runtimeManager.ensureRuntime(directory)
+
+    if (!this.bridges.has(runtime.id)) {
+      const bridge = new EventBridge(runtime.id, directory, runtime.client)
+      this.bridges.set(runtime.id, bridge)
+      await bridge.start()
+    }
+
+    return runtime
+  }
+
+  private loadPersistedAgents(): PersistedAgentHandle[] {
+    const rawValue = database.getPreference(ACTIVE_AGENTS_PREFERENCE_KEY)
+    if (!rawValue) return []
+
+    try {
+      const parsedValue = JSON.parse(rawValue) as unknown
+      if (!Array.isArray(parsedValue)) return []
+
+      return parsedValue.filter((candidate): candidate is PersistedAgentHandle => {
+        if (!candidate || typeof candidate !== 'object') return false
+
+        const agent = candidate as Record<string, unknown>
+        return typeof agent.id === 'string'
+          && typeof agent.sessionId === 'string'
+          && typeof agent.directory === 'string'
+          && typeof agent.prompt === 'string'
+          && typeof agent.title === 'string'
+      })
+    } catch (error) {
+      console.error('[AgentController] Failed to parse persisted agents:', error)
+      return []
+    }
+  }
+
+  private persistAgents(): void {
+    const persistedAgents: PersistedAgentHandle[] = Array.from(this.agents.values()).map((agent) => ({
+      id: agent.id,
+      sessionId: agent.sessionId,
+      directory: agent.directory,
+      prompt: agent.prompt,
+      title: agent.title
+    }))
+
+    database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))
+  }
+
+  private bumpNextId(agentId: string): void {
+    const match = agentId.match(/^agent-(\d+)$/)
+    const numericId = match ? Number.parseInt(match[1], 10) : Number.NaN
+    if (!Number.isNaN(numericId)) {
+      this.nextId = Math.max(this.nextId, numericId + 1)
+    }
   }
 
   private broadcastToRenderer(channel: string, data: unknown): void {

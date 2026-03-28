@@ -308,15 +308,20 @@ function Tab({
 
 function MessageBubble({ message }: { message: Message }) {
   if (message.role === 'tool') {
-    const toolName = extractToolName(message.content)
-    const toolOutput = extractToolOutput(message.content)
+    const toolName = message.toolName ?? extractToolName(message.content)
+    const toolOutput = message.content ? extractToolOutput(message.content) : ''
+    const toolIconClass = message.toolState === 'failed'
+      ? 'text-kumo-danger'
+      : message.toolState === 'completed'
+        ? 'text-kumo-success'
+        : 'text-kumo-link animate-spin'
 
     return (
       <div className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
         <div className="flex items-center gap-1.5 mb-0.5">
           <Wrench size={11} className="shrink-0" />
           <span className="font-semibold text-kumo-default">{toolName}</span>
-          <CircleNotch size={11} className="text-kumo-success" />
+          <CircleNotch size={11} className={toolIconClass} />
         </div>
         {toolOutput && (
           <div className="whitespace-pre-wrap break-all mt-1">{toolOutput}</div>

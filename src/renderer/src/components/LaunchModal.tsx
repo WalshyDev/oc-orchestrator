@@ -34,12 +34,26 @@ function saveRecentDir(dir: string): void {
   localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_DIRS)))
 }
 
-function computeWorktreePath(directory: string, title: string): string {
-  if (!directory) return ''
-  const base = directory.replace(/\/$/, '')
-  const slug = title.trim() || 'agent'
-  const sanitized = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
-  return `${base}/../.worktrees/${sanitized}`
+function sanitizePathSegment(value: string, fallback: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  return sanitized || fallback
+}
+
+function computeWorktreePath(worktreeRoot: string, directory: string, title: string): string {
+  if (!worktreeRoot || !directory) return ''
+
+  const directoryParts = directory.replace(/\/$/, '').split('/').filter(Boolean)
+  const projectName = directoryParts.length > 0 ? directoryParts[directoryParts.length - 1] : 'project'
+  const projectSlug = sanitizePathSegment(projectName, 'project')
+  const taskSlug = sanitizePathSegment(title || 'agent', 'agent')
+
+  return `${worktreeRoot}/${projectSlug}/${taskSlug}-<timestamp>`
 }
 
 interface LaunchModalProps {
@@ -60,11 +74,33 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [showRecentDirs, setShowRecentDirs] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
+  const [worktreeRoot, setWorktreeRoot] = useState('')
 
   const estimatedWorktreePath = useMemo(() => {
     if (worktreeStrategy !== 'new-worktree') return ''
-    return computeWorktreePath(directory, title)
-  }, [directory, title, worktreeStrategy])
+    return computeWorktreePath(worktreeRoot, directory, title)
+  }, [directory, title, worktreeRoot, worktreeStrategy])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadWorktreeRoot = async () => {
+      try {
+        const result = await window.api.getWorktreeRoot()
+        if (isMounted && result.ok && result.data) {
+          setWorktreeRoot(result.data)
+        }
+      } catch {
+        // ignore preview path failures
+      }
+    }
+
+    void loadWorktreeRoot()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!directory.trim()) {
