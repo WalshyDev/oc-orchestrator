@@ -1,0 +1,292 @@
+import { useState, useEffect, useMemo } from 'react'
+import { X, FolderOpen, CaretDown, Clock, Warning } from '@phosphor-icons/react'
+
+const MODEL_OPTIONS = [
+  { value: 'auto', label: 'Auto (recommended)' },
+  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+  { value: 'claude-opus-4-20250515', label: 'Claude Opus 4' },
+  { value: 'claude-haiku-3-20240307', label: 'Claude Haiku 3' },
+] as const
+
+type ModelOption = (typeof MODEL_OPTIONS)[number]['value']
+
+type WorktreeStrategy = 'new-worktree' | 'current-directory'
+
+const RECENT_DIRS_KEY = 'oc-orchestrator:recent-directories'
+const MAX_RECENT_DIRS = 5
+
+function loadRecentDirs(): string[] {
+  try {
+    const stored = localStorage.getItem(RECENT_DIRS_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) return parsed.slice(0, MAX_RECENT_DIRS)
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return []
+}
+
+function saveRecentDir(dir: string): void {
+  const recent = loadRecentDirs().filter((entry) => entry !== dir)
+  recent.unshift(dir)
+  localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_DIRS)))
+}
+
+function computeWorktreePath(directory: string, title: string): string {
+  if (!directory) return ''
+  const base = directory.replace(/\/$/, '')
+  const slug = title.trim() || 'agent'
+  const sanitized = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
+  return `${base}/../.worktrees/${sanitized}`
+}
+
+interface LaunchModalProps {
+  onClose: () => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string) => void
+  onSelectDirectory: () => Promise<string | null>
+  onValidateDirectory?: (dir: string) => Promise<boolean>
+}
+
+export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory }: LaunchModalProps) {
+  const [directory, setDirectory] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [title, setTitle] = useState('')
+  const [model, setModel] = useState<ModelOption>('auto')
+  const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
+  const [launching, setLaunching] = useState(false)
+  const [recentDirs] = useState<string[]>(loadRecentDirs)
+  const [showRecentDirs, setShowRecentDirs] = useState(false)
+  const [dirError, setDirError] = useState<string | null>(null)
+  const [validating, setValidating] = useState(false)
+
+  const estimatedWorktreePath = useMemo(() => {
+    if (worktreeStrategy !== 'new-worktree') return ''
+    return computeWorktreePath(directory, title)
+  }, [directory, title, worktreeStrategy])
+
+  useEffect(() => {
+    if (!directory.trim()) {
+      setDirError(null)
+      return
+    }
+
+    const timer = setTimeout(async () => {
+      if (onValidateDirectory) {
+        setValidating(true)
+        try {
+          const isValid = await onValidateDirectory(directory.trim())
+          if (!isValid) {
+            setDirError('This directory is not a valid git repository.')
+          } else {
+            setDirError(null)
+          }
+        } catch {
+          setDirError('Could not validate directory.')
+        } finally {
+          setValidating(false)
+        }
+      }
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [directory, onValidateDirectory])
+
+  const handleLaunch = async () => {
+    if (!directory.trim() || dirError) return
+    setLaunching(true)
+    saveRecentDir(directory.trim())
+    try {
+      await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy)
+      onClose()
+    } catch (error) {
+      console.error('Launch failed:', error)
+      setLaunching(false)
+    }
+  }
+
+  const handleBrowse = async () => {
+    const selected = await onSelectDirectory()
+    if (selected) setDirectory(selected)
+  }
+
+  const handleSelectRecentDir = (dir: string) => {
+    setDirectory(dir)
+    setShowRecentDirs(false)
+  }
+
+  const selectClasses =
+    'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring appearance-none cursor-pointer'
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="w-[560px] max-h-[85vh] bg-kumo-elevated border border-kumo-line rounded-xl shadow-2xl flex flex-col"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-kumo-line">
+          <h2 className="text-base font-semibold text-kumo-strong">Launch New Agent</h2>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-md border border-kumo-line text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto">
+          {/* Directory */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Project Directory
+            </label>
+            <div className="relative flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={directory}
+                  onChange={(event) => setDirectory(event.target.value)}
+                  onFocus={() => recentDirs.length > 0 && setShowRecentDirs(true)}
+                  onBlur={() => setTimeout(() => setShowRecentDirs(false), 200)}
+                  placeholder="/path/to/project"
+                  className={`w-full px-3 py-2 bg-kumo-control border rounded-md text-sm text-kumo-default font-mono outline-none focus:border-kumo-ring placeholder:text-kumo-subtle ${
+                    dirError ? 'border-kumo-danger' : 'border-kumo-line'
+                  }`}
+                />
+                {/* Recent directories dropdown */}
+                {showRecentDirs && recentDirs.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-kumo-overlay border border-kumo-line rounded-md shadow-xl z-10 overflow-hidden">
+                    <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock size={10} />
+                      Recent
+                    </div>
+                    {recentDirs.map((recentDir) => (
+                      <button
+                        key={recentDir}
+                        onMouseDown={() => handleSelectRecentDir(recentDir)}
+                        className="w-full px-3 py-1.5 text-left text-xs font-mono text-kumo-default hover:bg-kumo-fill transition-colors truncate"
+                      >
+                        {recentDir}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleBrowse}
+                className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors"
+              >
+                <FolderOpen size={16} />
+              </button>
+            </div>
+            {validating && (
+              <p className="text-[11px] text-kumo-subtle">Validating directory...</p>
+            )}
+            {dirError && (
+              <p className="text-[11px] text-kumo-danger flex items-center gap-1">
+                <Warning size={12} />
+                {dirError}
+              </p>
+            )}
+          </div>
+
+          {/* Branch / Worktree Strategy */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Branch Strategy
+            </label>
+            <div className="relative">
+              <select
+                value={worktreeStrategy}
+                onChange={(event) => setWorktreeStrategy(event.target.value as WorktreeStrategy)}
+                className={selectClasses}
+              >
+                <option value="new-worktree">New Worktree (recommended)</option>
+                <option value="current-directory">Use Current Directory</option>
+              </select>
+              <CaretDown
+                size={14}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+              />
+            </div>
+            {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
+              <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
+                Worktree path: {estimatedWorktreePath}
+              </p>
+            )}
+          </div>
+
+          {/* Model */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
+            <div className="relative">
+              <select
+                value={model}
+                onChange={(event) => setModel(event.target.value as ModelOption)}
+                className={selectClasses}
+              >
+                {MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <CaretDown
+                size={14}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+              />
+            </div>
+          </div>
+
+          {/* Title (optional) */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Agent Name <span className="text-kumo-subtle/60">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="auth-refactor"
+              className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
+            />
+          </div>
+
+          {/* Prompt */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Initial Prompt <span className="text-kumo-subtle/60">(optional — you can prompt from the session)</span>
+            </label>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Leave empty to start an interactive session..."
+              rows={3}
+              className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-kumo-line">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-medium text-kumo-subtle border border-kumo-line rounded-md hover:bg-kumo-fill transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleLaunch}
+            disabled={!directory.trim() || launching || !!dirError}
+            className="px-4 py-2 text-xs font-medium text-white bg-kumo-brand rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {launching ? 'Launching...' : 'Launch Agent'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

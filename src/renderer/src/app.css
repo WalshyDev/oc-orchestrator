@@ -1,0 +1,103 @@
+@import 'tailwindcss';
+
+@source "../src/**/*.{ts,tsx}";
+
+@theme {
+  /* ── Kumo Semantic Tokens ── */
+  --color-kumo-base: #0a0a0b;
+  --color-kumo-elevated: #111113;
+  --color-kumo-overlay: #18181b;
+  --color-kumo-contrast: #ffffff;
+  --color-kumo-control: #1e1e22;
+  --color-kumo-fill: #27272a;
+  --color-kumo-fill-hover: #303035;
+  --color-kumo-tint: #1a1a2e;
+
+  --color-kumo-brand: #f97316;
+  --color-kumo-brand-hover: #fb923c;
+  --color-kumo-interact: #2563eb;
+  --color-kumo-danger: #ef4444;
+  --color-kumo-success: #22c55e;
+  --color-kumo-warning: #eab308;
+
+  --color-kumo-default: #e4e4e7;
+  --color-kumo-strong: #fafafa;
+  --color-kumo-subtle: #71717a;
+  --color-kumo-link: #60a5fa;
+  --color-kumo-line: #27272a;
+  --color-kumo-ring: #3b82f6;
+
+  /* Status variant colors */
+  --color-status-running: #4ade80;
+  --color-status-running-bg: rgba(34, 197, 94, 0.1);
+  --color-status-input: #f87171;
+  --color-status-input-bg: rgba(239, 68, 68, 0.1);
+  --color-status-approval: #fb923c;
+  --color-status-approval-bg: rgba(249, 115, 22, 0.1);
+  --color-status-idle: #facc15;
+  --color-status-idle-bg: rgba(234, 179, 8, 0.1);
+  --color-status-completed: #86efac;
+  --color-status-completed-bg: rgba(34, 197, 94, 0.06);
+  --color-status-errored: #f87171;
+  --color-status-errored-bg: rgba(239, 68, 68, 0.1);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ── Base ── */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-kumo-base);
+  color: var(--color-kumo-default);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Draggable Title Bar Region ── */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-kumo-fill);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-kumo-fill-hover);
+}
+
+/* ── Pulse Animation ── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(37, 99, 235, 0.3);
+}
