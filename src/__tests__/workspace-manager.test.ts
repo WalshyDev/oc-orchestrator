@@ -7,11 +7,6 @@ import fs from 'fs'
 // ── Extracted WorkspaceManager for testing ──
 // Mirrors src/main/services/workspace-manager.ts but without the singleton export
 
-interface WorktreeInfo {
-  worktreePath: string
-  branchName: string
-}
-
 class WorkspaceManager {
   private claimedWorktrees = new Set<string>()
 
