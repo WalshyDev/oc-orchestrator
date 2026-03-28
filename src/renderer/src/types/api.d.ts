@@ -19,7 +19,9 @@ export interface OrchestratorApi {
   // ── Workspace Operations ──
   validateGitRepo: (directory: string) => Promise<IpcResult<boolean>>
   getWorktreeRoot: () => Promise<IpcResult<string>>
+  getRepoRoot: (directory: string) => Promise<IpcResult<string>>
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string }>>
+  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>>
   removeWorktree: (options: { repoRoot: string; worktreePath: string }) => Promise<IpcResult>
   listWorktrees: (repoRoot: string) => Promise<IpcResult<WorktreeListEntry[]>>
   getWorktreeStatus: (worktreePath: string) => Promise<IpcResult<WorktreeStatus>>

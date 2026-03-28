@@ -8,7 +8,9 @@ import {
   GitPullRequest,
   Terminal,
   Wrench,
-  CircleNotch
+  CircleNotch,
+  CaretDown,
+  CaretRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import type { LivePermission } from '../hooks/useAgentStore'
@@ -81,7 +83,7 @@ export function DetailDrawer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       handleSend()
     }
@@ -249,18 +251,23 @@ export function DetailDrawer({
 
         {/* Input */}
         <div className="flex gap-2 px-4 py-3 border-t border-kumo-line shrink-0">
-          <input
-            type="text"
-            value={inputText}
-            onChange={(event) => setInputText(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Send a message to this agent..."
-            className="flex-1 px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
-          />
+          <div className="flex-1 flex flex-col gap-1">
+            <textarea
+              value={inputText}
+              onChange={(event) => setInputText(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Send a message to this agent... Use /new to start clean."
+              rows={3}
+              className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
+            />
+            <div className="px-1 text-[10px] text-kumo-subtle">
+              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Type `/new` to start a fresh agent.
+            </div>
+          </div>
           <button
             onClick={handleSend}
             disabled={!inputText.trim()}
-            className="px-3 py-2 bg-kumo-brand text-white text-xs font-medium rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
+            className="self-start px-3 py-2 bg-kumo-brand text-white text-xs font-medium rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
           >
             Send
           </button>
@@ -307,6 +314,10 @@ function Tab({
 }
 
 function MessageBubble({ message }: { message: Message }) {
+  if (message.role === 'tool-group') {
+    return <ToolGroupBubble message={message} />
+  }
+
   if (message.role === 'tool') {
     const toolName = message.toolName ?? extractToolName(message.content)
     const toolOutput = message.content ? extractToolOutput(message.content) : ''
@@ -344,6 +355,46 @@ function MessageBubble({ message }: { message: Message }) {
         {isUser ? 'You' : 'Agent'}
       </div>
       <div className="whitespace-pre-wrap">{message.content}</div>
+    </div>
+  )
+}
+
+function ToolGroupBubble({ message }: { message: Message }) {
+  const [expanded, setExpanded] = useState(false)
+  const toolCalls = message.toolCalls ?? []
+
+  return (
+    <div className="max-w-[95%] self-start">
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
+      >
+        <span className="text-kumo-subtle">
+          {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+        </span>
+        <Wrench size={13} className="text-kumo-subtle" />
+        <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
+          {toolCalls.map((tool) => (
+            <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
+                <span className={`text-[10px] ${tool.state === 'failed' ? 'text-kumo-danger' : tool.state === 'completed' ? 'text-kumo-success' : 'text-kumo-link'}`}>
+                  {tool.state}
+                </span>
+              </div>
+              {tool.output && (
+                <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
+                  {tool.output}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

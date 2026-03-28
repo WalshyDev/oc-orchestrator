@@ -47,8 +47,14 @@ const api = {
   getWorktreeRoot: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('workspace:root'),
 
+  getRepoRoot: (directory: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('workspace:repo-root', directory),
+
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string }>> =>
     ipcRenderer.invoke('workspace:create', options),
+
+  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>> =>
+    ipcRenderer.invoke('workspace:create-fresh', options),
 
   removeWorktree: (options: { repoRoot: string; worktreePath: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('workspace:remove', options),
