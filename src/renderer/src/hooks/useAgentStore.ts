@@ -522,7 +522,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     directory: payload.directory,
     name: hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName,
     projectName,
-    branchName: existingAgent?.branchName ?? '',
+    branchName: existingAgent?.branchName ?? payload.branchName ?? '',
     taskSummary: existingAgent?.taskSummary ?? (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     model: existingAgent?.model ?? 'starting...',
@@ -696,16 +696,17 @@ export function useAgentStore() {
     } else if (result.data) {
       // Ensure the agent appears in the store immediately, even if the
       // IPC broadcast from main arrived before the listener was registered.
-      const data = result.data as { id: string; sessionId: string }
+      const data = result.data as AgentLaunchedPayload
       const projectSlug = directory.split('/').pop() ?? 'project'
       if (!state.agents.has(data.id)) {
         handleAgentLaunched({
           id: data.id,
-          runtimeId: '',
+          runtimeId: data.runtimeId,
           sessionId: data.sessionId,
-          directory,
-          prompt: prompt ?? '',
-          title: title ?? (prompt ? prompt.slice(0, 80) : projectSlug)
+          directory: data.directory ?? directory,
+          branchName: data.branchName ?? '',
+          prompt: data.prompt ?? prompt ?? '',
+          title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug)
         })
       }
     }

@@ -4,12 +4,14 @@ import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
 import { database } from './database'
+import { workspaceManager } from './workspace-manager'
 
 export interface AgentHandle {
   id: string
   runtimeId: string
   sessionId: string
   directory: string
+  branchName: string
   prompt: string
   title: string
   bridge: EventBridge
@@ -19,6 +21,7 @@ interface PersistedAgentHandle {
   id: string
   sessionId: string
   directory: string
+  branchName?: string
   prompt: string
   title: string
 }
@@ -46,6 +49,7 @@ class AgentController {
           runtimeId: runtime.id,
           sessionId: persistedAgent.sessionId,
           directory: persistedAgent.directory,
+          branchName: persistedAgent.branchName ?? this.getBranchName(persistedAgent.directory),
           prompt: persistedAgent.prompt,
           title: persistedAgent.title,
           bridge: this.bridges.get(runtime.id)!
@@ -100,6 +104,7 @@ class AgentController {
       runtimeId: runtime.id,
       sessionId: session.id,
       directory,
+      branchName: this.getBranchName(directory),
       prompt: prompt ?? '',
       title: sessionTitle,
       bridge: this.bridges.get(runtime.id)!
@@ -122,10 +127,11 @@ class AgentController {
     this.broadcastToRenderer('agent:launched', {
       id: agentId,
       runtimeId: runtime.id,
-        sessionId: session.id,
-        directory,
-        prompt: prompt ?? '',
-        title: sessionTitle
+      sessionId: session.id,
+      directory,
+      branchName: handle.branchName,
+      prompt: prompt ?? '',
+      title: sessionTitle
     })
 
     console.log(`[AgentController] Launched agent ${agentId} (session ${session.id}) in ${directory}`)
@@ -344,6 +350,7 @@ class AgentController {
         return typeof agent.id === 'string'
           && typeof agent.sessionId === 'string'
           && typeof agent.directory === 'string'
+          && (agent.branchName === undefined || typeof agent.branchName === 'string')
           && typeof agent.prompt === 'string'
           && typeof agent.title === 'string'
       })
@@ -358,6 +365,7 @@ class AgentController {
       id: agent.id,
       sessionId: agent.sessionId,
       directory: agent.directory,
+      branchName: agent.branchName,
       prompt: agent.prompt,
       title: agent.title
     }))
@@ -370,6 +378,14 @@ class AgentController {
     const numericId = match ? Number.parseInt(match[1], 10) : Number.NaN
     if (!Number.isNaN(numericId)) {
       this.nextId = Math.max(this.nextId, numericId + 1)
+    }
+  }
+
+  private getBranchName(directory: string): string {
+    try {
+      return workspaceManager.getCurrentBranch(directory)
+    } catch {
+      return ''
     }
   }
 

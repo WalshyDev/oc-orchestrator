@@ -19,7 +19,18 @@ export function registerIpcHandlers(): void {
   }) => {
     try {
       const handle = await agentController.launchAgent(options)
-      return { ok: true, data: { id: handle.id, sessionId: handle.sessionId } }
+      return {
+        ok: true,
+        data: {
+          id: handle.id,
+          runtimeId: handle.runtimeId,
+          sessionId: handle.sessionId,
+          directory: handle.directory,
+          branchName: handle.branchName,
+          prompt: handle.prompt,
+          title: handle.title
+        }
+      }
     } catch (error) {
       console.error('[IPC] agent:launch failed:', error)
       return { ok: false, error: String(error) }
@@ -75,6 +86,7 @@ export function registerIpcHandlers(): void {
         runtimeId: agent.runtimeId,
         sessionId: agent.sessionId,
         directory: agent.directory,
+        branchName: agent.branchName,
         prompt: agent.prompt,
         title: agent.title
       }))

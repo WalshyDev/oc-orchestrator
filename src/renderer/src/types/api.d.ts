@@ -97,6 +97,7 @@ export interface AgentLaunchedPayload {
   runtimeId: string
   sessionId: string
   directory: string
+  branchName: string
   prompt: string
   title: string
 }

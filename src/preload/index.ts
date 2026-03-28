@@ -100,7 +100,7 @@ const api = {
     return () => ipcRenderer.removeListener('opencode:event', handler)
   },
 
-  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; prompt: string; title: string }) => void) => {
+  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; branchName: string; prompt: string; title: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('agent:launched', handler)
     return () => ipcRenderer.removeListener('agent:launched', handler)
