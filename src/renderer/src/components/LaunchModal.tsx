@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { X, FolderOpen, CaretDown, Clock, Warning } from '@phosphor-icons/react'
+import { X, FolderOpen, Clock, Warning } from '@phosphor-icons/react'
+import { SelectField } from './SelectField'
 
 const MODEL_OPTIONS = [
   { value: 'auto', label: 'Auto (recommended)' },
@@ -152,8 +153,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     setShowRecentDirs(false)
   }
 
-  const selectClasses =
-    'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring appearance-none cursor-pointer'
+  const selectButtonClasses =
+    'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
+
+  const selectMenuClasses =
+    'absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -235,17 +239,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
               Branch Strategy
             </label>
             <div className="relative">
-              <select
+              <SelectField
                 value={worktreeStrategy}
-                onChange={(event) => setWorktreeStrategy(event.target.value as WorktreeStrategy)}
-                className={selectClasses}
-              >
-                <option value="new-worktree">New Worktree (recommended)</option>
-                <option value="current-directory">Use Current Directory</option>
-              </select>
-              <CaretDown
-                size={14}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+                onChange={(value) => setWorktreeStrategy(value as WorktreeStrategy)}
+                options={[
+                  { value: 'new-worktree', label: 'New Worktree (recommended)' },
+                  { value: 'current-directory', label: 'Use Current Directory' }
+                ]}
+                buttonClassName={selectButtonClasses}
+                menuClassName={selectMenuClasses}
               />
             </div>
             {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
@@ -259,20 +261,12 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
             <div className="relative">
-              <select
+              <SelectField
                 value={model}
-                onChange={(event) => setModel(event.target.value as ModelOption)}
-                className={selectClasses}
-              >
-                {MODEL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <CaretDown
-                size={14}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-kumo-subtle pointer-events-none"
+                onChange={(value) => setModel(value as ModelOption)}
+                options={MODEL_OPTIONS}
+                buttonClassName={selectButtonClasses}
+                menuClassName={selectMenuClasses}
               />
             </div>
           </div>
