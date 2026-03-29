@@ -293,9 +293,25 @@ class AgentController {
   }
 
   /**
-   * Remove an agent without aborting it.
+   * Remove an agent from orchestration and clean up its worktree when possible.
    */
-  removeAgent(agentId: string): void {
+  async removeAgent(agentId: string): Promise<void> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const otherAgents = Array.from(this.agents.values()).filter((agent) => agent.id !== agentId)
+    const hasRuntimePeers = otherAgents.some((agent) => agent.runtimeId === handle.runtimeId)
+    const hasDirectoryPeers = otherAgents.some((agent) => agent.directory === handle.directory)
+
+    if (!hasRuntimePeers) {
+      await this.stopRuntime(handle.runtimeId)
+    }
+
+    if (handle.isWorktree && !hasDirectoryPeers) {
+      const repoRoot = workspaceManager.getCommonRepoRoot(handle.directory)
+      workspaceManager.removeWorktree(repoRoot, handle.directory)
+    }
+
     this.agents.delete(agentId)
     this.persistAgents()
   }

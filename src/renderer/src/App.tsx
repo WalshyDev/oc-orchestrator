@@ -374,6 +374,39 @@ export function App() {
     setSelectedAgentId(agentId)
   }, [])
 
+  const handleRemoveAgent = useCallback(async (agentId: string) => {
+    const liveAgent = findLiveAgent(agentId)
+    if (!liveAgent) return
+
+    const confirmMessage = liveAgent.isWorktree
+      ? `Remove ${liveAgent.name}? This will clean up the worktree and remove the agent from the UI.`
+      : `Remove ${liveAgent.name} from the UI?`
+
+    if (!window.confirm(confirmMessage)) return
+
+    const result = await store.removeAgent(agentId)
+    if (!result?.ok) return
+
+    setSelectedIds((previousIds) => {
+      if (!previousIds.has(agentId)) return previousIds
+      const nextIds = new Set(previousIds)
+      nextIds.delete(agentId)
+      return nextIds
+    })
+
+    if (selectedAgentId === agentId) {
+      setSelectedAgentId(null)
+    }
+
+    setFreshSessionState((previousState) => {
+      if (!previousState) return previousState
+      if (previousState.sourceAgentId === agentId || previousState.nextAgentId === agentId) {
+        return null
+      }
+      return previousState
+    })
+  }, [findLiveAgent, selectedAgentId, store])
+
   // ── Bulk actions ──
   const handleBulkStop = useCallback(async () => {
     const promises = Array.from(selectedIds).map((agentId) => store.abortAgent(agentId))
@@ -694,6 +727,7 @@ export function App() {
         onReply={handleRowReply}
         onStop={handleRowStop}
         onOpen={handleRowOpen}
+        onRemove={handleRemoveAgent}
       />
 
       <StatusBar
@@ -725,6 +759,7 @@ export function App() {
           onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}
           onDeny={selectedPermission ? () => handleDeny(selectedPermission.id) : undefined}
           onAbort={handleAbort}
+          onRemove={() => void handleRemoveAgent(selectedAgent.id)}
           onCreatePr={handleCreatePr}
           onOpenInEditor={handleOpenInEditor}
         />

@@ -9,7 +9,8 @@ import {
   Square,
   Robot,
   Stop,
-  CheckCircle
+  CheckCircle,
+  Trash
 } from '@phosphor-icons/react'
 import type { AgentRuntime } from '../types'
 import { formatBranchLabel, isUrgent } from '../types'
@@ -26,6 +27,7 @@ interface FleetTableProps {
   onReply?: (agentId: string) => void
   onStop?: (agentId: string) => void
   onOpen?: (agentId: string) => void
+  onRemove?: (agentId: string) => void
 }
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
@@ -50,7 +52,8 @@ export function FleetTable({
   onApprove,
   onReply,
   onStop,
-  onOpen
+  onOpen,
+  onRemove
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -226,6 +229,7 @@ export function FleetTable({
               onReply={onReply ? () => onReply(agent.id) : undefined}
               onStop={onStop ? () => onStop(agent.id) : undefined}
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
+              onRemove={onRemove ? () => onRemove(agent.id) : undefined}
             />
           ))}
         </tbody>
@@ -243,7 +247,8 @@ function AgentRow({
   onApprove,
   onReply,
   onStop,
-  onOpen
+  onOpen,
+  onRemove
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -254,6 +259,7 @@ function AgentRow({
   onReply?: () => void
   onStop?: () => void
   onOpen?: () => void
+  onRemove?: () => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -322,15 +328,18 @@ function RowActions({
   onApprove,
   onReply,
   onStop,
-  onOpen
+  onOpen,
+  onRemove
 }: {
   agent: AgentRuntime
   onApprove?: () => void
   onReply?: () => void
   onStop?: () => void
   onOpen?: () => void
+  onRemove?: () => void
 }) {
   const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors'
+  const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors'
 
   return (
     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -377,6 +386,13 @@ function RowActions({
           <Square size={12} weight="fill" />
         </button>
       )}
+      <button
+        className={destructiveButton}
+        title="Remove"
+        onClick={(event) => { event.stopPropagation(); onRemove?.() }}
+      >
+        <Trash size={12} />
+      </button>
     </div>
   )
 }

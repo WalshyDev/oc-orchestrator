@@ -745,6 +745,22 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   emit()
 }
 
+function removeAgentState(agentId: string): void {
+  const agent = state.agents.get(agentId)
+  if (!agent) return
+
+  state.agents.delete(agentId)
+  state.messages.delete(agent.sessionId)
+  state.fileChanges.delete(agent.sessionId)
+  state.eventLog.delete(agent.sessionId)
+
+  for (const [permissionId, permission] of state.permissions.entries()) {
+    if (permission.agentId === agentId || permission.sessionId === agent.sessionId) {
+      state.permissions.delete(permissionId)
+    }
+  }
+}
+
 function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus): void {
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   const existingAgent = state.agents.get(payload.id)
@@ -1012,6 +1028,19 @@ export function useAgentStore() {
     return window.api.abortAgent(agentId)
   }, [])
 
+  const removeAgent = useCallback(async (agentId: string) => {
+    if (!window.api) return
+    const result = await window.api.removeAgent(agentId)
+    if (!result.ok) {
+      console.error('Failed to remove agent:', result.error)
+      return result
+    }
+
+    removeAgentState(agentId)
+    emit()
+    return result
+  }, [])
+
   const selectDirectory = useCallback(async () => {
     if (!window.api) return null
     const result = await window.api.selectDirectory()
@@ -1045,6 +1074,7 @@ export function useAgentStore() {
     prepareFreshAgent,
     respondToPermission,
     abortAgent,
+    removeAgent,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,

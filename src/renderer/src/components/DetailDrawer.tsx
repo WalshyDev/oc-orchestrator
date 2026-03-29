@@ -10,7 +10,8 @@ import {
   Wrench,
   CircleNotch,
   CaretDown,
-  CaretRight
+  CaretRight,
+  Trash
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
@@ -47,6 +48,7 @@ interface DetailDrawerProps {
   onApprove?: () => void
   onDeny?: () => void
   onAbort?: () => void
+  onRemove?: () => void
   onCreatePr?: () => void
   onOpenInEditor?: () => void
 }
@@ -64,6 +66,7 @@ export function DetailDrawer({
   onApprove,
   onDeny,
   onAbort,
+  onRemove,
   onCreatePr,
   onOpenInEditor
 }: DetailDrawerProps) {
@@ -321,6 +324,9 @@ export function DetailDrawer({
           <div className="flex-1" />
           {onCreatePr && (
             <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
+          )}
+          {onRemove && (
+            <ActionButton icon={<Trash size={12} />} label="Remove" variant="deny" onClick={onRemove} />
           )}
           <ActionButton icon={<Terminal size={12} />} label="Open Terminal" />
           <ActionButton icon={<ArrowSquareOut size={12} />} label="Open in Editor" onClick={onOpenInEditor} />
