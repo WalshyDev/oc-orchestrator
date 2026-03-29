@@ -26,6 +26,13 @@ export type { FileChange, ToolCall, EventEntry }
 
 type TabKey = 'transcript' | 'files' | 'tools' | 'events'
 
+const CHAT_COMMANDS = [
+  {
+    command: '/new',
+    description: 'Start a fresh agent with clean context and a new worktree'
+  }
+]
+
 interface DetailDrawerProps {
   agent: AgentRuntime
   messages: Message[]
@@ -33,6 +40,7 @@ interface DetailDrawerProps {
   files?: FileChange[]
   tools?: ToolCall[]
   events?: EventEntry[]
+  sessionNotice?: string
   onClose: () => void
   onSendMessage?: (text: string) => void
   onApprove?: () => void
@@ -49,6 +57,7 @@ export function DetailDrawer({
   files = [],
   tools = [],
   events = [],
+  sessionNotice,
   onClose,
   onSendMessage,
   onApprove,
@@ -62,6 +71,12 @@ export function DetailDrawer({
   const [isVisible, setIsVisible] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  const matchingCommands = inputText.startsWith('/')
+    ? CHAT_COMMANDS.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
+    : []
+
+  const showCommandAutocomplete = matchingCommands.length > 0 && inputText.trim().length > 0
 
   // Slide-in animation on mount
   useEffect(() => {
@@ -83,6 +98,12 @@ export function DetailDrawer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Tab' && showCommandAutocomplete) {
+      event.preventDefault()
+      setInputText(`${matchingCommands[0].command} `)
+      return
+    }
+
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
       handleSend()
@@ -167,13 +188,25 @@ export function DetailDrawer({
           {activeTab === 'transcript' && (
             <>
               {messages.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-kumo-subtle text-sm">
-                  Waiting for messages...
+                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle text-sm">
+                  {sessionNotice && (
+                    <div className="rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
+                      {sessionNotice}
+                    </div>
+                  )}
+                  <div>Waiting for messages...</div>
                 </div>
               ) : (
-                messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
-                ))
+                <>
+                  {sessionNotice && (
+                    <div className="self-center rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
+                      {sessionNotice}
+                    </div>
+                  )}
+                  {messages.map((message) => (
+                    <MessageBubble key={message.id} message={message} />
+                  ))}
+                </>
               )}
 
               {/* Loading indicator when agent is running */}
@@ -251,7 +284,25 @@ export function DetailDrawer({
 
         {/* Input */}
         <div className="flex gap-2 px-4 py-3 border-t border-kumo-line shrink-0">
-          <div className="flex-1 flex flex-col gap-1">
+          <div className="relative flex-1 flex flex-col gap-1">
+            {showCommandAutocomplete && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                {matchingCommands.map((item) => (
+                  <button
+                    key={item.command}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      setInputText(`${item.command} `)
+                    }}
+                    className="flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left hover:bg-kumo-fill transition-colors"
+                  >
+                    <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                    <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <textarea
               value={inputText}
               onChange={(event) => setInputText(event.target.value)}
@@ -261,7 +312,7 @@ export function DetailDrawer({
               className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
             />
             <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Type `/new` to start a fresh agent.
+              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Use Tab to autocomplete `/new`.
             </div>
           </div>
           <button

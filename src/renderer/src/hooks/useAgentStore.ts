@@ -153,6 +153,20 @@ function deriveNameFromPrompt(prompt: string): string {
   return cleaned || 'agent'
 }
 
+function deriveFreshAgentName(projectName: string): string {
+  const cleaned = projectName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join('-')
+    .slice(0, 24)
+    .replace(/-$/, '')
+
+  return cleaned ? `${cleaned}-fresh` : 'fresh-agent'
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -857,6 +871,29 @@ export function useAgentStore() {
     return window.api.sendMessage(agentId, text)
   }, [])
 
+  const prepareFreshAgent = useCallback((agentId: string, prompt?: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+
+    const trimmedPrompt = prompt?.trim() ?? ''
+
+    if (trimmedPrompt) {
+      agent.taskSummary = trimmedPrompt.slice(0, 120)
+      agent.name = deriveNameFromPrompt(trimmedPrompt)
+      agent.autoNamed = false
+      agent.status = 'running'
+    } else {
+      agent.taskSummary = 'Fresh session - waiting for prompt...'
+      agent.name = deriveFreshAgentName(agent.projectName)
+      agent.autoNamed = true
+      agent.status = 'idle'
+    }
+
+    agent.lastActivityAt = Date.now()
+    agent.blockedSince = undefined
+    emit()
+  }, [])
+
   const respondToPermission = useCallback(async (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => {
     if (!window.api) return
     return window.api.respondToPermission(agentId, permissionId, response)
@@ -897,6 +934,7 @@ export function useAgentStore() {
     healthy: storeState.healthy,
     launchAgent,
     sendMessage,
+    prepareFreshAgent,
     respondToPermission,
     abortAgent,
     selectDirectory,

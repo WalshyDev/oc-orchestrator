@@ -68,6 +68,12 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [freshSessionState, setFreshSessionState] = useState<{
+    sourceAgentId: string
+    nextAgentId?: string
+    branchName?: string
+    status: 'creating' | 'ready'
+  } | null>(null)
   const [, setTick] = useState(0)
 
   const store = useAgentStore()
@@ -190,6 +196,9 @@ export function App() {
   // ── Messages for selected agent ──
   const selectedMessages: Message[] = useMemo(() => {
     if (!selectedAgent) return []
+    if (freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id) {
+      return []
+    }
 
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
@@ -248,7 +257,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [selectedAgent, store])
+  }, [freshSessionState, selectedAgent, store])
 
   // ── Extract file changes from store messages ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -423,9 +432,12 @@ export function App() {
       if (!liveAgent) return
 
       const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim()
+      setFreshSessionState({ sourceAgentId: selectedAgentId, status: 'creating' })
+
       const repoRootResult = await window.api.getRepoRoot(liveAgent.directory)
       if (!repoRootResult.ok || !repoRootResult.data) {
         console.error('Failed to resolve repo root for /new:', repoRootResult.error)
+        setFreshSessionState(null)
         return
       }
 
@@ -439,6 +451,7 @@ export function App() {
 
       if (!worktreeResult.ok || !worktreeResult.data) {
         console.error('Failed to create fresh worktree for /new:', worktreeResult.error)
+        setFreshSessionState(null)
         return
       }
 
@@ -450,7 +463,16 @@ export function App() {
 
       if (launchResult?.ok && launchResult.data) {
         const data = launchResult.data as { id: string }
+        store.prepareFreshAgent(data.id, followUpPrompt || undefined)
+        setFreshSessionState({
+          sourceAgentId: selectedAgentId,
+          nextAgentId: data.id,
+          branchName: worktreeResult.data.branchName,
+          status: 'ready'
+        })
         setSelectedAgentId(data.id)
+      } else {
+        setFreshSessionState(null)
       }
       return
     }
@@ -689,6 +711,11 @@ export function App() {
           files={selectedFiles}
           tools={selectedTools}
           events={selectedEvents}
+          sessionNotice={freshSessionState?.nextAgentId === selectedAgent.id
+            ? `Fresh session ready on ${freshSessionState.branchName ?? 'new branch'}`
+            : freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id
+              ? 'Starting fresh session...'
+              : undefined}
           onClose={() => setSelectedAgentId(null)}
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}
