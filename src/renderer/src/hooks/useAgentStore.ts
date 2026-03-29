@@ -32,6 +32,7 @@ interface HistoricalMessagePart {
     error?: string
     title?: string
     raw?: string
+    input?: unknown
   }
   reason?: string
   snapshot?: string
@@ -89,6 +90,7 @@ export interface LiveMessagePart {
   text?: string
   toolName?: string
   toolState?: string
+  toolInput?: string
 }
 
 export interface FileChangeRecord {
@@ -245,6 +247,7 @@ function resolveSessionIdForEvent(
   // Try nested info object (message events)
   const info = props.info as Record<string, unknown> | undefined
   if (info?.sessionID) return info.sessionID as string
+  if (info?.id) return info.id as string
 
   // Try nested part object (message part events)
   const part = props.part as Record<string, unknown> | undefined
@@ -263,6 +266,50 @@ function trackFileChange(sessionId: string, filePath: string, action: FileChange
     timestamp: Date.now()
   })
   state.fileChanges.set(sessionId, changes)
+}
+
+function getMessageCreatedAt(info: Record<string, unknown> | HistoricalMessageInfo): number {
+  const time = info.time as { created?: number } | undefined
+  return typeof time?.created === 'number' ? time.created : Date.now()
+}
+
+function getToolState(partState: Record<string, unknown> | undefined): string | undefined {
+  const status = partState?.status
+  return typeof status === 'string' ? status : undefined
+}
+
+function stringifyToolInput(input: unknown): string | undefined {
+  if (input === undefined) return undefined
+  try {
+    return JSON.stringify(input, null, 2)
+  } catch {
+    return String(input)
+  }
+}
+
+function getToolOutput(part: Record<string, unknown>, partState: Record<string, unknown> | undefined): string | undefined {
+  const text = part.text
+  if (typeof text === 'string' && text.trim()) return text
+
+  const output = partState?.output
+  if (typeof output === 'string' && output.trim()) return output
+
+  const error = partState?.error
+  if (typeof error === 'string' && error.trim()) return error
+
+  const title = partState?.title
+  if (typeof title === 'string' && title.trim()) return title
+
+  const raw = partState?.raw
+  if (typeof raw === 'string' && raw.trim()) return raw
+
+  return undefined
+}
+
+function inferFileAction(before: string | undefined, after: string | undefined): FileChangeRecord['action'] {
+  if (!before && after) return 'created'
+  if (before && !after) return 'deleted'
+  return 'modified'
 }
 
 function upsertMessage(message: LiveMessage): LiveMessage {
@@ -304,6 +351,7 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
   if (part.type === 'tool') {
     nextPart.toolName = part.tool
     nextPart.toolState = part.state?.status
+    nextPart.toolInput = stringifyToolInput(part.state?.input)
     nextPart.text = part.text ?? part.state?.output ?? part.state?.error ?? part.state?.title ?? part.state?.raw
   }
 
@@ -316,7 +364,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
   for (const entry of entries as HistoricalSessionMessage[]) {
     if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
 
-    const createdAt = entry.info.time?.created ?? Date.now()
+    const createdAt = getMessageCreatedAt(entry.info)
     const message = upsertMessage({
       id: entry.info.id,
       role: entry.info.role,
@@ -424,18 +472,16 @@ function processEvent(payload: OpenCodeEventPayload): void {
     }
 
     case 'session.updated': {
-      const sessionId = props.sessionID as string
+      const info = props.info as Record<string, unknown> | undefined
+      const sessionId = info?.id as string | undefined
+      if (!sessionId) break
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        agent.lastActivityAt = Date.now()
-        // Update any session metadata that may have changed
-        const title = props.title as string | undefined
+        const time = info?.time as { updated?: number } | undefined
+        agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
+        const title = info?.title as string | undefined
         if (title) {
           agent.taskSummary = title.slice(0, 120)
-        }
-        const branch = props.branch as string | undefined
-        if (branch) {
-          agent.branchName = branch
         }
         emit()
       }
@@ -447,6 +493,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = info.sessionID as string
       const messageId = info.id as string
       const role = info.role as 'user' | 'assistant'
+      const createdAt = getMessageCreatedAt(info)
 
       const agent = findAgentBySession(sessionId)
       if (agent) {
@@ -475,10 +522,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
           id: messageId,
           role,
           sessionId,
-          createdAt: Date.now(),
+          createdAt,
           parts: []
         })
         state.messages.set(sessionId, messages)
+      } else {
+        existing.createdAt = createdAt
+        existing.role = role
       }
 
       emit()
@@ -497,22 +547,23 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
       if (message) {
         const existingPart = message.parts.find((partItem) => partItem.id === partId)
+        const toolState = part.state as Record<string, unknown> | undefined
         if (existingPart) {
-          existingPart.text = part.text as string | undefined
+          existingPart.text = getToolOutput(part, toolState) ?? part.text as string | undefined
           if (partType === 'tool') {
-            const toolState = part.state as Record<string, unknown> | undefined
-            existingPart.toolState = toolState?.type as string | undefined
+            existingPart.toolState = getToolState(toolState)
+            existingPart.toolInput = stringifyToolInput(toolState?.input)
           }
         } else {
           const newPart: LiveMessagePart = {
             id: partId,
             type: partType,
-            text: part.text as string | undefined
+            text: getToolOutput(part, toolState) ?? part.text as string | undefined
           }
           if (partType === 'tool') {
             newPart.toolName = part.tool as string | undefined
-            const toolState = part.state as Record<string, unknown> | undefined
-            newPart.toolState = toolState?.type as string | undefined
+            newPart.toolState = getToolState(toolState)
+            newPart.toolInput = stringifyToolInput(toolState?.input)
           }
           message.parts.push(newPart)
         }
@@ -588,6 +639,26 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
+    case 'session.diff': {
+      const sessionId = props.sessionID as string
+      const diffs = props.diff as Array<Record<string, unknown>> | undefined
+      const agent = findAgentBySession(sessionId)
+      if (agent && Array.isArray(diffs)) {
+        agent.lastActivityAt = Date.now()
+        for (const diff of diffs) {
+          const filePath = diff.file as string | undefined
+          if (!filePath) continue
+          trackFileChange(
+            sessionId,
+            filePath,
+            inferFileAction(diff.before as string | undefined, diff.after as string | undefined)
+          )
+        }
+        emit()
+      }
+      break
+    }
+
     case 'file.edited': {
       // Track file activity and record the change
       const agent = findAgentByRuntime(runtimeId)
@@ -597,6 +668,38 @@ function processEvent(payload: OpenCodeEventPayload): void {
         trackFileChange(agent.sessionId, filePath, 'modified')
         emit()
       }
+      break
+    }
+
+    case 'file.watcher.updated': {
+      const agent = findAgentByRuntime(runtimeId)
+      if (agent) {
+        agent.lastActivityAt = Date.now()
+        const filePath = props.file as string | undefined
+        const eventName = props.event as string | undefined
+        if (filePath) {
+          const action = eventName === 'add'
+            ? 'created'
+            : eventName === 'unlink'
+              ? 'deleted'
+              : 'modified'
+          trackFileChange(agent.sessionId, filePath, action)
+        }
+        emit()
+      }
+      break
+    }
+
+    case 'vcs.branch.updated': {
+      const branch = props.branch as string | undefined
+      if (!branch) break
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId) {
+          agent.branchName = branch
+          agent.lastActivityAt = Date.now()
+        }
+      }
+      emit()
       break
     }
 

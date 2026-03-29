@@ -70,8 +70,11 @@ export function DetailDrawer({
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
   const [isVisible, setIsVisible] = useState(false)
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
 
   const matchingCommands = inputText.startsWith('/')
     ? CHAT_COMMANDS.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
@@ -87,10 +90,30 @@ export function DetailDrawer({
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    if (activeTab === 'transcript' && messagesEndRef.current) {
+    if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current) {
+      setShowJumpToLatest(false)
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    } else if (activeTab === 'transcript' && messages.length > 0) {
+      setShowJumpToLatest(true)
     }
   }, [messages, activeTab])
+
+  const handleTranscriptScroll = () => {
+    const container = transcriptScrollRef.current
+    if (!container) return
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceFromBottom < 48
+    if (shouldAutoScrollRef.current) {
+      setShowJumpToLatest(false)
+    }
+  }
+
+  const handleJumpToLatest = () => {
+    shouldAutoScrollRef.current = true
+    setShowJumpToLatest(false)
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
 
   const handleSend = () => {
     if (!inputText.trim() || !onSendMessage) return
@@ -164,9 +187,9 @@ export function DetailDrawer({
           <div className="flex items-center gap-2">
             <div className="text-right mr-2">
               <div className="text-[10px] text-kumo-subtle font-mono">{agent.model}</div>
-              {agent.lastActivityAt && (
+              {agent.lastActivityAtMs && (
                 <div className="text-[10px] text-kumo-subtle font-mono">
-                  {formatRelativeTime(new Date(agent.lastActivityAt).getTime())}
+                  {formatRelativeTime(agent.lastActivityAtMs)}
                 </div>
               )}
             </div>
@@ -188,7 +211,11 @@ export function DetailDrawer({
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
+        <div
+          ref={transcriptScrollRef}
+          onScroll={activeTab === 'transcript' ? handleTranscriptScroll : undefined}
+          className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2"
+        >
           {activeTab === 'transcript' && (
             <>
               {messages.length === 0 ? (
@@ -255,6 +282,19 @@ export function DetailDrawer({
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {showJumpToLatest && activeTab === 'transcript' && (
+                <div className="sticky bottom-2 z-10 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={handleJumpToLatest}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-kumo-interact/30 bg-kumo-interact/12 px-3 py-1.5 text-[11px] font-medium text-kumo-link shadow-lg backdrop-blur hover:bg-kumo-interact/18 transition-colors"
+                  >
+                    <CaretDown size={12} />
+                    Jump to latest
+                  </button>
                 </div>
               )}
 
@@ -483,6 +523,7 @@ function ActionButton({
 }
 
 function formatRelativeTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp)) return 'just now'
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
   if (seconds < 60) return `${seconds}s ago`
   const minutes = Math.floor(seconds / 60)

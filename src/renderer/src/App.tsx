@@ -47,17 +47,6 @@ function mapToolState(toolState?: string): ToolCall['state'] {
   return 'running'
 }
 
-function buildToolCall(partId: string, toolName: string | undefined, toolState: string | undefined, text: string | undefined, timestamp: number): ToolCall {
-  return {
-    id: partId,
-    name: toolName ?? 'unknown',
-    state: mapToolState(toolState),
-    input: undefined,
-    output: text ?? undefined,
-    timestamp
-  }
-}
-
 export function App() {
   const [filter, setFilter] = useState<FilterValue>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -101,7 +90,9 @@ export function App() {
       status: agent.status,
       model: agent.model,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
-      blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined
+      lastActivityAtMs: agent.lastActivityAt,
+      blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
+      blockedSinceMs: agent.blockedSince
     }))
   }, [store.agents])
 
@@ -232,7 +223,14 @@ export function App() {
 
       const toolCalls = msg.parts
         .filter((part) => part.type === 'tool')
-        .map((part) => buildToolCall(part.id, part.toolName, part.toolState, part.text, msg.createdAt))
+        .map((part) => ({
+          id: part.id,
+          name: part.toolName ?? 'unknown',
+          state: mapToolState(part.toolState),
+          input: part.toolInput,
+          output: part.text ?? undefined,
+          timestamp: msg.createdAt
+        }))
 
       if (textContent.trim()) {
         flushPendingToolCalls(msg.id, msg.createdAt)
@@ -262,33 +260,13 @@ export function App() {
     return transcriptItems
   }, [freshSessionState, selectedAgent, store])
 
-  // ── Extract file changes from store messages ──
+  // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
     if (!selectedAgent) return []
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
 
-    const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
-    const files: FileChange[] = []
-    const seenPaths = new Set<string>()
-
-    for (const msg of liveMessages) {
-      for (const part of msg.parts) {
-        if (part.type === 'tool' && part.toolName === 'file.edited' && part.text) {
-          const filePath = part.text.trim()
-          if (filePath && !seenPaths.has(filePath)) {
-            seenPaths.add(filePath)
-            files.push({
-              path: filePath,
-              action: 'modified',
-              timestamp: msg.createdAt
-            })
-          }
-        }
-      }
-    }
-
-    return files
+    return store.getFileChangesForSession(liveAgent.sessionId)
   }, [selectedAgent, store])
 
   // ── Extract tool calls from store messages ──
@@ -303,38 +281,28 @@ export function App() {
     for (const msg of liveMessages) {
       for (const part of msg.parts) {
         if (part.type === 'tool') {
-          tools.push(buildToolCall(part.id, part.toolName, part.toolState, part.text, msg.createdAt))
+            tools.push({
+              id: part.id,
+              name: part.toolName ?? 'unknown',
+              state: mapToolState(part.toolState),
+              input: part.toolInput,
+              output: part.text ?? undefined,
+              timestamp: msg.createdAt
+            })
+          }
         }
       }
-    }
 
     return tools
   }, [selectedAgent, store])
 
-  // ── Events from store messages ──
+  // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {
     if (!selectedAgent) return []
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
 
-    const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
-    const events: EventEntry[] = []
-
-    for (const msg of liveMessages) {
-      for (const part of msg.parts) {
-        if (part.type === 'step-start' || part.type === 'step-finish') {
-          events.push({
-            id: part.id,
-            type: part.type,
-            summary: part.text ?? part.type,
-            timestamp: msg.createdAt,
-            data: null
-          })
-        }
-      }
-    }
-
-    return events
+    return store.getEventsForSession(liveAgent.sessionId)
   }, [selectedAgent, store])
 
   // ── Permission for selected agent ──
@@ -521,9 +489,36 @@ export function App() {
     prompt?: string,
     title?: string,
     _model?: string,
-    _worktreeStrategy?: string
+    worktreeStrategy?: string
   ) => {
-    const result = await store.launchAgent(directory, prompt || undefined, title)
+    let launchDirectory = directory
+
+    if (worktreeStrategy === 'new-worktree') {
+      const repoRootResult = await window.api.getRepoRoot(directory)
+      if (!repoRootResult.ok || !repoRootResult.data) {
+        console.error('Failed to resolve repo root for launch:', repoRootResult.error)
+        return
+      }
+
+      const directoryParts = directory.replace(/\/$/, '').split('/').filter(Boolean)
+      const projectSlug = sanitizeSlugSegment(directoryParts[directoryParts.length - 1] ?? 'project', 'project')
+      const taskSource = title?.trim() || prompt?.trim() || 'agent'
+      const taskSlug = sanitizeSlugSegment(taskSource, 'agent')
+      const worktreeResult = await window.api.createWorktree({
+        repoRoot: repoRootResult.data,
+        projectSlug,
+        taskSlug
+      })
+
+      if (!worktreeResult.ok || !worktreeResult.data) {
+        console.error('Failed to create worktree for launch:', worktreeResult.error)
+        return
+      }
+
+      launchDirectory = worktreeResult.data.worktreePath
+    }
+
+    const result = await store.launchAgent(launchDirectory, prompt || undefined, title)
 
     // Auto-open the detail drawer for the newly launched agent
     // (especially useful when no prompt is given so the user can interact immediately)
@@ -782,6 +777,7 @@ export function App() {
 }
 
 function formatTimeAgo(timestamp: number): string {
+  if (!Number.isFinite(timestamp)) return 'just now'
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
   if (seconds < 5) return 'just now'
   if (seconds < 60) return `${seconds}s ago`
