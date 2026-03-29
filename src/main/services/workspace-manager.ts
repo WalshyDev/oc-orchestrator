@@ -237,6 +237,22 @@ class WorkspaceManager {
     }
   }
 
+  getCommonRepoRoot(directory: string): string {
+    try {
+      const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+        cwd: directory,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      }).trim()
+
+      return path.dirname(gitCommonDir)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[WorkspaceManager] Failed to get common repo root: ${message}`)
+      throw new Error(`Failed to get common repo root: ${message}`)
+    }
+  }
+
   /**
    * Gets the current branch name for a directory.
    */

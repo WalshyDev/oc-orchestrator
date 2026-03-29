@@ -70,6 +70,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:remove', async (_event, agentId: string) => {
+    try {
+      await agentController.removeAgent(agentId)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:remove failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:get-messages', async (_event, agentId: string) => {
     try {
       const messages = await agentController.getMessages(agentId)

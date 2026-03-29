@@ -9,6 +9,7 @@ export interface OrchestratorApi {
   sendMessage: (agentId: string, text: string) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
+  removeAgent: (agentId: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>

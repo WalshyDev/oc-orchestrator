@@ -20,6 +20,9 @@ const api = {
   abortAgent: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:abort', agentId),
 
+  removeAgent: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:remove', agentId),
+
   getMessages: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-messages', agentId),
 
