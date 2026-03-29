@@ -99,7 +99,10 @@ export interface AgentLaunchedPayload {
   runtimeId: string
   sessionId: string
   directory: string
+  projectName: string
   branchName: string
+  isWorktree: boolean
+  workspaceName: string
   prompt: string
   title: string
 }

@@ -11,7 +11,10 @@ export interface AgentHandle {
   runtimeId: string
   sessionId: string
   directory: string
+  projectName: string
   branchName: string
+  isWorktree: boolean
+  workspaceName: string
   prompt: string
   title: string
   bridge: EventBridge
@@ -21,7 +24,6 @@ interface PersistedAgentHandle {
   id: string
   sessionId: string
   directory: string
-  branchName?: string
   prompt: string
   title: string
 }
@@ -44,12 +46,16 @@ class AgentController {
     for (const persistedAgent of persistedAgents) {
       try {
         const runtime = await this.ensureBridgeForDirectory(persistedAgent.directory)
+        const directoryContext = workspaceManager.getDirectoryContext(persistedAgent.directory)
         const handle: AgentHandle = {
           id: persistedAgent.id,
           runtimeId: runtime.id,
           sessionId: persistedAgent.sessionId,
           directory: persistedAgent.directory,
-          branchName: persistedAgent.branchName ?? this.getBranchName(persistedAgent.directory),
+          projectName: directoryContext.repoName,
+          branchName: directoryContext.branchName,
+          isWorktree: directoryContext.isWorktree,
+          workspaceName: directoryContext.workspaceName,
           prompt: persistedAgent.prompt,
           title: persistedAgent.title,
           bridge: this.bridges.get(runtime.id)!
@@ -80,6 +86,7 @@ class AgentController {
     // Ensure we have a runtime for this directory
     const runtime = await this.ensureBridgeForDirectory(directory)
     const client = runtime.client
+    const directoryContext = workspaceManager.getDirectoryContext(directory)
 
     // Derive a session title
     const projectSlug = directory.split('/').pop() ?? 'project'
@@ -104,7 +111,10 @@ class AgentController {
       runtimeId: runtime.id,
       sessionId: session.id,
       directory,
-      branchName: this.getBranchName(directory),
+      projectName: directoryContext.repoName,
+      branchName: directoryContext.branchName,
+      isWorktree: directoryContext.isWorktree,
+      workspaceName: directoryContext.workspaceName,
       prompt: prompt ?? '',
       title: sessionTitle,
       bridge: this.bridges.get(runtime.id)!
@@ -129,7 +139,10 @@ class AgentController {
       runtimeId: runtime.id,
       sessionId: session.id,
       directory,
+      projectName: handle.projectName,
       branchName: handle.branchName,
+      isWorktree: handle.isWorktree,
+      workspaceName: handle.workspaceName,
       prompt: prompt ?? '',
       title: sessionTitle
     })
@@ -350,7 +363,6 @@ class AgentController {
         return typeof agent.id === 'string'
           && typeof agent.sessionId === 'string'
           && typeof agent.directory === 'string'
-          && (agent.branchName === undefined || typeof agent.branchName === 'string')
           && typeof agent.prompt === 'string'
           && typeof agent.title === 'string'
       })
@@ -365,7 +377,6 @@ class AgentController {
       id: agent.id,
       sessionId: agent.sessionId,
       directory: agent.directory,
-      branchName: agent.branchName,
       prompt: agent.prompt,
       title: agent.title
     }))
@@ -378,14 +389,6 @@ class AgentController {
     const numericId = match ? Number.parseInt(match[1], 10) : Number.NaN
     if (!Number.isNaN(numericId)) {
       this.nextId = Math.max(this.nextId, numericId + 1)
-    }
-  }
-
-  private getBranchName(directory: string): string {
-    try {
-      return workspaceManager.getCurrentBranch(directory)
-    } catch {
-      return ''
     }
   }
 

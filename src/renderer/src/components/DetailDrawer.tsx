@@ -13,6 +13,7 @@ import {
   CaretRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
+import { formatBranchLabel } from '../types'
 import type { LivePermission } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
 import { FilesChanged } from './FilesChanged'
@@ -153,7 +154,10 @@ export function DetailDrawer({
             <div>
               <div className="font-semibold text-sm text-kumo-strong">{agent.name}</div>
               <div className="text-[11px] text-kumo-subtle">
-                {agent.projectName} &middot; {agent.branchName || agent.taskSummary.slice(0, 40)}
+                {agent.projectName}
+                {agent.isWorktree ? ` · worktree:${agent.workspaceName}` : ''}
+                {' · '}
+                {formatBranchLabel(agent) || agent.taskSummary.slice(0, 40)}
               </div>
             </div>
           </div>

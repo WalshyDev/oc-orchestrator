@@ -12,7 +12,7 @@ import {
   CheckCircle
 } from '@phosphor-icons/react'
 import type { AgentRuntime } from '../types'
-import { isUrgent } from '../types'
+import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
 
 interface FleetTableProps {
@@ -280,7 +280,10 @@ function AgentRow({
       </td>
       <td className="px-3 py-2">
         <div className="font-semibold text-kumo-strong">{agent.name}</div>
-        <div className="text-[11px] text-kumo-subtle">{agent.projectName}</div>
+        <div className="text-[11px] text-kumo-subtle">
+          {agent.projectName}
+          {agent.isWorktree ? ` · worktree:${agent.workspaceName}` : ''}
+        </div>
       </td>
       <td className="px-3 py-2">
         <StatusBadge status={agent.status} />
@@ -289,7 +292,7 @@ function AgentRow({
         {agent.taskSummary}
       </td>
       <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle">
-        {agent.branchName}
+        {formatBranchLabel(agent)}
       </td>
       <td className="px-3 py-2">
         <span className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle">

@@ -52,6 +52,8 @@ export interface LiveAgent {
   name: string
   projectName: string
   branchName: string
+  isWorktree: boolean
+  workspaceName: string
   taskSummary: string
   status: AgentStatus
   model: string
@@ -641,8 +643,6 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
 }
 
 function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus): void {
-  const directoryParts = payload.directory.split('/')
-  const projectName = directoryParts[directoryParts.length - 1] ?? payload.directory
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   const existingAgent = state.agents.get(payload.id)
 
@@ -660,8 +660,10 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     sessionId: payload.sessionId,
     directory: payload.directory,
     name: hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName,
-    projectName,
+    projectName: payload.projectName || existingAgent?.projectName || payload.directory.split('/').pop() || payload.directory,
     branchName: existingAgent?.branchName ?? payload.branchName ?? '',
+    isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
+    workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
     taskSummary: existingAgent?.taskSummary ?? (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     model: existingAgent?.model ?? 'starting...',
@@ -857,7 +859,10 @@ export function useAgentStore() {
           runtimeId: data.runtimeId,
           sessionId: data.sessionId,
           directory: data.directory ?? directory,
+          projectName: data.projectName ?? (directory.split('/').pop() ?? directory),
           branchName: data.branchName ?? '',
+          isWorktree: data.isWorktree ?? false,
+          workspaceName: data.workspaceName ?? (directory.split('/').pop() ?? directory),
           prompt: data.prompt ?? prompt ?? '',
           title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug)
         })
