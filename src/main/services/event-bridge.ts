@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { OpencodeClient } from '@opencode-ai/sdk/client'
+import { runtimeManager } from './runtime-manager'
 
 const INITIAL_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
@@ -138,6 +139,10 @@ export class EventBridge {
   }
 
   private forwardEvent(event: { type: string; properties: unknown }): void {
+    if (event.type !== 'server.heartbeat') {
+      runtimeManager.touchRuntimeActivity(this.runtimeId)
+    }
+
     // Forward all events to the renderer, tagged with the runtime ID
     this.broadcastToRenderer('opencode:event', {
       runtimeId: this.runtimeId,

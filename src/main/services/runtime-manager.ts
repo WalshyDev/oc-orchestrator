@@ -1,6 +1,7 @@
 import { createOpencodeServer } from '@opencode-ai/sdk/server'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/client'
 import { BrowserWindow } from 'electron'
+import { createServer } from 'node:net'
 
 export interface RuntimeInfo {
   id: string
@@ -9,6 +10,7 @@ export interface RuntimeInfo {
   client: OpencodeClient
   close: () => void
   startedAt: number
+  lastActivityAt: number
   activeSessions: number
   healthy: boolean
 }
@@ -37,7 +39,10 @@ class RuntimeManager {
 
     console.log(`[RuntimeManager] Starting server for ${directory}`)
 
+    const port = await this.getAvailablePort()
+
     const server = await createOpencodeServer({
+      port,
       timeout: 15000
     })
 
@@ -54,6 +59,7 @@ class RuntimeManager {
       client,
       close: server.close,
       startedAt: Date.now(),
+      lastActivityAt: Date.now(),
       activeSessions: 0,
       healthy: true
     }
@@ -174,6 +180,13 @@ class RuntimeManager {
     const runtime = this.runtimes.get(runtimeId)
     if (!runtime) return
     runtime.activeSessions = Math.max(0, runtime.activeSessions + delta)
+    runtime.lastActivityAt = Date.now()
+  }
+
+  touchRuntimeActivity(runtimeId: string): void {
+    const runtime = this.runtimes.get(runtimeId)
+    if (!runtime) return
+    runtime.lastActivityAt = Date.now()
   }
 
   /**
@@ -256,6 +269,34 @@ class RuntimeManager {
 
   getAllRuntimes(): RuntimeInfo[] {
     return Array.from(this.runtimes.values())
+  }
+
+  private async getAvailablePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const probeServer = createServer()
+
+      probeServer.once('error', (error) => {
+        reject(error)
+      })
+
+      probeServer.listen(0, '127.0.0.1', () => {
+        const address = probeServer.address()
+        if (!address || typeof address === 'string') {
+          probeServer.close(() => reject(new Error('Failed to resolve an available port')))
+          return
+        }
+
+        const { port } = address
+        probeServer.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+
+          resolve(port)
+        })
+      })
+    })
   }
 
   private broadcastToRenderer(channel: string, data: unknown): void {

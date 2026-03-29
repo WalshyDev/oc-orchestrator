@@ -29,6 +29,8 @@ interface PersistedAgentHandle {
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
+const IDLE_RUNTIME_CHECK_INTERVAL_MS = 60_000
+const DEFAULT_RUNTIME_IDLE_TIMEOUT_MS = 15 * 60_000
 
 /**
  * High-level controller for managing individual agent instances.
@@ -38,6 +40,7 @@ class AgentController {
   private agents = new Map<string, AgentHandle>()
   private bridges = new Map<string, EventBridge>()
   private nextId = 1
+  private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
 
   async restorePersistedAgents(): Promise<void> {
     const persistedAgents = this.loadPersistedAgents()
@@ -87,6 +90,7 @@ class AgentController {
     const runtime = await this.ensureBridgeForDirectory(directory)
     const client = runtime.client
     const directoryContext = workspaceManager.getDirectoryContext(directory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
 
     // Derive a session title
     const projectSlug = directory.split('/').pop() ?? 'project'
@@ -159,8 +163,8 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
-    const runtime = runtimeManager.getRuntime(handle.runtimeId)
-    if (!runtime) throw new Error(`Runtime ${handle.runtimeId} not found`)
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.promptAsync({
       headers: { 'x-opencode-directory': handle.directory },
@@ -178,8 +182,8 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
-    const runtime = runtimeManager.getRuntime(handle.runtimeId)
-    if (!runtime) throw new Error(`Runtime ${handle.runtimeId} not found`)
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.postSessionIdPermissionsPermissionId({
       headers: { 'x-opencode-directory': handle.directory },
@@ -198,8 +202,8 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
-    const runtime = runtimeManager.getRuntime(handle.runtimeId)
-    if (!runtime) throw new Error(`Runtime ${handle.runtimeId} not found`)
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.abort({
       headers: { 'x-opencode-directory': handle.directory },
@@ -214,8 +218,8 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
-    const runtime = runtimeManager.getRuntime(handle.runtimeId)
-    if (!runtime) throw new Error(`Runtime ${handle.runtimeId} not found`)
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.messages({
       headers: { 'x-opencode-directory': handle.directory },
@@ -296,10 +300,23 @@ class AgentController {
     this.persistAgents()
   }
 
+  startIdleRuntimeChecks(): void {
+    if (this.idleRuntimeTimer) return
+
+    this.idleRuntimeTimer = setInterval(() => {
+      void this.stopIdleRuntimes()
+    }, IDLE_RUNTIME_CHECK_INTERVAL_MS)
+  }
+
   /**
    * Stop all agents and bridges.
    */
   stopAll(): void {
+    if (this.idleRuntimeTimer) {
+      clearInterval(this.idleRuntimeTimer)
+      this.idleRuntimeTimer = null
+    }
+
     for (const bridge of this.bridges.values()) {
       bridge.stop()
     }
@@ -346,6 +363,61 @@ class AgentController {
     }
 
     return runtime
+  }
+
+  private async ensureRuntimeForAgent(handle: AgentHandle): Promise<RuntimeInfo> {
+    const existingRuntime = runtimeManager.getRuntime(handle.runtimeId)
+    if (existingRuntime) return existingRuntime
+
+    const runtime = await this.ensureBridgeForDirectory(handle.directory)
+    handle.runtimeId = runtime.id
+    handle.bridge = this.bridges.get(runtime.id)!
+
+    this.broadcastToRenderer('agent:launched', {
+      id: handle.id,
+      runtimeId: handle.runtimeId,
+      sessionId: handle.sessionId,
+      directory: handle.directory,
+      projectName: handle.projectName,
+      branchName: handle.branchName,
+      isWorktree: handle.isWorktree,
+      workspaceName: handle.workspaceName,
+      prompt: handle.prompt,
+      title: handle.title
+    })
+
+    return runtime
+  }
+
+  private async stopIdleRuntimes(): Promise<void> {
+    const idleTimeoutMs = Number.parseInt(
+      process.env.OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS ?? `${DEFAULT_RUNTIME_IDLE_TIMEOUT_MS}`,
+      10
+    )
+
+    if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
+
+    const now = Date.now()
+
+    for (const runtime of runtimeManager.getAllRuntimes()) {
+      const idleForMs = now - runtime.lastActivityAt
+      if (idleForMs < idleTimeoutMs) continue
+
+      console.log(
+        `[AgentController] Stopping idle runtime ${runtime.id} after ${Math.round(idleForMs / 1000)}s of inactivity`
+      )
+      await this.stopRuntime(runtime.id)
+    }
+  }
+
+  async stopRuntime(runtimeId: string): Promise<void> {
+    const bridge = this.bridges.get(runtimeId)
+    if (bridge) {
+      bridge.stop()
+      this.bridges.delete(runtimeId)
+    }
+
+    await runtimeManager.stopRuntime(runtimeId)
   }
 
   private loadPersistedAgents(): PersistedAgentHandle[] {

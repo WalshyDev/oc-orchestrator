@@ -61,6 +61,7 @@ app.whenReady().then(async () => {
 
   // Start runtime health checks after window creation
   runtimeManager.startHealthChecks()
+  agentController.startIdleRuntimeChecks()
   console.log('[Main] Health checks started')
 
   app.on('activate', () => {
