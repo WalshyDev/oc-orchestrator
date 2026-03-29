@@ -26,7 +26,10 @@ export function registerIpcHandlers(): void {
           runtimeId: handle.runtimeId,
           sessionId: handle.sessionId,
           directory: handle.directory,
+          projectName: handle.projectName,
           branchName: handle.branchName,
+          isWorktree: handle.isWorktree,
+          workspaceName: handle.workspaceName,
           prompt: handle.prompt,
           title: handle.title
         }
@@ -86,7 +89,10 @@ export function registerIpcHandlers(): void {
         runtimeId: agent.runtimeId,
         sessionId: agent.sessionId,
         directory: agent.directory,
+        projectName: agent.projectName,
         branchName: agent.branchName,
+        isWorktree: agent.isWorktree,
+        workspaceName: agent.workspaceName,
         prompt: agent.prompt,
         title: agent.title
       }))

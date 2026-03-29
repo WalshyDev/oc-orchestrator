@@ -6,7 +6,7 @@ export const mockProjects: Project[] = [
   { id: 'proj-3', name: 'infra-core', repoRoot: '/home/dev/infra-core', color: '#a78bfa' }
 ]
 
-export const mockAgents: AgentRuntime[] = [
+export const mockAgents = [
   {
     id: 'agent-1',
     name: 'auth-refactor',

@@ -9,7 +9,7 @@ import { LaunchModal } from './components/LaunchModal'
 import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { useAgentStore, type LiveAgent } from './hooks/useAgentStore'
-import type { AgentRuntime, Interrupt, Message } from './types'
+import { formatBranchLabel, type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -72,6 +72,7 @@ export function App() {
     sourceAgentId: string
     nextAgentId?: string
     branchName?: string
+    isWorktree?: boolean
     status: 'creating' | 'ready'
   } | null>(null)
   const [, setTick] = useState(0)
@@ -94,6 +95,8 @@ export function App() {
       projectId: agent.directory,
       projectName: agent.projectName,
       branchName: agent.branchName,
+      isWorktree: agent.isWorktree,
+      workspaceName: agent.workspaceName,
       taskSummary: agent.taskSummary,
       status: agent.status,
       model: agent.model,
@@ -468,6 +471,7 @@ export function App() {
           sourceAgentId: selectedAgentId,
           nextAgentId: data.id,
           branchName: worktreeResult.data.branchName,
+          isWorktree: true,
           status: 'ready'
         })
         setSelectedAgentId(data.id)
@@ -712,7 +716,12 @@ export function App() {
           tools={selectedTools}
           events={selectedEvents}
           sessionNotice={freshSessionState?.nextAgentId === selectedAgent.id
-            ? `Fresh session ready on ${freshSessionState.branchName ?? 'new branch'}`
+            ? `Fresh session ready on ${freshSessionState.branchName
+              ? formatBranchLabel({
+                branchName: freshSessionState.branchName,
+                isWorktree: freshSessionState.isWorktree ?? false
+              })
+              : 'new branch'}`
             : freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id
               ? 'Starting fresh session...'
               : undefined}

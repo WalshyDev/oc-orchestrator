@@ -23,6 +23,13 @@ export interface WorktreeStatus {
   changedFiles: number
 }
 
+export interface DirectoryContext {
+  repoName: string
+  branchName: string
+  isWorktree: boolean
+  workspaceName: string
+}
+
 /**
  * Manages Git worktrees for agent isolation.
  * Each agent task gets its own worktree so work can proceed in parallel
@@ -245,6 +252,47 @@ class WorkspaceManager {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`[WorkspaceManager] Failed to get current branch: ${message}`)
       throw new Error(`Failed to get current branch: ${message}`)
+    }
+  }
+
+  getDirectoryContext(directory: string): DirectoryContext {
+    try {
+      const workspaceRoot = execSync('git rev-parse --show-toplevel', {
+        cwd: directory,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      }).trim()
+
+      const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', {
+        cwd: directory,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      }).trim()
+
+      const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+        cwd: directory,
+        encoding: 'utf-8',
+        stdio: 'pipe'
+      }).trim()
+
+      const repoRoot = path.dirname(gitCommonDir)
+
+      return {
+        repoName: path.basename(repoRoot),
+        branchName: this.getCurrentBranch(directory),
+        isWorktree: path.normalize(gitDir) !== path.normalize(gitCommonDir),
+        workspaceName: path.basename(workspaceRoot)
+      }
+    } catch (error) {
+      const fallbackName = path.basename(directory)
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[WorkspaceManager] Failed to get directory context: ${message}`)
+      return {
+        repoName: fallbackName,
+        branchName: '',
+        isWorktree: false,
+        workspaceName: fallbackName
+      }
     }
   }
 
