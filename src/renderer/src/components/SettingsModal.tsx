@@ -6,6 +6,13 @@ import {
   Info,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import {
+  DEFAULT_CREATE_PR_PROMPT,
+  loadSettings,
+  saveSettings,
+  type AppSettings,
+  type NotificationPrefs,
+} from '../data/settings'
 
 const MODEL_OPTIONS = [
   { value: 'auto', label: 'Auto (recommended)' },
@@ -33,39 +40,6 @@ const KEYBOARD_SHORTCUTS = [
 
 type TabId = 'general' | 'shortcuts' | 'about'
 
-interface NotificationPrefs {
-  needs_approval: boolean
-  needs_input: boolean
-  errored: boolean
-  completed: boolean
-}
-
-const SETTINGS_STORAGE_KEY = 'oc-orchestrator:settings'
-
-function loadSettings(): { model: string; editor: string; customEditorCommand: string; notifications: NotificationPrefs } {
-  try {
-    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
-    if (stored) return JSON.parse(stored)
-  } catch {
-    // ignore
-  }
-  return {
-    model: 'auto',
-    editor: 'vscode',
-    customEditorCommand: '',
-    notifications: {
-      needs_approval: true,
-      needs_input: true,
-      errored: true,
-      completed: false,
-    },
-  }
-}
-
-function saveSettings(settings: ReturnType<typeof loadSettings>): void {
-  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-}
-
 interface SettingsModalProps {
   onClose: () => void
 }
@@ -80,7 +54,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('general')
   const [settings, setSettings] = useState(loadSettings)
 
-  const updateSettings = (partial: Partial<typeof settings>) => {
+  const updateSettings = (partial: Partial<AppSettings>) => {
     const updated = { ...settings, ...partial }
     setSettings(updated)
     saveSettings(updated)
@@ -211,6 +185,31 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     </label>
                   ))}
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                    Create PR Prompt
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ createPrPrompt: DEFAULT_CREATE_PR_PROMPT })}
+                    className="text-[11px] font-medium text-kumo-link hover:underline"
+                  >
+                    Reset to default
+                  </button>
+                </div>
+                <textarea
+                  value={settings.createPrPrompt}
+                  onChange={(event) => updateSettings({ createPrPrompt: event.target.value })}
+                  placeholder="Instructions to send when using Create PR"
+                  rows={8}
+                  className={`${inputClasses} min-h-40 resize-y leading-6`}
+                />
+                <p className="text-[11px] text-kumo-subtle">
+                  This prompt is sent when you click Create PR in the agent drawer.
+                </p>
               </div>
 
               {/* Theme */}

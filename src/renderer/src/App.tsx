@@ -13,20 +13,10 @@ import { formatBranchLabel, type AgentRuntime, type Interrupt, type Message } fr
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
+import { loadSettings } from './data/settings'
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
 type SortDirection = 'asc' | 'desc'
-
-const CREATE_PR_PROMPT = `Prepare this work for review.
-
-1. Check the current git branch. If it is not already a feature branch, create and switch to a sensible feature branch first.
-2. Review the working tree, then create a concise but informative commit message. Do not list changed files in the commit message.
-3. Commit the relevant changes.
-4. Push the branch.
-5. Open a pull request. Try GitHub with gh if the remote is GitHub, or GitLab with glab if the remote is GitLab.
-6. If opening the PR with gh or glab does not work, that is fine - give me the PR URL if you can determine it, or the exact compare/create URL I should open manually.
-
-Return the final PR URL or manual URL, plus a short note on what you committed.`
 
 const NEW_AGENT_COMMAND = '/new'
 
@@ -502,7 +492,7 @@ export function App() {
 
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
-    await store.sendMessage(selectedAgentId, CREATE_PR_PROMPT)
+    await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt)
   }, [selectedAgentId, store])
 
   const handleOpenInEditor = useCallback(() => {
@@ -697,6 +687,7 @@ export function App() {
         blockedCount={counts.blocked}
         idleCount={counts.idle}
         onLaunch={() => setShowLaunchModal(true)}
+        onOpenCommandPalette={() => setShowCommandPalette(true)}
         onSettings={() => setShowSettings(true)}
       />
 

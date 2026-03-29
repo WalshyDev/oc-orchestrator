@@ -5,10 +5,18 @@ interface TopBarProps {
   blockedCount: number
   idleCount: number
   onLaunch: () => void
+  onOpenCommandPalette?: () => void
   onSettings?: () => void
 }
 
-export function TopBar({ runningCount, blockedCount, idleCount, onLaunch, onSettings }: TopBarProps) {
+export function TopBar({
+  runningCount,
+  blockedCount,
+  idleCount,
+  onLaunch,
+  onOpenCommandPalette,
+  onSettings,
+}: TopBarProps) {
   return (
     <div className="drag-region flex items-center justify-between h-12 pl-20 pr-4 bg-kumo-elevated border-b border-kumo-line shrink-0">
       {/* Left: Logo — pl-20 clears macOS traffic light buttons */}
@@ -28,7 +36,12 @@ export function TopBar({ runningCount, blockedCount, idleCount, onLaunch, onSett
 
       {/* Right: Actions */}
       <div className="no-drag flex items-center gap-2">
-        <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-kumo-line text-kumo-subtle text-xs hover:bg-kumo-fill hover:text-kumo-default transition-colors">
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-kumo-line text-kumo-subtle text-xs hover:bg-kumo-fill hover:text-kumo-default transition-colors"
+          title="Open command palette"
+        >
           <kbd className="font-mono text-[10px] px-1 py-px bg-kumo-fill rounded border border-kumo-line">
             <Command size={10} className="inline" />K
           </kbd>
@@ -36,6 +49,7 @@ export function TopBar({ runningCount, blockedCount, idleCount, onLaunch, onSett
         </button>
         {onSettings && (
           <button
+            type="button"
             onClick={onSettings}
             className="flex items-center justify-center w-8 h-8 rounded-md border border-kumo-line text-kumo-subtle hover:bg-kumo-fill hover:text-kumo-default transition-colors"
             title="Settings"
@@ -44,6 +58,7 @@ export function TopBar({ runningCount, blockedCount, idleCount, onLaunch, onSett
           </button>
         )}
         <button
+          type="button"
           onClick={onLaunch}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-kumo-brand text-white text-xs font-medium hover:bg-kumo-brand-hover transition-colors"
         >
