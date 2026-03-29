@@ -38,7 +38,9 @@ export interface AgentRuntime {
   status: AgentStatus
   model: string
   lastActivityAt: string
+  lastActivityAtMs: number
   blockedSince?: string
+  blockedSinceMs?: number
 }
 
 export interface Interrupt {

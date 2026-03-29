@@ -20,8 +20,25 @@ import { tmpdir } from 'node:os'
 import { vi } from 'vitest'
 
 vi.mock('electron', () => ({
+  app: {
+    getPath: () => tmpdir(),
+    setBadgeCount: () => {}
+  },
   BrowserWindow: {
     getAllWindows: () => []
+  },
+  Notification: class {
+    show(): void {}
+    static isSupported(): boolean {
+      return false
+    }
+  }
+}))
+
+vi.mock('../../main/services/database', () => ({
+  database: {
+    getPreference: () => undefined,
+    setPreference: () => {}
   }
 }))
 
