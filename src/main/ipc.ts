@@ -125,7 +125,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('runtime:stop', async (_event, runtimeId: string) => {
     try {
-      runtimeManager.stopRuntime(runtimeId)
+      await agentController.stopRuntime(runtimeId)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: String(error) }
