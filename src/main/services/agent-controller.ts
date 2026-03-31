@@ -6,6 +6,18 @@ import { notificationService, type NotifiableEventType } from './notification-se
 import { database } from './database'
 import { workspaceManager } from './workspace-manager'
 
+function sanitizeSlug(value: string, fallback: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50)
+
+  return sanitized || fallback
+}
+
 export interface AgentHandle {
   id: string
   runtimeId: string
@@ -161,6 +173,64 @@ class AgentController {
 
     console.log(`[AgentController] Launched agent ${agentId} (session ${session.id}) in ${directory}`)
 
+    return handle
+  }
+
+  /**
+   * Reset an agent's session — creates a new OpenCode session on the same
+   * runtime/directory, replacing the old sessionId.  The agent keeps its
+   * identity in the fleet table but starts with a clean conversation.
+   */
+  async resetSession(agentId: string, prompt?: string): Promise<AgentHandle> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    // Reset the working directory to a fresh branch off the default branch
+    const projectSlug = sanitizeSlug(handle.projectName, 'project')
+    const taskSlug = prompt ? sanitizeSlug(prompt, 'next-feature') : 'next-feature'
+    const newBranch = workspaceManager.resetToDefaultBranch(handle.directory, projectSlug, taskSlug)
+    handle.branchName = newBranch
+
+    const sessionTitle = prompt ? prompt.slice(0, 80) : `${projectSlug}-${Date.now()}`
+
+    const sessionResult = await runtime.client.session.create({
+      headers: { 'x-opencode-directory': handle.directory },
+      body: { title: sessionTitle }
+    })
+
+    const session = sessionResult.data
+    if (!session) throw new Error('Failed to create session')
+
+    const oldSessionId = handle.sessionId
+    handle.sessionId = session.id
+    handle.title = sessionTitle
+    handle.prompt = prompt ?? ''
+    handle.taskSummary = ''
+    this.persistAgents()
+
+    if (prompt && prompt.trim()) {
+      await runtime.client.session.promptAsync({
+        headers: { 'x-opencode-directory': handle.directory },
+        path: { id: session.id },
+        body: {
+          parts: [{ type: 'text', text: prompt }]
+        }
+      })
+    }
+
+    this.broadcastToRenderer('agent:session-reset', {
+      id: agentId,
+      sessionId: session.id,
+      oldSessionId,
+      branchName: newBranch,
+      prompt: prompt ?? '',
+      title: sessionTitle
+    })
+
+    console.log(`[AgentController] Reset agent ${agentId} session ${oldSessionId} → ${session.id}`)
     return handle
   }
 

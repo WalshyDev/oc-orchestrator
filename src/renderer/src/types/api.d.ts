@@ -10,6 +10,7 @@ export interface OrchestratorApi {
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
   removeAgent: (agentId: string) => Promise<IpcResult>
+  resetSession: (agentId: string, prompt?: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
   listCommands: (agentId: string) => Promise<IpcResult>
   executeCommand: (agentId: string, command: string, args: string) => Promise<IpcResult>
@@ -61,6 +62,7 @@ export interface OrchestratorApi {
 
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
+  onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
   onRuntimeStopped: (callback: (data: { id: string }) => void) => () => void
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => () => void
@@ -122,6 +124,15 @@ export interface AgentLaunchedPayload {
   title: string
   displayName?: string
   taskSummary?: string
+}
+
+export interface SessionResetPayload {
+  id: string
+  sessionId: string
+  oldSessionId: string
+  branchName: string
+  prompt: string
+  title: string
 }
 
 export type ListAgentsPayload = AgentLaunchedPayload[]

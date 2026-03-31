@@ -23,6 +23,9 @@ const api = {
   removeAgent: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:remove', agentId),
 
+  resetSession: (agentId: string, prompt?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:reset-session', agentId, prompt),
+
   getMessages: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-messages', agentId),
 
@@ -167,6 +170,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('runtime:stopped', handler)
     return () => ipcRenderer.removeListener('runtime:stopped', handler)
+  },
+
+  onSessionReset: (callback: (data: { id: string; sessionId: string; oldSessionId: string; branchName: string; prompt: string; title: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:session-reset', handler)
+    return () => ipcRenderer.removeListener('agent:session-reset', handler)
   },
 
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => {

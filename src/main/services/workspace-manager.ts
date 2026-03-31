@@ -312,6 +312,39 @@ class WorkspaceManager {
     }
   }
 
+  /**
+   * Fetches origin, creates a new branch off the default branch, and checks
+   * it out in the given directory.  Returns the new branch name.
+   */
+  resetToDefaultBranch(directory: string, projectSlug: string, taskSlug: string): string {
+    const repoRoot = this.getCommonRepoRoot(directory)
+
+    execSync('git fetch origin --prune', {
+      cwd: directory,
+      encoding: 'utf-8',
+      stdio: 'pipe'
+    })
+
+    const baseRef = this.getDefaultBaseRef(repoRoot)
+    const timestamp = Date.now()
+    const branchName = `${projectSlug}/${taskSlug}-${timestamp}`
+
+    // Discard uncommitted changes, create a fresh branch off the default branch
+    execSync('git clean -fd', {
+      cwd: directory,
+      encoding: 'utf-8',
+      stdio: 'pipe'
+    })
+
+    execSync(`git checkout -B "${branchName}" "${baseRef}"`, {
+      cwd: directory,
+      encoding: 'utf-8',
+      stdio: 'pipe'
+    })
+
+    return branchName
+  }
+
   private getDefaultBaseRef(repoRoot: string): string {
     try {
       const remoteHead = execSync('git symbolic-ref refs/remotes/origin/HEAD', {

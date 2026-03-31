@@ -11,7 +11,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, type LiveAgent } from './hooks/useAgentStore'
-import { formatBranchLabel, type AgentRuntime, type Interrupt, type Message } from './types'
+import { type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -49,13 +49,6 @@ export function App() {
 
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-  const [freshSessionState, setFreshSessionState] = useState<{
-    sourceAgentId: string
-    nextAgentId?: string
-    branchName?: string
-    isWorktree?: boolean
-    status: 'creating' | 'ready'
-  } | null>(null)
   const [, setTick] = useState(0)
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
   const [showModelPicker, setShowModelPicker] = useState(false)
@@ -77,7 +70,7 @@ export function App() {
       if (cancelled) return
 
       const builtInCommands: ChatCommand[] = [
-        { command: '/new', description: 'Start a fresh agent with clean context and a new worktree' },
+        { command: '/new', description: 'Reset conversation — start a fresh session with clean context' },
         { command: '/model', description: 'Open model picker or set model — /model [provider/model-id]' },
         { command: '/compact', description: 'Compact conversation to reduce context usage' },
         { command: '/share', description: 'Share this session' },
@@ -224,9 +217,6 @@ export function App() {
   // ── Messages for selected agent ──
   const selectedMessages: Message[] = useMemo(() => {
     if (!selectedAgent) return []
-    if (freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id) {
-      return []
-    }
 
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
@@ -292,7 +282,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [freshSessionState, selectedAgent, store])
+  }, [selectedAgent, store])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -420,14 +410,6 @@ export function App() {
     if (selectedAgentId === agentId) {
       setSelectedAgentId(null)
     }
-
-    setFreshSessionState((previousState) => {
-      if (!previousState) return previousState
-      if (previousState.sourceAgentId === agentId || previousState.nextAgentId === agentId) {
-        return null
-      }
-      return previousState
-    })
   }, [findLiveAgent, selectedAgentId, store])
 
   // ── Built-in command handlers ──
@@ -485,53 +467,8 @@ export function App() {
     const trimmedText = text.trim()
 
     if (trimmedText === NEW_AGENT_COMMAND || trimmedText.startsWith(`${NEW_AGENT_COMMAND} `)) {
-      const liveAgent = findLiveAgent(selectedAgentId)
-      if (!liveAgent) return
-
-      const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim()
-      setFreshSessionState({ sourceAgentId: selectedAgentId, status: 'creating' })
-
-      const repoRootResult = await window.api.getRepoRoot(liveAgent.directory)
-      if (!repoRootResult.ok || !repoRootResult.data) {
-        console.error('Failed to resolve repo root for /new:', repoRootResult.error)
-        setFreshSessionState(null)
-        return
-      }
-
-      const projectSlug = sanitizeSlugSegment(liveAgent.projectName, 'project')
-      const taskSlug = sanitizeSlugSegment(followUpPrompt || 'next-feature', 'next-feature')
-      const worktreeResult = await window.api.createFreshWorktree({
-        repoRoot: repoRootResult.data,
-        projectSlug,
-        taskSlug
-      })
-
-      if (!worktreeResult.ok || !worktreeResult.data) {
-        console.error('Failed to create fresh worktree for /new:', worktreeResult.error)
-        setFreshSessionState(null)
-        return
-      }
-
-      const launchResult = await store.launchAgent(
-        worktreeResult.data.worktreePath,
-        followUpPrompt || undefined,
-        undefined
-      )
-
-      if (launchResult?.ok && launchResult.data) {
-        const data = launchResult.data as { id: string }
-        store.prepareFreshAgent(data.id, followUpPrompt || undefined)
-        setFreshSessionState({
-          sourceAgentId: selectedAgentId,
-          nextAgentId: data.id,
-          branchName: worktreeResult.data.branchName,
-          isWorktree: true,
-          status: 'ready'
-        })
-        setSelectedAgentId(data.id)
-      } else {
-        setFreshSessionState(null)
-      }
+      const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim() || undefined
+      await store.resetSession(selectedAgentId, followUpPrompt)
       return
     }
 
@@ -546,7 +483,7 @@ export function App() {
     }
 
     await store.sendMessage(selectedAgentId, text)
-  }, [handleBuiltInCommand, findLiveAgent, selectedAgentId, store])
+  }, [handleBuiltInCommand, selectedAgentId, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -833,15 +770,6 @@ export function App() {
           tools={selectedTools}
           events={selectedEvents}
           commands={agentCommands}
-          sessionNotice={freshSessionState?.nextAgentId === selectedAgent.id
-            ? `Fresh session ready on ${freshSessionState.branchName
-              ? formatBranchLabel({
-                branchName: freshSessionState.branchName
-              })
-              : 'new branch'}`
-            : freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id
-              ? 'Starting fresh session...'
-              : undefined}
           onClose={() => setSelectedAgentId(null)}
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}

@@ -752,6 +752,40 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   emit()
 }
 
+function handleSessionReset(payload: { id: string; sessionId: string; oldSessionId: string; branchName: string; prompt: string; title: string }): void {
+  const agent = state.agents.get(payload.id)
+  if (!agent) return
+
+  // Clear old session data
+  state.messages.delete(agent.sessionId)
+  state.fileChanges.delete(agent.sessionId)
+  state.eventLog.delete(agent.sessionId)
+
+  for (const [permissionId, permission] of state.permissions.entries()) {
+    if (permission.agentId === payload.id || permission.sessionId === agent.sessionId) {
+      state.permissions.delete(permissionId)
+    }
+  }
+
+  // Update agent with new session
+  agent.sessionId = payload.sessionId
+  agent.branchName = payload.branchName
+  agent.cost = 0
+  agent.tokens = { input: 0, output: 0 }
+  agent.lastActivityAt = Date.now()
+
+  const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
+  if (hasPrompt) {
+    agent.taskSummary = payload.prompt.slice(0, 120)
+    agent.status = 'running'
+  } else {
+    agent.taskSummary = 'Waiting for prompt...'
+    agent.status = 'idle'
+  }
+
+  emit()
+}
+
 function removeAgentState(agentId: string): void {
   const agent = state.agents.get(agentId)
   if (!agent) return
@@ -951,6 +985,7 @@ export function useAgentStore() {
     const cleanups = [
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
+      window.api.onSessionReset(handleSessionReset),
       window.api.onEventError((data) => {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
         state.healthy = false
@@ -1062,6 +1097,11 @@ export function useAgentStore() {
     return window.api.abortAgent(agentId)
   }, [])
 
+  const resetSession = useCallback(async (agentId: string, prompt?: string) => {
+    if (!window.api) return
+    return window.api.resetSession(agentId, prompt)
+  }, [])
+
   const removeAgent = useCallback(async (agentId: string) => {
     if (!window.api) return
     const result = await window.api.removeAgent(agentId)
@@ -1117,6 +1157,7 @@ export function useAgentStore() {
     listCommands,
     executeCommand,
     prepareFreshAgent,
+    resetSession,
     respondToPermission,
     abortAgent,
     removeAgent,

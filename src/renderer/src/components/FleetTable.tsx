@@ -487,9 +487,11 @@ function AgentRow({
         {formatBranchLabel(agent)}
       </td>
       <td className="px-3 py-2">
-        <span className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle">
-          {agent.model}
-        </span>
+        {agent.model && agent.model !== 'starting...' && (
+          <span className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle">
+            {agent.model}
+          </span>
+        )}
       </td>
       <td className="px-3 py-2">
         <span className={`font-mono text-[11px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>

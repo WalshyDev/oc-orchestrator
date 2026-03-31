@@ -80,6 +80,25 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:reset-session', async (_event, agentId: string, prompt?: string) => {
+    try {
+      const handle = await agentController.resetSession(agentId, prompt)
+      return {
+        ok: true,
+        data: {
+          id: handle.id,
+          sessionId: handle.sessionId,
+          directory: handle.directory,
+          prompt: handle.prompt,
+          title: handle.title
+        }
+      }
+    } catch (error) {
+      console.error('[IPC] agent:reset-session failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:list-commands', async (_event, agentId: string) => {
     try {
       const commands = await agentController.listCommands(agentId)
