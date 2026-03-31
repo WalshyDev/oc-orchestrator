@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X,
   Square,
@@ -26,14 +26,28 @@ import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
 
+const DRAWER_WIDTH_KEY = 'oc-orchestrator:drawer-width'
+const DEFAULT_DRAWER_WIDTH = 600
+const MIN_DRAWER_WIDTH = 400
+const MAX_DRAWER_WIDTH = 1000
+
+function loadDrawerWidth(): number {
+  try {
+    const stored = localStorage.getItem(DRAWER_WIDTH_KEY)
+    if (stored) {
+      const width = Number(stored)
+      if (width >= MIN_DRAWER_WIDTH && width <= MAX_DRAWER_WIDTH) return width
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_DRAWER_WIDTH
+}
+
 type TabKey = 'transcript' | 'files' | 'tools' | 'events'
 
-const CHAT_COMMANDS = [
-  {
-    command: '/new',
-    description: 'Start a fresh agent with clean context and a new worktree'
-  }
-]
+export interface ChatCommand {
+  command: string
+  description: string
+}
 
 interface DetailDrawerProps {
   agent: AgentRuntime
@@ -42,6 +56,7 @@ interface DetailDrawerProps {
   files?: FileChange[]
   tools?: ToolCall[]
   events?: EventEntry[]
+  commands?: ChatCommand[]
   sessionNotice?: string
   onClose: () => void
   onSendMessage?: (text: string) => void
@@ -60,6 +75,7 @@ export function DetailDrawer({
   files = [],
   tools = [],
   events = [],
+  commands = [],
   sessionNotice,
   onClose,
   onSendMessage,
@@ -74,13 +90,45 @@ export function DetailDrawer({
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
   const [isVisible, setIsVisible] = useState(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  const [drawerWidth, setDrawerWidth] = useState(loadDrawerWidth)
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
+  const isResizingRef = useRef(false)
+
+  const handleResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    isResizingRef.current = true
+    const startX = event.clientX
+    const startWidth = drawerWidth
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX
+      const newWidth = Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, startWidth + delta))
+      setDrawerWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setDrawerWidth((final) => {
+        localStorage.setItem(DRAWER_WIDTH_KEY, String(final))
+        return final
+      })
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [drawerWidth])
 
   const matchingCommands = inputText.startsWith('/')
-    ? CHAT_COMMANDS.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
+    ? commands.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
     : []
 
   const showCommandAutocomplete = matchingCommands.length > 0 && inputText.trim().length > 0
@@ -131,9 +179,12 @@ export function DetailDrawer({
       return
     }
 
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault()
-      handleSend()
+    if (event.key === 'Enter') {
+      const isSlashCommand = inputText.trim().startsWith('/')
+      if (isSlashCommand || event.metaKey || event.ctrlKey) {
+        event.preventDefault()
+        handleSend()
+      }
     }
   }
 
@@ -164,39 +215,55 @@ export function DetailDrawer({
       }`}
     >
       <div
-        className={`absolute top-0 right-0 w-[520px] h-full bg-kumo-elevated border-l border-kumo-line flex flex-col shadow-[-8px_0_32px_rgba(0,0,0,0.4)] transition-transform duration-200 ease-out ${
+        style={{ width: drawerWidth }}
+        className={`absolute top-0 right-0 h-full bg-kumo-elevated border-l border-kumo-line flex flex-col shadow-[-8px_0_32px_rgba(0,0,0,0.4)] transition-transform duration-200 ease-out ${
           isVisible ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
+        {/* Resize handle */}
+        <div
+          onMouseDown={handleResizeStart}
+          className="absolute top-0 left-0 w-1.5 h-full cursor-col-resize z-10 group"
+        >
+          <div className="w-px h-full mx-auto group-hover:bg-kumo-brand/50 transition-colors" />
+        </div>
+
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-kumo-line shrink-0">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleCloseWithAnimation}
-              className="w-7 h-7 flex items-center justify-center border border-kumo-line rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors"
-            >
-              <X size={14} />
-            </button>
-            <div>
-              <div className="font-semibold text-sm text-kumo-strong">{agent.name}</div>
-              <div className="text-[11px] text-kumo-subtle">
-                {agent.projectName}
-                {agent.isWorktree ? ` · worktree:${agent.workspaceName}` : ''}
-                {' · '}
-                {formatBranchLabel(agent) || agent.taskSummary.slice(0, 40)}
-              </div>
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-kumo-line shrink-0">
+          <button
+            onClick={handleCloseWithAnimation}
+            className="w-6 h-6 flex items-center justify-center border border-kumo-line rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors shrink-0"
+          >
+            <X size={12} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-xs text-kumo-strong truncate">{agent.name}</div>
+            <div className="flex items-center gap-1 text-[10px] text-kumo-subtle min-w-0">
+              {agent.isWorktree && (
+                <span className="shrink-0 px-1 py-px rounded bg-kumo-brand/10 text-kumo-brand text-[9px] font-medium leading-tight">
+                  WT
+                </span>
+              )}
+              <span className="truncate">
+                {agent.projectName} · {formatBranchLabel(agent) || agent.taskSummary.slice(0, 40)}
+              </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="text-right mr-2">
-              <div className="text-[10px] text-kumo-subtle font-mono">{agent.model}</div>
-              {agent.lastActivityAtMs && (
-                <div className="text-[10px] text-kumo-subtle font-mono">
-                  {formatRelativeTime(agent.lastActivityAtMs)}
-                </div>
-              )}
-            </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap">
+              {agent.model}
+              {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
+            </span>
             <StatusBadge status={agent.status} />
+            {onRemove && (
+              <button
+                onClick={onRemove}
+                className="w-6 h-6 flex items-center justify-center rounded-md text-kumo-subtle hover:text-kumo-danger hover:bg-kumo-danger/10 transition-colors"
+                title="Remove agent"
+              >
+                <Trash size={12} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -311,7 +378,7 @@ export function DetailDrawer({
         </div>
 
         {/* Action Rail */}
-        <div className="flex gap-1.5 px-4 py-2 border-t border-kumo-line shrink-0">
+        <div className="flex gap-1 px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
           )}
@@ -325,15 +392,12 @@ export function DetailDrawer({
           {onCreatePr && (
             <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
           )}
-          {onRemove && (
-            <ActionButton icon={<Trash size={12} />} label="Remove" variant="deny" onClick={onRemove} />
-          )}
-          <ActionButton icon={<Terminal size={12} />} label="Open Terminal" />
-          <ActionButton icon={<ArrowSquareOut size={12} />} label="Open in Editor" onClick={onOpenInEditor} />
+          <ActionButton icon={<Terminal size={12} />} label="Terminal" />
+          <ActionButton icon={<ArrowSquareOut size={12} />} label="Editor" onClick={onOpenInEditor} />
         </div>
 
         {/* Input */}
-        <div className="flex gap-2 px-4 py-3 border-t border-kumo-line shrink-0">
+        <div className="flex gap-2 px-3 py-2 border-t border-kumo-line shrink-0">
           <div className="relative flex-1 flex flex-col gap-1">
             {showCommandAutocomplete && (
               <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
@@ -357,12 +421,12 @@ export function DetailDrawer({
               value={inputText}
               onChange={(event) => setInputText(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Send a message to this agent... Use /new to start clean."
+              placeholder="Send a message to this agent... Type / for commands."
               rows={3}
               className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
             />
             <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Use Tab to autocomplete `/new`.
+              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Use Tab to autocomplete commands.
             </div>
           </div>
           <button

@@ -212,6 +212,241 @@ class AgentController {
   }
 
   /**
+   * List available slash commands for an agent's runtime.
+   */
+  async listCommands(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.command.list({
+      headers: { 'x-opencode-directory': handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Execute a slash command in an agent's session.
+   */
+  async executeCommand(agentId: string, command: string, args: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.command({
+      headers: { 'x-opencode-directory': handle.directory },
+      path: { id: handle.sessionId },
+      body: {
+        command,
+        arguments: args
+      }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Get the current config for an agent's runtime.
+   */
+  async getConfig(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.config.get({
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Update config for an agent's runtime (e.g. change model).
+   */
+  async updateConfig(agentId: string, config: Record<string, unknown>): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.config.update({
+      query: { directory: handle.directory },
+      body: config
+    })
+
+    return result.data
+  }
+
+  /**
+   * List all providers and their models for an agent's runtime.
+   */
+  async getProviders(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.config.providers({
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Get MCP server status for an agent's runtime.
+   */
+  async getMcpStatus(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.mcp.status({
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Connect an MCP server by name.
+   */
+  async connectMcp(agentId: string, name: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.mcp.connect({
+      path: { name },
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Disconnect an MCP server by name.
+   */
+  async disconnectMcp(agentId: string, name: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.mcp.disconnect({
+      path: { name },
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Compact/summarize a session.
+   */
+  async compactSession(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.summarize({
+      headers: { 'x-opencode-directory': handle.directory },
+      path: { id: handle.sessionId },
+      body: { providerID: '', modelID: '' }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Share a session and return share info.
+   */
+  async shareSession(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.share({
+      headers: { 'x-opencode-directory': handle.directory },
+      path: { id: handle.sessionId }
+    })
+
+    return result.data
+  }
+
+  /**
+   * List available agents from config.
+   */
+  async listAgentConfigs(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.app.agents({
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * List available tool IDs.
+   */
+  async listTools(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.tool.ids({
+      query: { directory: handle.directory }
+    })
+
+    return result.data
+  }
+
+  /**
+   * Send a message with a model override.
+   */
+  async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string): Promise<void> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    await runtime.client.session.promptAsync({
+      headers: { 'x-opencode-directory': handle.directory },
+      path: { id: handle.sessionId },
+      body: {
+        parts: [{ type: 'text', text }],
+        model: { providerID, modelID }
+      }
+    })
+  }
+
+  /**
    * Fetch messages for an agent's session.
    */
   async getMessages(agentId: string): Promise<unknown> {

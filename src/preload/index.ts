@@ -26,6 +26,45 @@ const api = {
   getMessages: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-messages', agentId),
 
+  listCommands: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:list-commands', agentId),
+
+  executeCommand: (agentId: string, command: string, args: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:execute-command', agentId, command, args),
+
+  getConfig: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:get-config', agentId),
+
+  updateConfig: (agentId: string, config: Record<string, unknown>): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:update-config', agentId, config),
+
+  getProviders: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:get-providers', agentId),
+
+  getMcpStatus: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:mcp-status', agentId),
+
+  connectMcp: (agentId: string, name: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:mcp-connect', agentId, name),
+
+  disconnectMcp: (agentId: string, name: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:mcp-disconnect', agentId, name),
+
+  compactSession: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:compact', agentId),
+
+  shareSession: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:share', agentId),
+
+  listAgentConfigs: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:list-agent-configs', agentId),
+
+  listTools: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:list-tools', agentId),
+
+  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID),
+
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),
 

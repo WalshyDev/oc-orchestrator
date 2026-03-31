@@ -8,8 +8,6 @@ import {
   PencilSimple,
   Square,
   Robot,
-  Stop,
-  CheckCircle,
   Trash
 } from '@phosphor-icons/react'
 import type { AgentRuntime } from '../types'
@@ -20,8 +18,6 @@ interface FleetTableProps {
   agents: AgentRuntime[]
   selectedId: string | null
   onSelect: (id: string) => void
-  selectedIds?: Set<string>
-  onSelectionChange?: (ids: Set<string>) => void
   onSort?: (column: string, direction: 'asc' | 'desc') => void
   onApprove?: (agentId: string) => void
   onReply?: (agentId: string) => void
@@ -46,8 +42,6 @@ export function FleetTable({
   agents,
   selectedId,
   onSelect,
-  selectedIds = new Set(),
-  onSelectionChange,
   onSort,
   onApprove,
   onReply,
@@ -67,39 +61,6 @@ export function FleetTable({
     setSortDirection(nextDirection)
     onSort?.(column, nextDirection)
   }, [sortColumn, sortDirection, onSort])
-
-  const allSelected = agents.length > 0 && agents.every((agent) => selectedIds.has(agent.id))
-  const someSelected = agents.some((agent) => selectedIds.has(agent.id))
-
-  const handleSelectAll = useCallback(() => {
-    if (!onSelectionChange) return
-    if (allSelected) {
-      onSelectionChange(new Set())
-    } else {
-      onSelectionChange(new Set(agents.map((agent) => agent.id)))
-    }
-  }, [agents, allSelected, onSelectionChange])
-
-  const handleToggleSelection = useCallback((agentId: string) => {
-    if (!onSelectionChange) return
-    const nextIds = new Set(selectedIds)
-    if (nextIds.has(agentId)) {
-      nextIds.delete(agentId)
-    } else {
-      nextIds.add(agentId)
-    }
-    onSelectionChange(nextIds)
-  }, [selectedIds, onSelectionChange])
-
-  const handleBulkStop = useCallback(() => {
-    if (!onStop) return
-    Array.from(selectedIds).forEach((agentId) => onStop(agentId))
-  }, [selectedIds, onStop])
-
-  const handleBulkApprove = useCallback(() => {
-    if (!onApprove) return
-    Array.from(selectedIds).forEach((agentId) => onApprove(agentId))
-  }, [selectedIds, onApprove])
 
   const sortedAgents = useMemo(() => {
     if (!sortColumn) return agents
@@ -166,43 +127,9 @@ export function FleetTable({
 
   return (
     <div className="flex-1 overflow-auto">
-      {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 bg-kumo-overlay border-b border-kumo-line">
-          <span className="text-xs text-kumo-default font-medium">
-            {selectedIds.size} selected
-          </span>
-          <div className="flex gap-1.5 ml-2">
-            <button
-              onClick={handleBulkStop}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-kumo-fill border border-kumo-line text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors"
-            >
-              <Stop size={11} weight="fill" />
-              Stop All
-            </button>
-            <button
-              onClick={handleBulkApprove}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded bg-kumo-fill border border-kumo-line text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors"
-            >
-              <CheckCircle size={11} weight="bold" />
-              Approve All
-            </button>
-          </div>
-        </div>
-      )}
       <table className="w-full border-collapse text-xs">
         <thead className="sticky top-0 z-10">
           <tr>
-            <th className="w-8 px-3 py-2 text-left bg-kumo-overlay border-b border-kumo-line">
-              <input
-                type="checkbox"
-                className="accent-kumo-brand"
-                checked={allSelected}
-                ref={(input) => {
-                  if (input) input.indeterminate = someSelected && !allSelected
-                }}
-                onChange={handleSelectAll}
-              />
-            </th>
             {SORTABLE_COLUMNS.map((col) => (
               <th
                 key={col.key}
@@ -222,9 +149,7 @@ export function FleetTable({
               key={agent.id}
               agent={agent}
               selected={agent.id === selectedId}
-              checked={selectedIds.has(agent.id)}
               onSelect={() => onSelect(agent.id)}
-              onToggleSelection={() => handleToggleSelection(agent.id)}
               onApprove={onApprove ? () => onApprove(agent.id) : undefined}
               onReply={onReply ? () => onReply(agent.id) : undefined}
               onStop={onStop ? () => onStop(agent.id) : undefined}
@@ -241,9 +166,7 @@ export function FleetTable({
 function AgentRow({
   agent,
   selected,
-  checked,
   onSelect,
-  onToggleSelection,
   onApprove,
   onReply,
   onStop,
@@ -252,9 +175,7 @@ function AgentRow({
 }: {
   agent: AgentRuntime
   selected: boolean
-  checked: boolean
   onSelect: () => void
-  onToggleSelection: () => void
   onApprove?: () => void
   onReply?: () => void
   onStop?: () => void
@@ -276,19 +197,14 @@ function AgentRow({
       }`}
     >
       <td className="px-3 py-2">
-        <input
-          type="checkbox"
-          className="accent-kumo-brand"
-          checked={checked}
-          onChange={onToggleSelection}
-          onClick={(event) => event.stopPropagation()}
-        />
-      </td>
-      <td className="px-3 py-2">
         <div className="font-semibold text-kumo-strong">{agent.name}</div>
-        <div className="text-[11px] text-kumo-subtle">
-          {agent.projectName}
-          {agent.isWorktree ? ` · worktree:${agent.workspaceName}` : ''}
+        <div className="flex items-center gap-1 text-[11px] text-kumo-subtle">
+          {agent.isWorktree && (
+            <span className="shrink-0 px-1 py-px rounded bg-kumo-brand/10 text-kumo-brand text-[9px] font-medium leading-tight">
+              WT
+            </span>
+          )}
+          <span className="truncate">{agent.projectName}</span>
         </div>
       </td>
       <td className="px-3 py-2">
@@ -317,6 +233,7 @@ function AgentRow({
           onReply={onReply}
           onStop={onStop}
           onOpen={onOpen}
+          onRemove={onRemove}
         />
       </td>
     </tr>

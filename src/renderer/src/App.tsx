@@ -4,10 +4,12 @@ import { InterruptBanner } from './components/InterruptBanner'
 import { FilterBar, matchesFilter, type FilterValue } from './components/FilterBar'
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
-import { DetailDrawer } from './components/DetailDrawer'
+import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
 import { LaunchModal } from './components/LaunchModal'
 import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
+import { ModelPickerModal } from './components/ModelPickerModal'
+import { McpModal } from './components/McpModal'
 import { useAgentStore, type LiveAgent } from './hooks/useAgentStore'
 import { formatBranchLabel, type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
@@ -44,7 +46,7 @@ export function App() {
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showCommandPalette, setShowCommandPalette] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [freshSessionState, setFreshSessionState] = useState<{
@@ -55,8 +57,50 @@ export function App() {
     status: 'creating' | 'ready'
   } | null>(null)
   const [, setTick] = useState(0)
+  const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
+  const [showModelPicker, setShowModelPicker] = useState(false)
+  const [showMcpModal, setShowMcpModal] = useState(false)
 
   const store = useAgentStore()
+
+  // ── Fetch available commands when an agent is selected ──
+  useEffect(() => {
+    if (!selectedAgentId) {
+      setAgentCommands([])
+      return
+    }
+
+    let cancelled = false
+
+    const fetchCommands = async (): Promise<void> => {
+      const commands = await store.listCommands(selectedAgentId)
+      if (cancelled) return
+
+      const builtInCommands: ChatCommand[] = [
+        { command: '/new', description: 'Start a fresh agent with clean context and a new worktree' },
+        { command: '/model', description: 'Open model picker or set model — /model [provider/model-id]' },
+        { command: '/compact', description: 'Compact conversation to reduce context usage' },
+        { command: '/share', description: 'Share this session' },
+        { command: '/mcp', description: 'Open MCP server manager' }
+      ]
+
+      if (commands && Array.isArray(commands)) {
+        for (const cmd of commands) {
+          if (builtInCommands.some((local) => local.command === `/${cmd.name}`)) continue
+          builtInCommands.push({
+            command: `/${cmd.name}`,
+            description: cmd.description || cmd.template || cmd.name
+          })
+        }
+      }
+
+      setAgentCommands(builtInCommands)
+    }
+
+    void fetchCommands()
+
+    return () => { cancelled = true }
+  }, [selectedAgentId, store])
 
   // ── Live timestamp refresh (every 30s) ──
   useEffect(() => {
@@ -339,11 +383,6 @@ export function App() {
     setSortDirection(direction)
   }, [])
 
-  // ── Selection handler ──
-  const handleSelectionChange = useCallback((ids: Set<string>) => {
-    setSelectedIds(ids)
-  }, [])
-
   // ── Row actions ──
   const handleRowApprove = useCallback(async (agentId: string) => {
     const permission = findPermissionForAgent(agentId)
@@ -377,12 +416,6 @@ export function App() {
     const result = await store.removeAgent(agentId)
     if (!result?.ok) return
 
-    setSelectedIds((previousIds) => {
-      if (!previousIds.has(agentId)) return previousIds
-      const nextIds = new Set(previousIds)
-      nextIds.delete(agentId)
-      return nextIds
-    })
 
     if (selectedAgentId === agentId) {
       setSelectedAgentId(null)
@@ -397,24 +430,54 @@ export function App() {
     })
   }, [findLiveAgent, selectedAgentId, store])
 
-  // ── Bulk actions ──
-  const handleBulkStop = useCallback(async () => {
-    const promises = Array.from(selectedIds).map((agentId) => store.abortAgent(agentId))
-    await Promise.allSettled(promises)
-    setSelectedIds(new Set())
-  }, [selectedIds, store])
-
-  const handleBulkApprove = useCallback(async () => {
-    const promises = Array.from(selectedIds).map((agentId) => {
-      const permission = findPermissionForAgent(agentId)
-      if (permission) {
-        return store.respondToPermission(agentId, permission.id, 'once')
+  // ── Built-in command handlers ──
+  const handleBuiltInCommand = useCallback(async (agentId: string, commandName: string, commandArgs: string): Promise<boolean> => {
+    switch (commandName) {
+      case 'model': {
+        if (!commandArgs) {
+          setShowModelPicker(true)
+          return true
+        }
+        // Direct model set: /model provider/model-id
+        const updateResult = await window.api.updateConfig(agentId, { model: commandArgs })
+        if (!updateResult.ok) {
+          console.error('Failed to update model:', updateResult.error)
+        }
+        return true
       }
-      return Promise.resolve()
-    })
-    await Promise.allSettled(promises)
-    setSelectedIds(new Set())
-  }, [selectedIds, findPermissionForAgent, store])
+
+      case 'compact': {
+        await window.api.compactSession(agentId)
+        return true
+      }
+
+      case 'share': {
+        const shareResult = await window.api.shareSession(agentId)
+        if (shareResult.ok && shareResult.data) {
+          const shareData = shareResult.data as { url?: string }
+          if (shareData.url) {
+            await window.api.openExternal(shareData.url)
+          }
+        }
+        return true
+      }
+
+      case 'mcp': {
+        setShowMcpModal(true)
+        return true
+      }
+
+      default: {
+        // Check if it's a custom command from the API (skills, /init, /review, etc.)
+        const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
+        if (isKnownCommand) {
+          await store.executeCommand(agentId, commandName, commandArgs)
+          return true
+        }
+        return false
+      }
+    }
+  }, [agentCommands, store])
 
   // ── Detail drawer actions ──
   const handleSendMessage = useCallback(async (text: string) => {
@@ -472,8 +535,18 @@ export function App() {
       return
     }
 
+    // Check if input is a slash command (other than /new which is handled above)
+    if (trimmedText.startsWith('/')) {
+      const spaceIndex = trimmedText.indexOf(' ')
+      const commandName = spaceIndex === -1 ? trimmedText.slice(1) : trimmedText.slice(1, spaceIndex)
+      const commandArgs = spaceIndex === -1 ? '' : trimmedText.slice(spaceIndex + 1).trim()
+
+      const handled = await handleBuiltInCommand(selectedAgentId, commandName, commandArgs)
+      if (handled) return
+    }
+
     await store.sendMessage(selectedAgentId, text)
-  }, [findLiveAgent, selectedAgentId, store])
+  }, [handleBuiltInCommand, findLiveAgent, selectedAgentId, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -711,8 +784,6 @@ export function App() {
         agents={filteredAgents}
         selectedId={selectedAgentId}
         onSelect={setSelectedAgentId}
-        selectedIds={selectedIds}
-        onSelectionChange={handleSelectionChange}
         onSort={handleSort}
         onApprove={handleRowApprove}
         onReply={handleRowReply}
@@ -735,11 +806,11 @@ export function App() {
           files={selectedFiles}
           tools={selectedTools}
           events={selectedEvents}
+          commands={agentCommands}
           sessionNotice={freshSessionState?.nextAgentId === selectedAgent.id
             ? `Fresh session ready on ${freshSessionState.branchName
               ? formatBranchLabel({
-                branchName: freshSessionState.branchName,
-                isWorktree: freshSessionState.isWorktree ?? false
+                branchName: freshSessionState.branchName
               })
               : 'new branch'}`
             : freshSessionState?.status === 'creating' && freshSessionState.sourceAgentId === selectedAgent.id
@@ -769,6 +840,30 @@ export function App() {
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
 
+      {showModelPicker && selectedAgentId && (
+        <ModelPickerModal
+          agentId={selectedAgentId}
+          currentModel={selectedAgent?.model}
+          onClose={() => setShowModelPicker(false)}
+          onSelect={async (modelPath) => {
+            if (!selectedAgentId) return
+            const result = await window.api.updateConfig(selectedAgentId, { model: modelPath })
+            if (result.ok) {
+              setShowModelPicker(false)
+            } else {
+              console.error('Failed to set model:', result.error)
+            }
+          }}
+        />
+      )}
+
+      {showMcpModal && selectedAgentId && (
+        <McpModal
+          agentId={selectedAgentId}
+          onClose={() => setShowMcpModal(false)}
+        />
+      )}
+
       {showCommandPalette && (
         <CommandPalette
           agents={displayAgents.map((agent) => ({
@@ -794,8 +889,18 @@ export function App() {
             setFilter(newFilter)
             setShowCommandPalette(false)
           }}
-          onStopAll={handleBulkStop}
-          onApproveAll={handleBulkApprove}
+          onStopAll={async () => {
+            const running = store.agents.filter((liveAgent) => liveAgent.status === 'running' || liveAgent.status === 'needs_approval' || liveAgent.status === 'needs_input')
+            await Promise.allSettled(running.map((liveAgent) => store.abortAgent(liveAgent.id)))
+          }}
+          onApproveAll={async () => {
+            const blocked = store.agents.filter((liveAgent) => liveAgent.status === 'needs_approval')
+            await Promise.allSettled(blocked.map((liveAgent) => {
+              const permission = findPermissionForAgent(liveAgent.id)
+              if (permission) return store.respondToPermission(liveAgent.id, permission.id, 'once')
+              return Promise.resolve()
+            }))
+          }}
         />
       )}
     </div>

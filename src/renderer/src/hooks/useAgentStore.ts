@@ -995,6 +995,21 @@ export function useAgentStore() {
     return window.api.sendMessage(agentId, text)
   }, [])
 
+  const listCommands = useCallback(async (agentId: string) => {
+    if (!window.api) return null
+    const result = await window.api.listCommands(agentId)
+    if (!result.ok) {
+      console.error('Failed to list commands:', result.error)
+      return null
+    }
+    return result.data as Array<{ name: string; description?: string; template: string }> | null
+  }, [])
+
+  const executeCommand = useCallback(async (agentId: string, command: string, args: string) => {
+    if (!window.api) return
+    return window.api.executeCommand(agentId, command, args)
+  }, [])
+
   const prepareFreshAgent = useCallback((agentId: string, prompt?: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
@@ -1071,6 +1086,8 @@ export function useAgentStore() {
     healthy: storeState.healthy,
     launchAgent,
     sendMessage,
+    listCommands,
+    executeCommand,
     prepareFreshAgent,
     respondToPermission,
     abortAgent,

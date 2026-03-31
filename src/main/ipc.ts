@@ -80,6 +80,136 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:list-commands', async (_event, agentId: string) => {
+    try {
+      const commands = await agentController.listCommands(agentId)
+      return { ok: true, data: commands }
+    } catch (error) {
+      console.error('[IPC] agent:list-commands failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:execute-command', async (_event, agentId: string, command: string, args: string) => {
+    try {
+      const result = await agentController.executeCommand(agentId, command, args)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:execute-command failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:get-config', async (_event, agentId: string) => {
+    try {
+      const config = await agentController.getConfig(agentId)
+      return { ok: true, data: config }
+    } catch (error) {
+      console.error('[IPC] agent:get-config failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:update-config', async (_event, agentId: string, config: Record<string, unknown>) => {
+    try {
+      const result = await agentController.updateConfig(agentId, config)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:update-config failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:get-providers', async (_event, agentId: string) => {
+    try {
+      const providers = await agentController.getProviders(agentId)
+      return { ok: true, data: providers }
+    } catch (error) {
+      console.error('[IPC] agent:get-providers failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:mcp-status', async (_event, agentId: string) => {
+    try {
+      const status = await agentController.getMcpStatus(agentId)
+      return { ok: true, data: status }
+    } catch (error) {
+      console.error('[IPC] agent:mcp-status failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:mcp-connect', async (_event, agentId: string, name: string) => {
+    try {
+      const result = await agentController.connectMcp(agentId, name)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:mcp-connect failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:mcp-disconnect', async (_event, agentId: string, name: string) => {
+    try {
+      const result = await agentController.disconnectMcp(agentId, name)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:mcp-disconnect failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:compact', async (_event, agentId: string) => {
+    try {
+      const result = await agentController.compactSession(agentId)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:compact failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:share', async (_event, agentId: string) => {
+    try {
+      const result = await agentController.shareSession(agentId)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] agent:share failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:list-agent-configs', async (_event, agentId: string) => {
+    try {
+      const agents = await agentController.listAgentConfigs(agentId)
+      return { ok: true, data: agents }
+    } catch (error) {
+      console.error('[IPC] agent:list-agent-configs failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:list-tools', async (_event, agentId: string) => {
+    try {
+      const tools = await agentController.listTools(agentId)
+      return { ok: true, data: tools }
+    } catch (error) {
+      console.error('[IPC] agent:list-tools failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:send-message-with-model', async (_event, agentId: string, text: string, providerID: string, modelID: string) => {
+    try {
+      await agentController.sendMessageWithModel(agentId, text, providerID, modelID)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:send-message-with-model failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:get-messages', async (_event, agentId: string) => {
     try {
       const messages = await agentController.getMessages(agentId)

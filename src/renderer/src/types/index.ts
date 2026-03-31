@@ -72,9 +72,8 @@ export function isUrgent(agent: AgentRuntime): boolean {
   return isBlocked(agent.status) || agent.status === 'errored'
 }
 
-export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName' | 'isWorktree'>): string {
-  if (!agent.branchName) return ''
-  return agent.isWorktree ? `${agent.branchName} (worktree)` : agent.branchName
+export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
+  return agent.branchName ?? ''
 }
 
 export function statusLabel(status: AgentStatus): string {
