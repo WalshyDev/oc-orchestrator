@@ -1099,6 +1099,15 @@ export function useAgentStore() {
     return extractToolCallsFromMessages(messages)
   }, [storeState])
 
+  const renameAgent = useCallback((agentId: string, newName: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    agent.name = newName
+    agent.autoNamed = false
+    persistAgentMeta(agentId, { displayName: newName })
+    emit()
+  }, [])
+
   return {
     agents,
     permissions,
@@ -1111,6 +1120,7 @@ export function useAgentStore() {
     respondToPermission,
     abortAgent,
     removeAgent,
+    renameAgent,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,

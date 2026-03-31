@@ -579,6 +579,28 @@ export function App() {
     }
   }, [selectedAgentId, findLiveAgent])
 
+  const handleCreatePrForAgent = useCallback(async (agentId: string) => {
+    await store.sendMessage(agentId, loadSettings().createPrPrompt)
+  }, [store])
+
+  const handleOpenTerminal = useCallback((agentId: string) => {
+    const liveAgent = findLiveAgent(agentId)
+    if (!liveAgent) return
+    const apiObj = window.api as unknown as Record<string, unknown> | undefined
+    if (apiObj && typeof apiObj.openTerminal === 'function') {
+      (apiObj.openTerminal as (opts: { path: string }) => void)({ path: liveAgent.directory })
+    }
+  }, [findLiveAgent])
+
+  const handleOpenInEditorForAgent = useCallback((agentId: string) => {
+    const liveAgent = findLiveAgent(agentId)
+    if (!liveAgent) return
+    const apiObj = window.api as unknown as Record<string, unknown> | undefined
+    if (apiObj && typeof apiObj.openInEditor === 'function') {
+      (apiObj.openInEditor as (dir: string) => void)(liveAgent.directory)
+    }
+  }, [findLiveAgent])
+
   // ── Launch modal actions ──
   const handleLaunch = useCallback(async (
     directory: string,
@@ -790,6 +812,10 @@ export function App() {
         onStop={handleRowStop}
         onOpen={handleRowOpen}
         onRemove={handleRemoveAgent}
+        onRename={(agentId, newName) => store.renameAgent(agentId, newName)}
+        onOpenTerminal={handleOpenTerminal}
+        onOpenInEditor={handleOpenInEditorForAgent}
+        onCreatePr={handleCreatePrForAgent}
       />
 
       <StatusBar
