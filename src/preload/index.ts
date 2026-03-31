@@ -68,6 +68,9 @@ const api = {
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),
 
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string }): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:update-meta', agentId, meta),
+
   getStatuses: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:statuses'),
 

@@ -25,6 +25,7 @@ export interface OrchestratorApi {
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
@@ -119,6 +120,8 @@ export interface AgentLaunchedPayload {
   workspaceName: string
   prompt: string
   title: string
+  displayName?: string
+  taskSummary?: string
 }
 
 export type ListAgentsPayload = AgentLaunchedPayload[]

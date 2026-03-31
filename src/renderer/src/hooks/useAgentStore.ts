@@ -139,6 +139,10 @@ function emit(): void {
   }
 }
 
+function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
+  window.api?.updateAgentMeta(agentId, meta)
+}
+
 /**
  * Derive a short kebab-case agent name from a prompt string.
  * Takes the first few meaningful words (up to 30 chars).
@@ -480,8 +484,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
         const time = info?.time as { updated?: number } | undefined
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
         const title = info?.title as string | undefined
-        if (title) {
+        if (title && !title.match(/^agent-\d+(-\d+)?$/)) {
           agent.taskSummary = title.slice(0, 120)
+          persistAgentMeta(agent.id, { taskSummary: agent.taskSummary })
         }
         emit()
       }
@@ -586,6 +591,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
                 agent.name = deriveNameFromPrompt(text)
                 agent.autoNamed = false
               }
+
+              persistAgentMeta(agent.id, { displayName: agent.name, taskSummary: agent.taskSummary })
             }
           }
         }
@@ -778,12 +785,12 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     runtimeId: payload.runtimeId,
     sessionId: payload.sessionId,
     directory: payload.directory,
-    name: hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName,
+    name: payload.displayName || existingAgent?.name || (hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName),
     projectName: payload.projectName || existingAgent?.projectName || payload.directory.split('/').pop() || payload.directory,
     branchName: existingAgent?.branchName ?? payload.branchName ?? '',
     isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
     workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
-    taskSummary: existingAgent?.taskSummary ?? (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
+    taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     model: existingAgent?.model ?? 'starting...',
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
@@ -992,6 +999,17 @@ export function useAgentStore() {
 
   const sendMessage = useCallback(async (agentId: string, text: string) => {
     if (!window.api) return
+
+    // Optimistically update task summary and status
+    const agent = state.agents.get(agentId)
+    if (agent && text.trim()) {
+      agent.taskSummary = text.trim().slice(0, 120)
+      agent.status = 'running'
+      agent.lastActivityAt = Date.now()
+      persistAgentMeta(agentId, { taskSummary: agent.taskSummary })
+      emit()
+    }
+
     return window.api.sendMessage(agentId, text)
   }, [])
 
@@ -1030,6 +1048,7 @@ export function useAgentStore() {
 
     agent.lastActivityAt = Date.now()
     agent.blockedSince = undefined
+    persistAgentMeta(agentId, { displayName: agent.name, taskSummary: agent.taskSummary })
     emit()
   }, [])
 

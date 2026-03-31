@@ -234,8 +234,20 @@ export function registerIpcHandlers(): void {
         isWorktree: agent.isWorktree,
         workspaceName: agent.workspaceName,
         prompt: agent.prompt,
-        title: agent.title
+        title: agent.title,
+        displayName: agent.displayName,
+        taskSummary: agent.taskSummary
       }))
+    }
+  })
+
+  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string }) => {
+    try {
+      agentController.updateAgentMeta(agentId, meta)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:update-meta failed:', error)
+      return { ok: false, error: String(error) }
     }
   })
 
