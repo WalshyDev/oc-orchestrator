@@ -345,6 +345,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('runtime:config', async () => {
+    try {
+      const data = await agentController.getConfigFromAnyRuntime()
+      return { ok: true, data }
+    } catch (error) {
+      console.error('[IPC] runtime:config failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   // ── Dialog ──
 
   ipcMain.handle('dialog:select-directory', async () => {

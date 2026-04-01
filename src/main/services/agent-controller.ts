@@ -464,6 +464,26 @@ class AgentController {
   }
 
   /**
+   * Get config from any available runtime.
+   * Useful for inferring the system default model on launch screens.
+   */
+  async getConfigFromAnyRuntime(): Promise<unknown> {
+    for (const handle of this.agents.values()) {
+      try {
+        const runtime = await this.ensureRuntimeForAgent(handle)
+        const result = await runtime.client.config.get({
+          directory: handle.directory
+        })
+        return result.data
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+
+  /**
    * Get MCP server status for an agent's runtime.
    */
   async getMcpStatus(agentId: string): Promise<unknown> {

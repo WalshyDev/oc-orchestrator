@@ -144,6 +144,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     menuClassName={selectMenuClasses}
                   />
                 </div>
+                <p className="text-[11px] text-kumo-subtle">
+                  Pre-selected model when launching new agents. &quot;System Default&quot; uses the model from the project&apos;s opencode config.
+                </p>
               </div>
 
               {/* Default Editor */}
