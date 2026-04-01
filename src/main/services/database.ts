@@ -50,6 +50,18 @@ function getDb(): SqlJsDatabase {
   return db
 }
 
+function readCurrentRow<T>(statement: ReturnType<SqlJsDatabase['prepare']>): T {
+  const columns = statement.getColumnNames()
+  const values = statement.get()
+  const row = {} as Record<string, unknown>
+
+  for (let idx = 0; idx < columns.length; idx++) {
+    row[columns[idx]] = values[idx]
+  }
+
+  return row as T
+}
+
 class Database {
   private initialized = false
 
@@ -160,37 +172,30 @@ class Database {
 
   private queryOne<T>(sql: string, params: unknown[] = []): T | undefined {
     const sqlDb = getDb()
-    const stmt = sqlDb.prepare(sql)
-    stmt.bind(params)
-    if (stmt.step()) {
-      const columns = stmt.getColumnNames()
-      const values = stmt.get()
-      stmt.free()
-      const row = {} as Record<string, unknown>
-      for (let idx = 0; idx < columns.length; idx++) {
-        row[columns[idx]] = values[idx]
-      }
-      return row as T
+    const statement = sqlDb.prepare(sql)
+    statement.bind(params)
+
+    if (!statement.step()) {
+      statement.free()
+      return undefined
     }
-    stmt.free()
-    return undefined
+
+    const row = readCurrentRow<T>(statement)
+    statement.free()
+    return row
   }
 
   private queryAll<T>(sql: string, params: unknown[] = []): T[] {
     const sqlDb = getDb()
-    const stmt = sqlDb.prepare(sql)
-    stmt.bind(params)
+    const statement = sqlDb.prepare(sql)
+    statement.bind(params)
     const results: T[] = []
-    while (stmt.step()) {
-      const columns = stmt.getColumnNames()
-      const values = stmt.get()
-      const row = {} as Record<string, unknown>
-      for (let idx = 0; idx < columns.length; idx++) {
-        row[columns[idx]] = values[idx]
-      }
-      results.push(row as T)
+
+    while (statement.step()) {
+      results.push(readCurrentRow<T>(statement))
     }
-    stmt.free()
+
+    statement.free()
     return results
   }
 
@@ -223,8 +228,7 @@ class Database {
   }
 
   deleteProject(projectId: string): boolean {
-    const before = this.getProject(projectId)
-    if (!before) return false
+    if (!this.getProject(projectId)) return false
     this.execute('DELETE FROM projects WHERE id = ?', [projectId])
     return true
   }
