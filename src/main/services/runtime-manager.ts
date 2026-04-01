@@ -102,6 +102,9 @@ class RuntimeManager {
 
   private async runHealthChecks(): Promise<void> {
     for (const [runtimeId, runtime] of this.runtimes) {
+      // Skip runtimes that were removed while we were iterating
+      if (!this.runtimes.has(runtimeId)) continue
+
       try {
         await this.checkHealth(runtime)
 

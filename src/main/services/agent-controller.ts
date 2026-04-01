@@ -57,6 +57,7 @@ class AgentController {
   private bridges = new Map<string, EventBridge>()
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
+  private stoppingIdleRuntimes = false
 
   async restorePersistedAgents(): Promise<void> {
     const persistedAgents = this.loadPersistedAgents()
@@ -710,6 +711,9 @@ class AgentController {
     const existingRuntime = runtimeManager.getRuntime(handle.runtimeId)
     if (existingRuntime) return existingRuntime
 
+    // Runtime was stopped (idle timeout, crash, etc.) — spin up a fresh one.
+    // OpenCode persists sessions to disk, so the existing sessionId remains valid.
+    console.log(`[AgentController] Reconnecting agent ${handle.id} to a new runtime`)
     const runtime = await this.ensureBridgeForDirectory(handle.directory)
     handle.runtimeId = runtime.id
     handle.bridge = this.bridges.get(runtime.id)!
@@ -731,23 +735,30 @@ class AgentController {
   }
 
   private async stopIdleRuntimes(): Promise<void> {
-    const idleTimeoutMs = Number.parseInt(
-      process.env.OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS ?? `${DEFAULT_RUNTIME_IDLE_TIMEOUT_MS}`,
-      10
-    )
+    if (this.stoppingIdleRuntimes) return
+    this.stoppingIdleRuntimes = true
 
-    if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
-
-    const now = Date.now()
-
-    for (const runtime of runtimeManager.getAllRuntimes()) {
-      const idleForMs = now - runtime.lastActivityAt
-      if (idleForMs < idleTimeoutMs) continue
-
-      console.log(
-        `[AgentController] Stopping idle runtime ${runtime.id} after ${Math.round(idleForMs / 1000)}s of inactivity`
+    try {
+      const idleTimeoutMs = Number.parseInt(
+        process.env.OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS ?? `${DEFAULT_RUNTIME_IDLE_TIMEOUT_MS}`,
+        10
       )
-      await this.stopRuntime(runtime.id)
+
+      if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
+
+      const now = Date.now()
+
+      for (const runtime of runtimeManager.getAllRuntimes()) {
+        const idleForMs = now - runtime.lastActivityAt
+        if (idleForMs < idleTimeoutMs) continue
+
+        console.log(
+          `[AgentController] Stopping idle runtime ${runtime.id} after ${Math.round(idleForMs / 1000)}s of inactivity`
+        )
+        await this.stopRuntime(runtime.id)
+      }
+    } finally {
+      this.stoppingIdleRuntimes = false
     }
   }
 
