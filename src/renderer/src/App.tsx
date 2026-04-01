@@ -123,6 +123,14 @@ export function App() {
     return window.api.onUpdateAvailable((data) => setUpdateInfo(data))
   }, [])
 
+  // ── Navigate to agent when desktop notification is clicked ──
+  useEffect(() => {
+    if (!window.api?.onNotificationSelectAgent) return
+    return window.api.onNotificationSelectAgent((data) => {
+      setSelectedAgentId(data.agentId)
+    })
+  }, [])
+
   // ── Convert live agents to AgentRuntime shape ──
   const liveAgentsAsRuntimes: AgentRuntime[] = useMemo(() => {
     return store.agents.map((agent): AgentRuntime => ({

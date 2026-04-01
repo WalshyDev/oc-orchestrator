@@ -191,6 +191,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('update:available', handler)
     return () => ipcRenderer.removeListener('update:available', handler)
+  },
+
+  onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('notification:select-agent', handler)
+    return () => ipcRenderer.removeListener('notification:select-agent', handler)
   }
 }
 
