@@ -31,6 +31,7 @@ export interface AgentHandle {
   title: string
   displayName: string
   taskSummary: string
+  persistedStatus?: string
   bridge: EventBridge
 }
 
@@ -42,6 +43,7 @@ interface PersistedAgentHandle {
   title: string
   displayName?: string
   taskSummary?: string
+  persistedStatus?: string
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -80,6 +82,7 @@ class AgentController {
           title: persistedAgent.title,
           displayName: persistedAgent.displayName ?? '',
           taskSummary: persistedAgent.taskSummary ?? '',
+          persistedStatus: persistedAgent.persistedStatus,
           bridge: this.bridges.get(runtime.id)!
         }
 
@@ -239,14 +242,15 @@ class AgentController {
   }
 
   /**
-   * Update the persisted display name and task summary for an agent.
+   * Update the persisted display name, task summary, and/or status for an agent.
    */
-  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
+  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }): void {
     const handle = this.agents.get(agentId)
     if (!handle) return
 
     if (meta.displayName !== undefined) handle.displayName = meta.displayName
     if (meta.taskSummary !== undefined) handle.taskSummary = meta.taskSummary
+    if (meta.persistedStatus !== undefined) handle.persistedStatus = meta.persistedStatus
     this.persistAgents()
   }
 
@@ -945,7 +949,8 @@ class AgentController {
       prompt: agent.prompt,
       title: agent.title,
       displayName: agent.displayName,
-      taskSummary: agent.taskSummary
+      taskSummary: agent.taskSummary,
+      persistedStatus: agent.persistedStatus
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))

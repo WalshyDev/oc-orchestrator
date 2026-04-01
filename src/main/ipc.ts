@@ -287,12 +287,13 @@ export function registerIpcHandlers(): void {
         prompt: agent.prompt,
         title: agent.title,
         displayName: agent.displayName,
-        taskSummary: agent.taskSummary
+        taskSummary: agent.taskSummary,
+        persistedStatus: agent.persistedStatus
       }))
     }
   })
 
-  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string }) => {
+  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }) => {
     try {
       agentController.updateAgentMeta(agentId, meta)
       return { ok: true }

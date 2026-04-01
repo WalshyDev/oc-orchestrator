@@ -166,7 +166,7 @@ function emit(): void {
   }
 }
 
-function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
+function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }): void {
   window.api?.updateAgentMeta(agentId, meta)
 }
 
@@ -506,6 +506,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
           } else {
             agent.blockedSince = undefined
           }
+          if (newStatus === 'completed') {
+            persistAgentMeta(agent.id, { persistedStatus: 'completed' })
+          }
           emit()
         }
       }
@@ -545,6 +548,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'completed'
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
+        persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit()
       }
       break
@@ -1018,6 +1022,12 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     if (!agent) continue
 
     const nextStatus = mapSessionStatus(statusEntry.status.type)
+    // Don't let the server override a persisted completed/completed_manual status with idle.
+    // The server reports idle for finished sessions, but we want to preserve the user's
+    // manual completion or the previously-derived completed state across restarts.
+    if (nextStatus === 'idle' && (agent.status === 'completed' || agent.status === 'completed_manual')) {
+      continue
+    }
     agent.status = nextStatus
     if (nextStatus === 'needs_input' || nextStatus === 'needs_approval') {
       agent.blockedSince = agent.blockedSince ?? Date.now()
@@ -1135,7 +1145,10 @@ export function useAgentStore() {
 
       if (agentsResult.ok && agentsResult.data) {
         for (const agent of agentsResult.data) {
-          upsertAgent(agent, 'idle')
+          const restoredStatus = (agent.persistedStatus === 'completed' || agent.persistedStatus === 'completed_manual')
+            ? agent.persistedStatus as AgentStatus
+            : 'idle'
+          upsertAgent(agent, restoredStatus)
           shouldEmit = true
         }
 
@@ -1247,7 +1260,7 @@ export function useAgentStore() {
       agent.status = 'running'
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
-      persistAgentMeta(agentId, { taskSummary: agent.taskSummary })
+      persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
     }
 
     // Optimistically clear any pending questions for this agent
@@ -1467,6 +1480,7 @@ export function useAgentStore() {
       agent.status = 'completed_manual'
     }
     agent.lastActivityAt = Date.now()
+    persistAgentMeta(agentId, { persistedStatus: agent.status })
     emit()
   }, [])
 

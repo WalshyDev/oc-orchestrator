@@ -32,7 +32,7 @@ export interface OrchestratorApi {
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
-  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string }) => Promise<IpcResult>
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
   rejectQuestion: (agentId: string, requestId: string) => Promise<IpcResult>
@@ -142,6 +142,7 @@ export interface AgentLaunchedPayload {
   title: string
   displayName?: string
   taskSummary?: string
+  persistedStatus?: string
 }
 
 export interface SessionResetPayload {
