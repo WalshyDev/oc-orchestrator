@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-// In dev, run electron-builder install-app-deps to set up native modules.
-// For global npm installs, skip gracefully (no native modules to rebuild).
+// Set up Electron app dependencies when available; skip cleanly for global installs.
 
 const { execSync } = require('child_process')
 
