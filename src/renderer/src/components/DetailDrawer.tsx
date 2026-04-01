@@ -438,8 +438,8 @@ export function DetailDrawer({
           {onDeny && (
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />
           )}
-          {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input') && (
-            <ActionButton icon={<Square size={12} weight="fill" />} label="Stop" onClick={onAbort} />
+          {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
+            <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
           )}
           <div className="flex-1" />
           {onChangeModel && (
@@ -853,11 +853,13 @@ function ActionButton({
   icon,
   label,
   variant = 'default',
+  disabled = false,
   onClick
 }: {
   icon: React.ReactNode
   label: string
   variant?: 'default' | 'approve' | 'deny'
+  disabled?: boolean
   onClick?: () => void
 }) {
   const styles = {
@@ -869,7 +871,8 @@ function ActionButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${styles[variant]}`}
+      disabled={disabled}
+      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
     >
       {icon}
       {label}
