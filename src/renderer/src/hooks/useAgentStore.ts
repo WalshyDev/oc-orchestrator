@@ -408,12 +408,17 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
 // ── Event Processing ──
 
-const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected'])
+const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected', 'idle'])
 
 function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
   if (agent.status === newStatus) return
   if (!NOTIFIABLE_STATUSES.has(newStatus)) return
-  window.api?.notifyAgentStatus(agent.id, newStatus, agent.name, agent.projectName)
+
+  // Treat running→idle as "completed" for notification purposes
+  const notifyStatus = (newStatus === 'idle' && agent.status === 'running') ? 'completed' : newStatus
+  if (notifyStatus === 'idle') return // only notify idle when coming from running
+
+  window.api?.notifyAgentStatus(agent.id, notifyStatus, agent.name, agent.projectName)
 }
 
 function processEvent(payload: OpenCodeEventPayload): void {
