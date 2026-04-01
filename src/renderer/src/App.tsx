@@ -10,7 +10,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
-import { useAgentStore, type LiveAgent } from './hooks/useAgentStore'
+import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
@@ -54,6 +54,7 @@ export function App() {
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showMcpModal, setShowMcpModal] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
+  const [appVersion, setAppVersion] = useState('')
 
   const store = useAgentStore()
 
@@ -112,10 +113,30 @@ export function App() {
     }
   }, [])
 
+  // ── Suppress notifications for the agent whose transcript is open ──
+  useEffect(() => {
+    setViewedAgentId(selectedAgentId)
+  }, [selectedAgentId])
+
+  // ── Fetch app version ──
+  useEffect(() => {
+    window.api.getVersion().then((result) => {
+      if (result.ok && result.data) setAppVersion(result.data)
+    })
+  }, [])
+
   // ── Update notification ──
   useEffect(() => {
     if (!window.api?.onUpdateAvailable) return
     return window.api.onUpdateAvailable((data) => setUpdateInfo(data))
+  }, [])
+
+  // ── Navigate to agent when desktop notification is clicked ──
+  useEffect(() => {
+    if (!window.api?.onNotificationSelectAgent) return
+    return window.api.onNotificationSelectAgent((data) => {
+      setSelectedAgentId(data.agentId)
+    })
   }, [])
 
   // ── Convert live agents to AgentRuntime shape ──
@@ -138,9 +159,9 @@ export function App() {
     }))
   }, [store.agents])
 
-  // ── Convert live permissions to Interrupt shape ──
+  // ── Convert live permissions + needs_input agents to Interrupt shape ──
   const liveInterrupts: Interrupt[] = useMemo(() => {
-    return store.permissions.map((perm): Interrupt => {
+    const permissionInterrupts = store.permissions.map((perm): Interrupt => {
       const agent = store.agents.find((agnt) => agnt.id === perm.agentId)
       return {
         id: perm.id,
@@ -152,6 +173,20 @@ export function App() {
         createdAt: formatTimeAgo(perm.createdAt)
       }
     })
+
+    const inputInterrupts = store.agents
+      .filter((agent) => agent.status === 'needs_input')
+      .map((agent): Interrupt => ({
+        id: `input-${agent.id}`,
+        runtimeId: agent.id,
+        agentName: agent.name,
+        projectName: agent.projectName,
+        kind: 'needs_input',
+        reason: 'Agent is waiting for your response',
+        createdAt: formatTimeAgo(agent.blockedSince ?? agent.lastActivityAt)
+      }))
+
+    return [...permissionInterrupts, ...inputInterrupts]
   }, [store.permissions, store.agents])
 
   // ── Display data: always live (no mock fallback) ──
@@ -230,6 +265,10 @@ export function App() {
   )
 
   // ── Messages for selected agent ──
+  // Depend on messageVersion (bumped only on message/part changes) instead
+  // of the whole store object, so this memo doesn't recompute on unrelated
+  // store emissions (status updates, heartbeats, etc.) which would create a
+  // new array reference and trigger the DetailDrawer auto-scroll effect.
   const selectedMessages: Message[] = useMemo(() => {
     if (!selectedAgent) return []
 
@@ -297,7 +336,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [selectedAgent, store])
+  }, [selectedAgent, store.messageVersion])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -333,7 +372,7 @@ export function App() {
       }
 
     return tools
-  }, [selectedAgent, store])
+  }, [selectedAgent, store.messageVersion])
 
   // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {
@@ -783,6 +822,7 @@ export function App() {
         agentCount={displayAgents.length}
         projectCount={projectNames.length}
         healthy={store.healthy}
+        version={appVersion}
       />
 
       {selectedAgent && (

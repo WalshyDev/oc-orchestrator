@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   GearSix,
@@ -63,6 +63,13 @@ const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('general')
   const [settings, setSettings] = useState(loadSettings)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  useEffect(() => {
+    window.api.getVersion().then((result) => {
+      if (result.ok && result.data) setAppVersion(result.data)
+    })
+  }, [])
 
   const updateSettings = (partial: Partial<AppSettings>) => {
     const updated = { ...settings, ...partial }
@@ -296,7 +303,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
               <div className="text-center">
                 <h3 className="text-lg font-semibold text-kumo-strong">OC Orchestrator</h3>
-                <p className="text-sm text-kumo-subtle mt-1">Version 0.1.0</p>
+                <p className="text-sm text-kumo-subtle mt-1">Version {appVersion || '...'}</p>
               </div>
               <p className="text-xs text-kumo-subtle text-center max-w-xs">
                 Supervise concurrent coding agents from a single dashboard.

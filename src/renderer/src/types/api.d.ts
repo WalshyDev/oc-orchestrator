@@ -55,6 +55,9 @@ export interface OrchestratorApi {
   getNotificationPreferences: () => Promise<IpcResult<NotificationPreferences>>
   setNotificationPreference: (eventType: NotifiableEventType, enabled: boolean) => Promise<IpcResult>
 
+  // ── App Info ──
+  getVersion: () => Promise<IpcResult<string>>
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string) => Promise<IpcResult>
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }) => Promise<IpcResult>
@@ -68,6 +71,7 @@ export interface OrchestratorApi {
   onRuntimeStopped: (callback: (data: { id: string }) => void) => () => void
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => () => void
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => () => void
+  onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => () => void
 }
 
 export interface WorktreeListEntry {

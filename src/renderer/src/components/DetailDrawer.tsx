@@ -11,7 +11,8 @@ import {
   CircleNotch,
   CaretDown,
   CaretRight,
-  Trash
+  Trash,
+  ChatCircleDots
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
@@ -95,6 +96,8 @@ export function DetailDrawer({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
+  const isAutoScrollingRef = useRef(false)
+  const hasRenderedRef = useRef(false)
   const isResizingRef = useRef(false)
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
@@ -139,22 +142,64 @@ export function DetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive.
+  // First render uses 'instant' so the drawer opens already at the bottom
+  // without an animation the user has to fight against.
   useEffect(() => {
     if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current) {
       setShowJumpToLatest(false)
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+      const container = transcriptScrollRef.current
+      if (container) {
+        const isFirstRender = !hasRenderedRef.current
+        hasRenderedRef.current = true
+
+        if (isFirstRender) {
+          // Jump instantly on first render — no animation to fight
+          container.scrollTop = container.scrollHeight
+        } else {
+          isAutoScrollingRef.current = true
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'smooth'
+          })
+          setTimeout(() => {
+            isAutoScrollingRef.current = false
+          }, 400)
+        }
+      }
     } else if (activeTab === 'transcript' && messages.length > 0) {
       setShowJumpToLatest(true)
     }
   }, [messages, activeTab])
 
+  // Cancel any in-flight smooth-scroll when the user physically scrolls
+  // (wheel / trackpad). Programmatic scrollTo does NOT fire wheel events,
+  // so this cleanly distinguishes user intent from animation.
+  useEffect(() => {
+    const container = transcriptScrollRef.current
+    if (!container) return
+
+    const handleWheel = () => {
+      if (isAutoScrollingRef.current) {
+        isAutoScrollingRef.current = false
+        // Snap to current position to kill the smooth-scroll animation
+        container.scrollTo({ top: container.scrollTop, behavior: 'instant' })
+      }
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: true })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [])
+
   const handleTranscriptScroll = () => {
+    // Ignore scroll events fired by programmatic smooth-scroll animations
+    if (isAutoScrollingRef.current) return
+
     const container = transcriptScrollRef.current
     if (!container) return
 
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    shouldAutoScrollRef.current = distanceFromBottom < 48
+    shouldAutoScrollRef.current = distanceFromBottom < 80
     if (shouldAutoScrollRef.current) {
       setShowJumpToLatest(false)
     }
@@ -163,7 +208,17 @@ export function DetailDrawer({
   const handleJumpToLatest = () => {
     shouldAutoScrollRef.current = true
     setShowJumpToLatest(false)
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = transcriptScrollRef.current
+    if (container) {
+      isAutoScrollingRef.current = true
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth'
+      })
+      setTimeout(() => {
+        isAutoScrollingRef.current = false
+      }, 400)
+    }
   }
 
   const handleSend = () => {
@@ -179,12 +234,9 @@ export function DetailDrawer({
       return
     }
 
-    if (event.key === 'Enter') {
-      const isSlashCommand = inputText.trim().startsWith('/')
-      if (isSlashCommand || event.metaKey || event.ctrlKey) {
-        event.preventDefault()
-        handleSend()
-      }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      handleSend()
     }
   }
 
@@ -355,6 +407,18 @@ export function DetailDrawer({
                 </div>
               )}
 
+              {/* Waiting for input card */}
+              {!permission && agent.status === 'needs_input' && (
+                <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+                    <ChatCircleDots size={14} weight="fill" /> Waiting for your response
+                  </div>
+                  <div className="text-xs text-kumo-default">
+                    This agent has asked a question and is waiting for your reply. Use the input below to respond.
+                  </div>
+                </div>
+              )}
+
               {showJumpToLatest && activeTab === 'transcript' && (
                 <div className="sticky bottom-2 z-10 flex justify-center">
                   <button
@@ -426,7 +490,7 @@ export function DetailDrawer({
               className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
             />
             <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Use Tab to autocomplete commands.
+              Enter to send. Shift+Enter for a new line. Use Tab to autocomplete commands.
             </div>
           </div>
           <button

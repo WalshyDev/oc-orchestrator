@@ -116,6 +116,7 @@ interface AgentStoreState {
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
   healthy: boolean
+  messageVersion: number // bumped only when message data changes
 }
 
 let state: AgentStoreState = {
@@ -124,7 +125,8 @@ let state: AgentStoreState = {
   messages: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
-  healthy: true
+  healthy: true,
+  messageVersion: 0
 }
 
 let eventCounter = 0
@@ -137,6 +139,11 @@ function emit(): void {
   for (const listener of listeners) {
     listener()
   }
+}
+
+function emitMessageChange(): void {
+  state.messageVersion++
+  emit()
 }
 
 function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
@@ -406,6 +413,14 @@ function hydrateHistoricalMessages(entries: unknown): void {
   }
 }
 
+// ── Viewed Agent Suppression ──
+
+let viewedAgentId: string | null = null
+
+export function setViewedAgentId(agentId: string | null): void {
+  viewedAgentId = agentId
+}
+
 // ── Event Processing ──
 
 const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected', 'idle'])
@@ -413,6 +428,9 @@ const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored',
 function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
   if (agent.status === newStatus) return
   if (!NOTIFIABLE_STATUSES.has(newStatus)) return
+
+  // Don't notify for the agent whose transcript is currently open
+  if (agent.id === viewedAgentId) return
 
   // Treat running→idle as "completed" for notification purposes
   const notifyStatus = (newStatus === 'idle' && agent.status === 'running') ? 'completed' : newStatus
@@ -553,7 +571,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         existing.role = role
       }
 
-      emit()
+      emitMessageChange()
       break
     }
 
@@ -590,12 +608,14 @@ function processEvent(payload: OpenCodeEventPayload): void {
           message.parts.push(newPart)
         }
 
-        // Update agent activity
+        // Update agent activity (but don't clobber blocked states like needs_input/needs_approval)
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
-          agent.status = 'running'
-          agent.blockedSince = undefined
+          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval') {
+            agent.status = 'running'
+            agent.blockedSince = undefined
+          }
 
           // Update task summary from first user text part
           if (message.role === 'user' && partType === 'text' && part.text) {
@@ -614,7 +634,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
         }
 
-        emit()
+        emitMessageChange()
       }
       break
     }
@@ -1170,6 +1190,7 @@ export function useAgentStore() {
     agents,
     permissions,
     healthy: storeState.healthy,
+    messageVersion: storeState.messageVersion,
     launchAgent,
     sendMessage,
     listCommands,

@@ -137,6 +137,10 @@ const api = {
   setNotificationPreference: (eventType: string, enabled: boolean): Promise<IpcResult> =>
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
+  // ── App Info ──
+  getVersion: (): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('app:version'),
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName),
@@ -191,6 +195,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('update:available', handler)
     return () => ipcRenderer.removeListener('update:available', handler)
+  },
+
+  onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('notification:select-agent', handler)
+    return () => ipcRenderer.removeListener('notification:select-agent', handler)
   }
 }
 
