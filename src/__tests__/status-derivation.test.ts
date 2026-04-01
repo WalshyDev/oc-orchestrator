@@ -68,6 +68,52 @@ function formatModelName(modelId: string): string {
   return modelId.length > 16 ? modelId.slice(0, 16) : modelId
 }
 
+// ── Extracted from processEvent message.part.updated handler ──
+// Simulates the status update logic when a message part update arrives
+
+interface MinimalAgent {
+  status: AgentStatus
+  lastActivityAt: number
+  blockedSince?: number
+}
+
+/**
+ * Mirrors the logic in useAgentStore.ts processEvent 'message.part.updated' handler.
+ * When a message part update arrives, the agent status should only be reset to 'running'
+ * if it's NOT in a blocked state (needs_input or needs_approval).
+ */
+function applyMessagePartUpdate(agent: MinimalAgent): void {
+  agent.lastActivityAt = Date.now()
+  if (agent.status !== 'needs_input' && agent.status !== 'needs_approval') {
+    agent.status = 'running'
+    agent.blockedSince = undefined
+  }
+}
+
+/**
+ * Mirrors the logic in processEvent 'session.status' handler.
+ * Sets agent status from a session status event.
+ */
+function applySessionStatus(agent: MinimalAgent, statusType: string): void {
+  const newStatus = mapSessionStatus(statusType)
+  agent.status = newStatus
+  agent.lastActivityAt = Date.now()
+  if (newStatus === 'needs_input' || newStatus === 'needs_approval') {
+    agent.blockedSince = agent.blockedSince ?? Date.now()
+  } else {
+    agent.blockedSince = undefined
+  }
+}
+
+/**
+ * Mirrors the logic in processEvent 'permission.updated' handler.
+ */
+function applyPermissionUpdate(agent: MinimalAgent): void {
+  agent.status = 'needs_approval'
+  agent.blockedSince = agent.blockedSince ?? Date.now()
+  agent.lastActivityAt = Date.now()
+}
+
 // ── Tests ──
 
 describe('mapSessionStatus', () => {
@@ -252,5 +298,114 @@ describe('formatModelName', () => {
 
   it('returns short unknown model names as-is', () => {
     expect(formatModelName('my-model')).toBe('my-model')
+  })
+})
+
+describe('applyMessagePartUpdate – blocked status preservation', () => {
+  it('sets status to running when agent is in starting state', () => {
+    const agent: MinimalAgent = { status: 'starting', lastActivityAt: 0 }
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('running')
+  })
+
+  it('keeps status as running when already running', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('running')
+  })
+
+  it('does NOT clobber needs_input status', () => {
+    const blockedAt = Date.now() - 5000
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0, blockedSince: blockedAt }
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBe(blockedAt)
+  })
+
+  it('does NOT clobber needs_approval status', () => {
+    const blockedAt = Date.now() - 5000
+    const agent: MinimalAgent = { status: 'needs_approval', lastActivityAt: 0, blockedSince: blockedAt }
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('needs_approval')
+    expect(agent.blockedSince).toBe(blockedAt)
+  })
+
+  it('clears blockedSince when transitioning non-blocked state to running', () => {
+    const agent: MinimalAgent = { status: 'idle', lastActivityAt: 0, blockedSince: 12345 }
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('running')
+    expect(agent.blockedSince).toBeUndefined()
+  })
+
+  it('always updates lastActivityAt', () => {
+    const before = Date.now()
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0, blockedSince: before }
+    applyMessagePartUpdate(agent)
+    expect(agent.lastActivityAt).toBeGreaterThanOrEqual(before)
+  })
+})
+
+describe('event sequence: question flow (session.status → message.part.updated)', () => {
+  it('preserves needs_input when message.part.updated arrives after session.status waiting', () => {
+    // Simulates: AI calls question tool → server sends session.status "waiting" → then message.part.updated for the tool call
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // Step 1: session.status with "waiting" arrives
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBeDefined()
+
+    // Step 2: message.part.updated for the question tool call arrives after
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBeDefined()
+  })
+
+  it('preserves needs_approval when message.part.updated arrives after permission.updated', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // Step 1: permission.updated arrives
+    applyPermissionUpdate(agent)
+    expect(agent.status).toBe('needs_approval')
+    expect(agent.blockedSince).toBeDefined()
+
+    // Step 2: message.part.updated arrives after
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('needs_approval')
+    expect(agent.blockedSince).toBeDefined()
+  })
+
+  it('transitions back to running when session.status busy arrives after needs_input', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // Agent enters needs_input
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+
+    // User responds, server sends session.status "busy"
+    applySessionStatus(agent, 'busy')
+    expect(agent.status).toBe('running')
+    expect(agent.blockedSince).toBeUndefined()
+  })
+
+  it('handles rapid status transitions without losing blocked state', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // Multiple message.part.updated while running → stays running
+    applyMessagePartUpdate(agent)
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('running')
+
+    // Enters waiting state
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+    const blockedTime = agent.blockedSince
+
+    // Multiple message.part.updated while blocked → stays needs_input
+    applyMessagePartUpdate(agent)
+    applyMessagePartUpdate(agent)
+    applyMessagePartUpdate(agent)
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBe(blockedTime)
   })
 })
