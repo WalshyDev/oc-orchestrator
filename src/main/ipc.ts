@@ -470,6 +470,19 @@ export function registerIpcHandlers(): void {
 
   // ── Notifications ──
 
+  ipcMain.handle('agent:notify-status', async (_event, agentId: string, status: string, agentName: string, projectName?: string) => {
+    try {
+      const notifiable = ['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected']
+      if (notifiable.includes(status)) {
+        agentController.checkAndNotify(agentId, status as NotifiableEventType, agentName, projectName)
+      }
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:notify-status failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('notifications:get-preferences', async () => {
     try {
       const preferences = notificationService.getPreferences()

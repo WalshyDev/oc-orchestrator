@@ -138,6 +138,9 @@ const api = {
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
   // ── Shell Integration ──
+  notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName),
+
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 

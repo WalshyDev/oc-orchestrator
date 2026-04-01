@@ -408,6 +408,14 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
 // ── Event Processing ──
 
+const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected'])
+
+function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
+  if (agent.status === newStatus) return
+  if (!NOTIFIABLE_STATUSES.has(newStatus)) return
+  window.api?.notifyAgentStatus(agent.id, newStatus, agent.name, agent.projectName)
+}
+
 function processEvent(payload: OpenCodeEventPayload): void {
   const { runtimeId, event } = payload
   const { type, properties } = event
@@ -427,6 +435,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       if (agent) {
         const newStatus = mapSessionStatus(statusInfo.type)
         if (agent.status !== newStatus) {
+          notifyIfNeeded(agent, newStatus)
           agent.status = newStatus
           agent.lastActivityAt = Date.now()
           if (newStatus === 'needs_input' || newStatus === 'needs_approval') {
@@ -456,6 +465,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        notifyIfNeeded(agent, 'errored')
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
         emit()
@@ -467,6 +477,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        notifyIfNeeded(agent, 'completed')
         agent.status = 'completed'
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
@@ -611,6 +622,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        notifyIfNeeded(agent, 'needs_approval')
         agent.status = 'needs_approval'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.lastActivityAt = Date.now()
