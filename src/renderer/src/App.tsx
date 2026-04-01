@@ -10,7 +10,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
-import { useAgentStore, type LiveAgent } from './hooks/useAgentStore'
+import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
@@ -111,6 +111,11 @@ export function App() {
       window.api.setNotificationPreference(key as keyof typeof settings.notifications, enabled)
     }
   }, [])
+
+  // ── Suppress notifications for the agent whose transcript is open ──
+  useEffect(() => {
+    setViewedAgentId(selectedAgentId)
+  }, [selectedAgentId])
 
   // ── Update notification ──
   useEffect(() => {
