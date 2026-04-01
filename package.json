@@ -9,6 +9,7 @@
   "files": [
     "bin/",
     "out/",
+    "scripts/",
     "resources/icon.png",
     "resources/icon.icns",
     "resources/icon.svg"
@@ -17,7 +18,7 @@
     "dev": "unset ELECTRON_RUN_AS_NODE && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "postinstall": "electron-builder install-app-deps && electron-rebuild -f -w better-sqlite3",
+    "postinstall": "node scripts/postinstall.js",
     "lint": "eslint .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
