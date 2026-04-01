@@ -11,6 +11,7 @@ const statusStyles: Record<string, string> = {
   needs_approval: 'bg-status-approval-bg text-status-approval',
   idle: 'bg-status-idle-bg text-status-idle',
   completed: 'bg-status-completed-bg text-status-completed',
+  completed_manual: 'bg-status-completed-bg text-status-completed',
   errored: 'bg-status-errored-bg text-status-errored',
   starting: 'bg-kumo-fill text-kumo-subtle',
   stopping: 'bg-kumo-fill text-kumo-subtle',

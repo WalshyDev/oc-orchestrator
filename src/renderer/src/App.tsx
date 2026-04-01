@@ -446,7 +446,8 @@ export function App() {
       all: displayAgents.length,
       blocked: displayAgents.filter((agent) => agent.status === 'needs_input' || agent.status === 'needs_approval').length,
       running: displayAgents.filter((agent) => agent.status === 'running').length,
-      idle: displayAgents.filter((agent) => agent.status === 'idle' || agent.status === 'completed').length
+      idle: displayAgents.filter((agent) => agent.status === 'idle').length,
+      completed: displayAgents.filter((agent) => agent.status === 'completed' || agent.status === 'completed_manual').length
     }),
     [displayAgents]
   )
@@ -497,6 +498,10 @@ export function App() {
   const handleRowOpen = useCallback((agentId: string) => {
     setSelectedAgentId(agentId)
   }, [])
+
+  const handleToggleComplete = useCallback((agentId: string) => {
+    store.toggleManualComplete(agentId)
+  }, [store])
 
   const handleRemoveAgent = useCallback(async (agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -896,6 +901,7 @@ export function App() {
           setSelectedAgentId(agentId)
           setShowModelPicker(true)
         }}
+        onToggleComplete={handleToggleComplete}
       />
 
       <StatusBar
@@ -927,6 +933,7 @@ export function App() {
           onOpenInEditor={handleOpenInEditor}
           onChangeModel={() => setShowModelPicker(true)}
           onOpenTerminal={handleOpenTerminalForDrawer}
+          onToggleComplete={() => handleToggleComplete(selectedAgent.id)}
         />
       )}
 

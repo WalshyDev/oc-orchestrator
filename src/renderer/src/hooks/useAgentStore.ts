@@ -652,7 +652,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
-          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping') {
+          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed_manual') {
             agent.status = 'running'
             agent.blockedSince = undefined
           }
@@ -1407,6 +1407,18 @@ export function useAgentStore() {
     emit()
   }, [])
 
+  const toggleManualComplete = useCallback((agentId: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    if (agent.status === 'completed_manual') {
+      agent.status = 'idle'
+    } else if (agent.status === 'idle' || agent.status === 'completed') {
+      agent.status = 'completed_manual'
+    }
+    agent.lastActivityAt = Date.now()
+    emit()
+  }, [])
+
   return {
     agents,
     permissions,
@@ -1425,6 +1437,7 @@ export function useAgentStore() {
     removeAgent,
     renameAgent,
     setAgentModel,
+    toggleManualComplete,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,
