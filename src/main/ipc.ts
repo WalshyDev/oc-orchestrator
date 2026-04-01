@@ -535,10 +535,16 @@ export function registerIpcHandlers(): void {
       let command: string
 
       if (process.platform === 'darwin') {
+        // Escape single quotes in path for AppleScript strings
+        const escapedPath = options.path.replace(/'/g, "'\\''")
+
         if (terminal === 'default') {
-          // Use macOS `open` which respects the default terminal
-          command = `open -a Terminal "${options.path}"`
+          // Terminal.app ignores directory arguments via `open -a`, so use AppleScript
+          command = `osascript -e 'tell application "Terminal" to do script "cd '\\''${escapedPath}'\\'' && clear"' -e 'tell application "Terminal" to activate'`
+        } else if (terminal === 'iTerm') {
+          command = `osascript -e 'tell application "iTerm" to create window with default profile command "cd '\\''${escapedPath}'\\'' && clear"' -e 'tell application "iTerm" to activate'`
         } else {
+          // Warp, Alacritty, Kitty, Ghostty, and others handle directory args via `open`
           command = `open -a "${terminal}" "${options.path}"`
         }
       } else {
