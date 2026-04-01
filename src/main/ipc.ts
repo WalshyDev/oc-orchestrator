@@ -42,9 +42,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string, agent?: string) => {
+  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
     try {
-      await agentController.sendMessage(agentId, text, agent)
+      await agentController.sendMessage(agentId, text, agent, attachments)
       return { ok: true }
     } catch (error) {
       console.error('[IPC] agent:send-message failed:', error)
@@ -251,9 +251,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('agent:send-message-with-model', async (_event, agentId: string, text: string, providerID: string, modelID: string) => {
+  ipcMain.handle('agent:send-message-with-model', async (_event, agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
     try {
-      await agentController.sendMessageWithModel(agentId, text, providerID, modelID)
+      await agentController.sendMessageWithModel(agentId, text, providerID, modelID, attachments)
       return { ok: true }
     } catch (error) {
       console.error('[IPC] agent:send-message-with-model failed:', error)

@@ -108,11 +108,14 @@ export interface LiveMessage {
 
 export interface LiveMessagePart {
   id: string
-  type: 'text' | 'tool' | 'reasoning' | 'step-start' | 'step-finish' | string
+  type: 'text' | 'tool' | 'reasoning' | 'step-start' | 'step-finish' | 'file' | string
   text?: string
   toolName?: string
   toolState?: string
   toolInput?: string
+  fileMime?: string
+  fileUrl?: string
+  fileName?: string
 }
 
 export interface FileChangeRecord {
@@ -391,6 +394,13 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
     nextPart.text = part.text ?? part.state?.output ?? part.state?.error ?? part.state?.title ?? part.state?.raw
   }
 
+  if (part.type === 'file') {
+    const filePart = part as unknown as Record<string, unknown>
+    nextPart.fileMime = filePart.mime as string | undefined
+    nextPart.fileUrl = filePart.url as string | undefined
+    nextPart.fileName = filePart.filename as string | undefined
+  }
+
   return nextPart
 }
 
@@ -634,6 +644,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
             existingPart.toolState = getToolState(toolState)
             existingPart.toolInput = stringifyToolInput(toolState?.input)
           }
+          if (partType === 'file') {
+            existingPart.fileMime = part.mime as string | undefined
+            existingPart.fileUrl = part.url as string | undefined
+            existingPart.fileName = part.filename as string | undefined
+          }
         } else {
           const newPart: LiveMessagePart = {
             id: partId,
@@ -644,6 +659,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
             newPart.toolName = part.tool as string | undefined
             newPart.toolState = getToolState(toolState)
             newPart.toolInput = stringifyToolInput(toolState?.input)
+          }
+          if (partType === 'file') {
+            newPart.fileMime = part.mime as string | undefined
+            newPart.fileUrl = part.url as string | undefined
+            newPart.fileName = part.filename as string | undefined
           }
           message.parts.push(newPart)
         }
@@ -1214,7 +1234,7 @@ export function useAgentStore() {
     return result
   }, [])
 
-  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string) => {
+  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
     if (!window.api) return
 
     // Don't allow sending while agent is stopping
@@ -1230,7 +1250,7 @@ export function useAgentStore() {
       emit()
     }
 
-    return window.api.sendMessage(agentId, text, agentConfig)
+    return window.api.sendMessage(agentId, text, agentConfig, attachments)
   }, [])
 
   const listCommands = useCallback(async (agentId: string) => {

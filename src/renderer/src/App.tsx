@@ -366,14 +366,23 @@ export function App() {
           timestamp: msg.createdAt
         }))
 
-      if (textContent.trim()) {
+      const images = msg.parts
+        .filter((part) => part.type === 'file' && part.fileUrl && part.fileMime?.startsWith('image/'))
+        .map((part) => ({
+          mime: part.fileMime!,
+          url: part.fileUrl!,
+          filename: part.fileName
+        }))
+
+      if (textContent.trim() || images.length > 0) {
         flushPendingToolCalls(msg.id, msg.createdAt)
 
         transcriptItems.push({
           id: msg.id,
           role: msg.role,
           content: textContent,
-          timestamp: formatTimeAgo(msg.createdAt)
+          timestamp: formatTimeAgo(msg.createdAt),
+          ...(images.length > 0 ? { images } : {})
         })
       }
 
@@ -585,7 +594,7 @@ export function App() {
   }, [agentCommands, store])
 
   // ── Detail drawer actions ──
-  const handleSendMessage = useCallback(async (text: string) => {
+  const handleSendMessage = useCallback(async (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
     if (!selectedAgentId) return
     const trimmedText = text.trim()
 
@@ -612,12 +621,12 @@ export function App() {
       const isKnownAgent = agentConfigs.some((cfg) => cfg.name === mentionedAgent)
       if (isKnownAgent) {
         const cleanText = trimmedText.replace(AGENT_MENTION_REGEX, '').trim()
-        await store.sendMessage(selectedAgentId, cleanText || trimmedText, mentionedAgent)
+        await store.sendMessage(selectedAgentId, cleanText || trimmedText, mentionedAgent, attachments)
         return
       }
     }
 
-    await store.sendMessage(selectedAgentId, text)
+    await store.sendMessage(selectedAgentId, text, undefined, attachments)
   }, [agentConfigs, handleBuiltInCommand, selectedAgentId, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {

@@ -4,9 +4,15 @@ export interface IpcResult<T = unknown> {
   error?: string
 }
 
+export interface MessageAttachment {
+  mime: string
+  dataUrl: string
+  filename?: string
+}
+
 export interface OrchestratorApi {
   launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }) => Promise<IpcResult>
-  sendMessage: (agentId: string, text: string, agent?: string) => Promise<IpcResult>
+  sendMessage: (agentId: string, text: string, agent?: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
   removeAgent: (agentId: string) => Promise<IpcResult>
@@ -24,7 +30,7 @@ export interface OrchestratorApi {
   shareSession: (agentId: string) => Promise<IpcResult>
   listAgentConfigs: (agentId: string) => Promise<IpcResult>
   listTools: (agentId: string) => Promise<IpcResult>
-  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string) => Promise<IpcResult>
+  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>

@@ -253,18 +253,26 @@ class AgentController {
   /**
    * Send a message to an existing agent session.
    * Optionally invoke a specific agent config by name.
+   * Optionally include file attachments (images, PDFs, etc.) as additional parts.
    */
-  async sendMessage(agentId: string, text: string, agent?: string): Promise<void> {
+  async sendMessage(agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    const parts: Array<{ type: string; [key: string]: unknown }> = [{ type: 'text', text }]
+    if (attachments?.length) {
+      for (const att of attachments) {
+        parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
+      }
+    }
+
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
-      parts: [{ type: 'text', text }],
+      parts,
       ...(agent ? { agent } : {})
     })
   }
@@ -609,17 +617,24 @@ class AgentController {
   /**
    * Send a message with a model override.
    */
-  async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string): Promise<void> {
+  async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    const parts: Array<{ type: string; [key: string]: unknown }> = [{ type: 'text', text }]
+    if (attachments?.length) {
+      for (const att of attachments) {
+        parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
+      }
+    }
+
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
-      parts: [{ type: 'text', text }],
+      parts,
       model: { providerID, modelID }
     })
   }
