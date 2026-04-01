@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "description": "OpenCode Orchestrator — supervise concurrent coding agents",
   "main": "./out/main/index.js",
+  "bin": {
+    "oc-orchestrator": "./bin/oc-orchestrator.js"
+  },
+  "files": [
+    "bin/",
+    "out/",
+    "resources/icon.png",
+    "resources/icon.icns",
+    "resources/icon.svg"
+  ],
   "scripts": {
     "dev": "unset ELECTRON_RUN_AS_NODE && electron-vite dev",
     "build": "electron-vite build",
@@ -13,7 +23,11 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "vitest run",
-    "test:integration": "OPENCODE_INTEGRATION=1 vitest run integration"
+    "test:integration": "OPENCODE_INTEGRATION=1 vitest run integration",
+    "prepublishOnly": "npm run build",
+    "release": "npm run typecheck && npm run test && npm version patch && npm publish",
+    "release:minor": "npm run typecheck && npm run test && npm version minor && npm publish",
+    "release:major": "npm run typecheck && npm run test && npm version major && npm publish"
   },
   "engines": {
     "node": "24.14.0"
@@ -22,7 +36,8 @@
     "@opencode-ai/sdk": "1.3.3",
     "@phosphor-icons/react": "^2.1.7",
     "@rollup/rollup-darwin-arm64": "4.60.0",
-    "better-sqlite3": "12.8.0"
+    "better-sqlite3": "12.8.0",
+    "electron": "41.1.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -33,7 +48,6 @@
     "@types/react-dom": "^19.0.4",
     "@typescript-eslint/parser": "8.57.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "41.1.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "eslint": "^10.1.0",

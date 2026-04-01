@@ -182,6 +182,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('event:error', handler)
     return () => ipcRenderer.removeListener('event:error', handler)
+  },
+
+  onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('update:available', handler)
+    return () => ipcRenderer.removeListener('update:available', handler)
   }
 }
 

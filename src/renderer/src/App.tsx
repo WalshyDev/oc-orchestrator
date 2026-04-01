@@ -53,6 +53,7 @@ export function App() {
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showMcpModal, setShowMcpModal] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
 
   const store = useAgentStore()
 
@@ -101,6 +102,12 @@ export function App() {
       setTick((prev) => prev + 1)
     }, 30_000)
     return () => clearInterval(interval)
+  }, [])
+
+  // ── Update notification ──
+  useEffect(() => {
+    if (!window.api?.onUpdateAvailable) return
+    return window.api.onUpdateAvailable((data) => setUpdateInfo(data))
   }, [])
 
   // ── Convert live agents to AgentRuntime shape ──
@@ -722,6 +729,22 @@ export function App() {
         onOpenCommandPalette={() => setShowCommandPalette(true)}
         onSettings={() => setShowSettings(true)}
       />
+
+      {updateInfo && (
+        <div className="flex items-center justify-between px-4 py-1.5 bg-kumo-brand/10 border-b border-kumo-brand/20 text-xs text-kumo-brand shrink-0">
+          <span>
+            Update available: <strong>v{updateInfo.latestVersion}</strong> (current: v{updateInfo.currentVersion}).
+            Run <code className="font-mono bg-kumo-fill px-1 py-0.5 rounded text-[10px]">npm update -g oc-orchestrator</code> to update.
+          </span>
+          <button
+            type="button"
+            onClick={() => setUpdateInfo(null)}
+            className="text-kumo-subtle hover:text-kumo-default ml-4"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {displayInterrupts.length > 0 && (
         <InterruptBanner

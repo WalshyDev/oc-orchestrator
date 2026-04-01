@@ -1,16 +1,47 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, nativeImage } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc'
 import { agentController } from './services/agent-controller'
 import { database } from './services/database'
 import { runtimeManager } from './services/runtime-manager'
+import { startUpdateChecker, stopUpdateChecker } from './services/update-checker'
 
 let mainWindowRef: BrowserWindow | null = null
 
+const WINDOW_BOUNDS_KEY = 'window_bounds'
+
+function getAppIcon(): Electron.NativeImage | undefined {
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(__dirname, '../../resources/icon.png')
+
+  try {
+    return nativeImage.createFromPath(iconPath)
+  } catch {
+    return undefined
+  }
+}
+
+function loadWindowBounds(): { x?: number; y?: number; width: number; height: number; maximized?: boolean } {
+  try {
+    const raw = database.getPreference(WINDOW_BOUNDS_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return { width: 1440, height: 900 }
+}
+
+function saveWindowBounds(window: BrowserWindow): void {
+  const maximized = window.isMaximized()
+  const bounds = maximized ? window.getNormalBounds() : window.getBounds()
+  database.setPreference(WINDOW_BOUNDS_KEY, JSON.stringify({ ...bounds, maximized }))
+}
+
 function createWindow(): BrowserWindow {
+  const savedBounds = loadWindowBounds()
+
   const mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    icon: getAppIcon(),
+    ...savedBounds,
     minWidth: 1024,
     minHeight: 680,
     show: false,
@@ -23,9 +54,18 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  if (savedBounds.maximized) {
+    mainWindow.maximize()
+  }
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  mainWindow.on('resized', () => saveWindowBounds(mainWindow))
+  mainWindow.on('moved', () => saveWindowBounds(mainWindow))
+  mainWindow.on('maximize', () => saveWindowBounds(mainWindow))
+  mainWindow.on('unmaximize', () => saveWindowBounds(mainWindow))
 
   mainWindow.on('closed', () => {
     if (mainWindowRef === mainWindow) {
@@ -48,6 +88,12 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  // Set dock icon (macOS dev mode)
+  const appIcon = getAppIcon()
+  if (appIcon && process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIcon)
+  }
+
   // Initialize the database (constructor runs migrations)
   console.log('[Main] Database initialized')
   database.logEvent(null, 'app:started')
@@ -62,6 +108,7 @@ app.whenReady().then(async () => {
   // Start runtime health checks after window creation
   runtimeManager.startHealthChecks()
   agentController.startIdleRuntimeChecks()
+  startUpdateChecker()
   console.log('[Main] Health checks started')
 
   app.on('activate', () => {
@@ -79,6 +126,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   console.log('[Main] Shutting down all agents and runtimes...')
+  stopUpdateChecker()
   agentController.stopAll()
 
   console.log('[Main] Closing database...')

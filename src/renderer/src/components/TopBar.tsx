@@ -1,4 +1,4 @@
-import { Command, GearSix, Plus, Sun } from '@phosphor-icons/react'
+import { Command, GearSix, Plus } from '@phosphor-icons/react'
 
 interface TopBarProps {
   runningCount: number
@@ -22,7 +22,7 @@ export function TopBar({
       {/* Left: Logo — pl-20 clears macOS traffic light buttons */}
       <div className="no-drag flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <Sun size={18} weight="bold" className="text-kumo-brand" />
+          <img src="/favicon.svg" alt="" className="w-5 h-5" />
           <span className="font-bold text-sm text-kumo-strong">OC Orchestrator</span>
         </div>
       </div>

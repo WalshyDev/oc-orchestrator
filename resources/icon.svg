@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="line-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Connection lines from center to satellite nodes -->
+  <line x1="512" y1="512" x2="280" y2="300" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="744" y2="300" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="280" y2="724" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="744" y2="724" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="512" y2="220" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="200" y2="512" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="824" y2="512" stroke="url(#line-grad)" stroke-width="6"/>
+  <line x1="512" y1="512" x2="512" y2="804" stroke="url(#line-grad)" stroke-width="6"/>
+
+  <!-- Satellite agent nodes -->
+  <circle cx="280" cy="300" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="744" cy="300" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="280" cy="724" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="744" cy="724" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="512" cy="220" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="200" cy="512" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="824" cy="512" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+  <circle cx="512" cy="804" r="36" fill="#334155" stroke="#475569" stroke-width="4"/>
+
+  <!-- Small dot inside each satellite (active indicator) -->
+  <circle cx="280" cy="300" r="12" fill="#94a3b8"/>
+  <circle cx="744" cy="300" r="12" fill="#94a3b8"/>
+  <circle cx="280" cy="724" r="12" fill="#94a3b8"/>
+  <circle cx="744" cy="724" r="12" fill="#94a3b8"/>
+  <circle cx="512" cy="220" r="12" fill="#94a3b8"/>
+  <circle cx="200" cy="512" r="12" fill="#94a3b8"/>
+  <circle cx="824" cy="512" r="12" fill="#94a3b8"/>
+  <circle cx="512" cy="804" r="12" fill="#94a3b8"/>
+
+  <!-- Central orchestrator node — larger, amber accent -->
+  <circle cx="512" cy="512" r="80" fill="#292524" stroke="url(#accent)" stroke-width="8"/>
+
+  <!-- Inner glow ring -->
+  <circle cx="512" cy="512" r="56" fill="none" stroke="#f59e0b" stroke-width="3" opacity="0.4"/>
+
+  <!-- Center dot -->
+  <circle cx="512" cy="512" r="28" fill="url(#accent)"/>
+</svg>
