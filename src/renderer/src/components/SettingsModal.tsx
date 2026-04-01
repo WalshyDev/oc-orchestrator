@@ -24,6 +24,7 @@ const MODEL_OPTIONS = [
 const EDITOR_OPTIONS = [
   { value: 'vscode', label: 'VS Code' },
   { value: 'cursor', label: 'Cursor' },
+  { value: 'windsurf', label: 'Windsurf' },
   { value: 'custom', label: 'Custom Command' },
 ] as const
 

@@ -516,11 +516,8 @@ export function App() {
     if (!selectedAgentId) return
     const liveAgent = findLiveAgent(selectedAgentId)
     if (!liveAgent) return
-    // Attempt to open in the configured editor via IPC
-    const apiObj = window.api as unknown as Record<string, unknown> | undefined
-    if (apiObj && typeof apiObj.openInEditor === 'function') {
-      (apiObj.openInEditor as (dir: string) => void)(liveAgent.directory)
-    }
+    const settings = loadSettings()
+    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' })
   }, [selectedAgentId, findLiveAgent])
 
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
@@ -539,10 +536,8 @@ export function App() {
   const handleOpenInEditorForAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
-    const apiObj = window.api as unknown as Record<string, unknown> | undefined
-    if (apiObj && typeof apiObj.openInEditor === 'function') {
-      (apiObj.openInEditor as (dir: string) => void)(liveAgent.directory)
-    }
+    const settings = loadSettings()
+    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' })
   }, [findLiveAgent])
 
   // ── Launch modal actions ──

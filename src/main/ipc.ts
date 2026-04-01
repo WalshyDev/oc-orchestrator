@@ -494,10 +494,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('shell:open-in-editor', async (_event, options: {
     path: string
-    editor: 'vscode' | 'cursor'
+    editor: 'vscode' | 'cursor' | 'windsurf'
   }) => {
     try {
-      const command = options.editor === 'vscode' ? 'code' : 'cursor'
+      const editorCommands: Record<string, string> = {
+        vscode: 'code',
+        cursor: 'cursor',
+        windsurf: 'windsurf'
+      }
+      const command = editorCommands[options.editor] ?? 'code'
       await new Promise<void>((resolve, reject) => {
         exec(`${command} "${options.path}"`, (error) => {
           if (error) reject(error)

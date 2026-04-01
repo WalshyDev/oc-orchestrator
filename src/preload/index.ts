@@ -138,7 +138,7 @@ const api = {
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
   // ── Shell Integration ──
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' }): Promise<IpcResult> =>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
   openTerminal: (options: { path: string }): Promise<IpcResult> =>

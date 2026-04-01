@@ -56,7 +56,7 @@ export interface OrchestratorApi {
   setNotificationPreference: (eventType: NotifiableEventType, enabled: boolean) => Promise<IpcResult>
 
   // ── Shell Integration ──
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' }) => Promise<IpcResult>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }) => Promise<IpcResult>
   openTerminal: (options: { path: string }) => Promise<IpcResult>
   openExternal: (url: string) => Promise<IpcResult>
 
