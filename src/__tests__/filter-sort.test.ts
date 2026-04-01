@@ -14,7 +14,12 @@ type AgentStatus =
   | 'disconnected'
   | 'stopping'
 
-type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | 'completed' | string
+type StatusFilter = 'blocked' | 'running' | 'idle' | 'completed'
+
+interface FilterState {
+  statuses: Set<StatusFilter>
+  projects: Set<string>
+}
 
 interface AgentRow {
   id: string
@@ -29,21 +34,35 @@ interface AgentRow {
 
 // ── Logic extracted from src/renderer/src/components/FilterBar.tsx ──
 
-function matchesFilter(agent: { status: AgentStatus; projectName: string }, filter: FilterValue): boolean {
-  switch (filter) {
-    case 'all':
-      return true
-    case 'blocked':
-      return agent.status === 'needs_input' || agent.status === 'needs_approval'
-    case 'running':
-      return agent.status === 'running'
-    case 'idle':
-      return agent.status === 'idle'
-    case 'completed':
-      return agent.status === 'completed' || agent.status === 'completed_manual'
-    default:
-      return agent.projectName === filter
+const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
+  blocked: ['needs_input', 'needs_approval'],
+  running: ['running'],
+  idle: ['idle'],
+  completed: ['completed', 'completed_manual']
+}
+
+function matchesFilter(
+  agent: { status: AgentStatus; projectName: string },
+  filter: FilterState
+): boolean {
+  const hasStatuses = filter.statuses.size > 0
+  const hasProjects = filter.projects.size > 0
+
+  if (!hasStatuses && !hasProjects) return true
+
+  if (hasStatuses) {
+    const allowedStatuses = new Set<AgentStatus>()
+    for (const sf of filter.statuses) {
+      for (const s of STATUS_MAP[sf]) allowedStatuses.add(s)
+    }
+    if (!allowedStatuses.has(agent.status)) return false
   }
+
+  if (hasProjects) {
+    if (!filter.projects.has(agent.projectName)) return false
+  }
+
+  return true
 }
 
 function canToggleManualComplete(status: AgentStatus): boolean {
@@ -124,53 +143,120 @@ function createAgent(overrides: Partial<AgentRow> = {}): AgentRow {
   }
 }
 
+const EMPTY: FilterState = { statuses: new Set(), projects: new Set() }
+
+function statusFilter(...statuses: StatusFilter[]): FilterState {
+  return { statuses: new Set(statuses), projects: new Set() }
+}
+
+function projectFilter(...projects: string[]): FilterState {
+  return { statuses: new Set(), projects: new Set(projects) }
+}
+
+function combinedFilter(statuses: StatusFilter[], projects: string[]): FilterState {
+  return { statuses: new Set(statuses), projects: new Set(projects) }
+}
+
 // ── Tests ──
 
 describe('matchesFilter', () => {
-  it('returns true for "all" filter regardless of status', () => {
+  it('returns true for empty filter (no statuses, no projects) regardless of status', () => {
     const statuses: AgentStatus[] = [
       'starting', 'running', 'needs_input', 'needs_approval',
       'idle', 'completed', 'completed_manual', 'errored', 'disconnected', 'stopping'
     ]
     for (const status of statuses) {
-      expect(matchesFilter({ status, projectName: 'proj' }, 'all')).toBe(true)
+      expect(matchesFilter({ status, projectName: 'proj' }, EMPTY)).toBe(true)
     }
   })
 
-  it('returns true for "blocked" filter only when needs_input or needs_approval', () => {
-    expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, 'blocked')).toBe(true)
-    expect(matchesFilter({ status: 'needs_approval', projectName: 'proj' }, 'blocked')).toBe(true)
-    expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'blocked')).toBe(false)
-    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'blocked')).toBe(false)
-    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, 'blocked')).toBe(false)
-    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'blocked')).toBe(false)
+  it('returns true for "blocked" status filter only when needs_input or needs_approval', () => {
+    const filter = statusFilter('blocked')
+    expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'needs_approval', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(false)
   })
 
-  it('returns true for "running" filter only when running', () => {
-    expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'running')).toBe(true)
-    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'running')).toBe(false)
-    expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, 'running')).toBe(false)
+  it('returns true for "running" status filter only when running', () => {
+    const filter = statusFilter('running')
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, filter)).toBe(false)
   })
 
-  it('returns true for "idle" filter only when idle', () => {
-    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'idle')).toBe(true)
-    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'idle')).toBe(false)
-    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, 'idle')).toBe(false)
-    expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'idle')).toBe(false)
-    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, 'idle')).toBe(false)
+  it('returns true for "idle" status filter only when idle', () => {
+    const filter = statusFilter('idle')
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
   })
 
-  it('returns true for "completed" filter when completed or completed_manual', () => {
-    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'completed')).toBe(true)
-    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, 'completed')).toBe(true)
-    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'completed')).toBe(false)
-    expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'completed')).toBe(false)
-    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, 'completed')).toBe(false)
+  it('returns true for "completed" status filter when completed or completed_manual', () => {
+    const filter = statusFilter('completed')
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
   })
 
-  it('matches by project name for custom filter values', () => {
-    expect(matchesFilter({ status: 'running', projectName: 'my-app' }, 'my-app')).toBe(true)
-    expect(matchesFilter({ status: 'running', projectName: 'other-app' }, 'my-app')).toBe(false)
+  it('matches by project name when project filter is set', () => {
+    const filter = projectFilter('my-app')
+    expect(matchesFilter({ status: 'running', projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'other-app' }, filter)).toBe(false)
+  })
+
+  // ── Multi-select tests ──
+
+  it('allows multiple statuses to be selected simultaneously', () => {
+    const filter = statusFilter('running', 'idle')
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('allows multiple projects to be selected simultaneously', () => {
+    const filter = projectFilter('app-a', 'app-b')
+    expect(matchesFilter({ status: 'running', projectName: 'app-a' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'app-b' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'app-c' }, filter)).toBe(false)
+  })
+
+  it('combines status AND project filters (both must match)', () => {
+    const filter = combinedFilter(['running'], ['my-app'])
+    expect(matchesFilter({ status: 'running', projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'other-app' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', projectName: 'my-app' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', projectName: 'other-app' }, filter)).toBe(false)
+  })
+
+  it('combines multiple statuses AND multiple projects', () => {
+    const filter = combinedFilter(['running', 'blocked'], ['app-a', 'app-b'])
+    expect(matchesFilter({ status: 'running', projectName: 'app-a' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'needs_input', projectName: 'app-b' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'needs_approval', projectName: 'app-a' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'app-a' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', projectName: 'app-c' }, filter)).toBe(false)
+  })
+
+  it('status-only filter does not restrict by project', () => {
+    const filter = statusFilter('running')
+    expect(matchesFilter({ status: 'running', projectName: 'any-project' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', projectName: 'another-project' }, filter)).toBe(true)
+  })
+
+  it('project-only filter does not restrict by status', () => {
+    const filter = projectFilter('my-app')
+    expect(matchesFilter({ status: 'running', projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'errored', projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', projectName: 'my-app' }, filter)).toBe(true)
   })
 })
 

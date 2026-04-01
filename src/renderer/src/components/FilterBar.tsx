@@ -1,11 +1,27 @@
 import { MagnifyingGlass } from '@phosphor-icons/react'
 import type { AgentStatus } from '../types'
 
-export type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | 'completed' | string
+export type StatusFilter = 'blocked' | 'running' | 'idle' | 'completed'
+
+export interface FilterState {
+  statuses: Set<StatusFilter>
+  projects: Set<string>
+}
+
+export const EMPTY_FILTER: FilterState = {
+  statuses: new Set(),
+  projects: new Set()
+}
+
+export function isFilterEmpty(filter: FilterState): boolean {
+  return filter.statuses.size === 0 && filter.projects.size === 0
+}
 
 interface FilterBarProps {
-  filter: FilterValue
-  onFilterChange: (filter: FilterValue) => void
+  filter: FilterState
+  onToggleStatus: (status: StatusFilter) => void
+  onToggleProject: (project: string) => void
+  onClearFilters: () => void
   searchQuery: string
   onSearchChange: (query: string) => void
   counts: {
@@ -20,12 +36,16 @@ interface FilterBarProps {
 
 export function FilterBar({
   filter,
-  onFilterChange,
+  onToggleStatus,
+  onToggleProject,
+  onClearFilters,
   searchQuery,
   onSearchChange,
   counts,
   projects
 }: FilterBarProps) {
+  const noFilters = isFilterEmpty(filter)
+
   return (
     <div className="flex items-center gap-2 px-4 py-2 bg-kumo-elevated border-b border-kumo-line shrink-0">
       {/* Search */}
@@ -44,11 +64,11 @@ export function FilterBar({
       <div className="w-px h-5 bg-kumo-line" />
 
       {/* Status filters */}
-      <FilterPill label={`All (${counts.all})`} active={filter === 'all'} onClick={() => onFilterChange('all')} />
-      <FilterPill label={`Blocked (${counts.blocked})`} active={filter === 'blocked'} onClick={() => onFilterChange('blocked')} />
-      <FilterPill label={`Running (${counts.running})`} active={filter === 'running'} onClick={() => onFilterChange('running')} />
-      <FilterPill label={`Idle (${counts.idle})`} active={filter === 'idle'} onClick={() => onFilterChange('idle')} />
-      <FilterPill label={`Completed (${counts.completed})`} active={filter === 'completed'} onClick={() => onFilterChange('completed')} />
+      <FilterPill label={`All (${counts.all})`} active={noFilters} onClick={onClearFilters} />
+      <FilterPill label={`Blocked (${counts.blocked})`} active={filter.statuses.has('blocked')} onClick={() => onToggleStatus('blocked')} />
+      <FilterPill label={`Running (${counts.running})`} active={filter.statuses.has('running')} onClick={() => onToggleStatus('running')} />
+      <FilterPill label={`Idle (${counts.idle})`} active={filter.statuses.has('idle')} onClick={() => onToggleStatus('idle')} />
+      <FilterPill label={`Completed (${counts.completed})`} active={filter.statuses.has('completed')} onClick={() => onToggleStatus('completed')} />
 
       <div className="w-px h-5 bg-kumo-line" />
 
@@ -57,8 +77,8 @@ export function FilterBar({
         <FilterPill
           key={project}
           label={project}
-          active={filter === project}
-          onClick={() => onFilterChange(filter === project ? 'all' : project)}
+          active={filter.projects.has(project)}
+          onClick={() => onToggleProject(project)}
         />
       ))}
     </div>
@@ -88,19 +108,33 @@ function FilterPill({
   )
 }
 
-export function matchesFilter(agent: { status: AgentStatus; projectName: string }, filter: FilterValue): boolean {
-  switch (filter) {
-    case 'all':
-      return true
-    case 'blocked':
-      return agent.status === 'needs_input' || agent.status === 'needs_approval'
-    case 'running':
-      return agent.status === 'running'
-    case 'idle':
-      return agent.status === 'idle'
-    case 'completed':
-      return agent.status === 'completed' || agent.status === 'completed_manual'
-    default:
-      return agent.projectName === filter
+const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
+  blocked: ['needs_input', 'needs_approval'],
+  running: ['running'],
+  idle: ['idle'],
+  completed: ['completed', 'completed_manual']
+}
+
+export function matchesFilter(
+  agent: { status: AgentStatus; projectName: string },
+  filter: FilterState
+): boolean {
+  const hasStatuses = filter.statuses.size > 0
+  const hasProjects = filter.projects.size > 0
+
+  if (!hasStatuses && !hasProjects) return true
+
+  if (hasStatuses) {
+    const allowedStatuses = new Set<AgentStatus>()
+    for (const sf of filter.statuses) {
+      for (const s of STATUS_MAP[sf]) allowedStatuses.add(s)
+    }
+    if (!allowedStatuses.has(agent.status)) return false
   }
+
+  if (hasProjects) {
+    if (!filter.projects.has(agent.projectName)) return false
+  }
+
+  return true
 }
