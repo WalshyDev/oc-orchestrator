@@ -18,6 +18,7 @@ import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
+import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
@@ -583,7 +584,10 @@ function MessageBubble({ message }: { message: Message }) {
       <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
         {isUser ? 'You' : 'Agent'}
       </div>
-      <div className="whitespace-pre-wrap">{message.content}</div>
+      {isUser
+        ? <div className="whitespace-pre-wrap">{message.content}</div>
+        : <Markdown>{message.content}</Markdown>
+      }
     </div>
   )
 }
