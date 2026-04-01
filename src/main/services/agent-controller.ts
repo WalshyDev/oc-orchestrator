@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2/client'
+import type { OpencodeClient, TextPartInput, FilePartInput } from '@opencode-ai/sdk/v2/client'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
@@ -266,7 +266,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    const parts: Array<{ type: string; [key: string]: unknown }> = [{ type: 'text', text }]
+    const parts: Array<TextPartInput | FilePartInput> = [{ type: 'text', text }]
     if (attachments?.length) {
       for (const att of attachments) {
         parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
@@ -628,7 +628,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    const parts: Array<{ type: string; [key: string]: unknown }> = [{ type: 'text', text }]
+    const parts: Array<TextPartInput | FilePartInput> = [{ type: 'text', text }]
     if (attachments?.length) {
       for (const att of attachments) {
         parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
