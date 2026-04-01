@@ -545,6 +545,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('notifications:get-pending-agent', async () => {
+    try {
+      const agentId = notificationService.getPendingAgentId()
+      return { ok: true, data: agentId }
+    } catch (error) {
+      console.error('[IPC] notifications:get-pending-agent failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   // ── App Info ──
 
   ipcMain.handle('app:version', () => {
