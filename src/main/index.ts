@@ -94,7 +94,8 @@ app.whenReady().then(async () => {
     app.dock.setIcon(appIcon)
   }
 
-  // Initialize the database (constructor runs migrations)
+  // Initialize the database
+  await database.init()
   console.log('[Main] Database initialized')
   database.logEvent(null, 'app:started')
 
