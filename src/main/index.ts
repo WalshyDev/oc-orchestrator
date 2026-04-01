@@ -78,6 +78,14 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!app.isPackaged && url.startsWith(process.env['ELECTRON_RENDERER_URL'] || '')) return
+    if (url.startsWith('file://')) return
+
+    event.preventDefault()
+    shell.openExternal(url)
+  })
+
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
