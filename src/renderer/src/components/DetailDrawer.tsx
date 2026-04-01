@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   X,
   Square,
@@ -13,7 +13,8 @@ import {
   CaretRight,
   Trash,
   ChatCircleDots,
-  Brain
+  Brain,
+  PaperPlaneTilt
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
@@ -388,45 +389,11 @@ export function DetailDrawer({
 
               {/* Question card */}
               {!permission && question && agent.status === 'needs_input' && (
-                <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
-                  <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
-                    <ChatCircleDots size={14} weight="fill" /> Question
-                  </div>
-                  {question.questions.map((q, qi) => (
-                    <div key={qi} className="flex flex-col gap-1.5">
-                      {q.header && (
-                        <div className="text-xs font-medium text-kumo-default">{q.header}</div>
-                      )}
-                      <div className="text-xs text-kumo-subtle">{q.question}</div>
-                      {q.options.length > 0 && (
-                        <div className="flex flex-col gap-1 mt-1">
-                          {q.options.map((opt, oi) => (
-                            <button
-                              key={oi}
-                              type="button"
-                              onClick={() => onReplyQuestion?.([[opt.label]])}
-                              className="flex flex-col items-start px-2.5 py-1.5 text-left text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 hover:border-status-input/40 hover:bg-status-input-bg/20 transition-colors"
-                            >
-                              <span className="font-medium text-kumo-default">{opt.label}</span>
-                              {opt.description && (
-                                <span className="text-kumo-subtle">{opt.description}</span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {onRejectQuestion && (
-                    <button
-                      type="button"
-                      onClick={onRejectQuestion}
-                      className="self-start flex items-center gap-1 px-2.5 py-1.5 mt-1 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
-                    >
-                      <XCircle size={12} /> Dismiss
-                    </button>
-                  )}
-                </div>
+                <QuestionCard
+                  question={question}
+                  onReply={onReplyQuestion}
+                  onReject={onRejectQuestion}
+                />
               )}
 
               {/* Waiting for input (no structured question) */}
@@ -527,6 +494,232 @@ export function DetailDrawer({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function QuestionCard({
+  question,
+  onReply,
+  onReject
+}: {
+  question: LiveQuestion
+  onReply?: (answers: string[][]) => void
+  onReject?: () => void
+}) {
+  const totalQuestions = question.questions.length
+  const isSingleQuestion = totalQuestions === 1
+
+  // answers[qi] = selected labels for question qi
+  const [answers, setAnswers] = useState<string[][]>(() =>
+    question.questions.map(() => [])
+  )
+  // custom text inputs per question (only used when custom=true)
+  const [customTexts, setCustomTexts] = useState<string[]>(() =>
+    question.questions.map(() => '')
+  )
+
+  // Reset state if question changes
+  useEffect(() => {
+    setAnswers(question.questions.map(() => []))
+    setCustomTexts(question.questions.map(() => ''))
+  }, [question.id, question.questions])
+
+  const allAnswered = useMemo(() =>
+    question.questions.every((_, qi) => answers[qi].length > 0),
+    [question.questions, answers]
+  )
+
+  function toggleOption(qi: number, label: string, multiple: boolean) {
+    setAnswers(prev => {
+      const next = [...prev]
+      const current = next[qi]
+      if (multiple) {
+        next[qi] = current.includes(label)
+          ? current.filter(l => l !== label)
+          : [...current, label]
+      } else {
+        // Single select: toggle or replace
+        next[qi] = current[0] === label ? [] : [label]
+      }
+      return next
+    })
+    // Clear custom text when a predefined option is selected (single-select)
+    if (!multiple) {
+      setCustomTexts(prev => {
+        const next = [...prev]
+        next[qi] = ''
+        return next
+      })
+    }
+  }
+
+  function setCustomAnswer(qi: number, text: string) {
+    setCustomTexts(prev => {
+      const next = [...prev]
+      next[qi] = text
+      return next
+    })
+    // When typing custom text, clear predefined selections (single-select)
+    if (!question.questions[qi].multiple && text) {
+      setAnswers(prev => {
+        const next = [...prev]
+        next[qi] = []
+        return next
+      })
+    }
+  }
+
+  function buildFinalAnswers(): string[][] {
+    return question.questions.map((q, qi) => {
+      const custom = customTexts[qi]?.trim()
+      if (custom && answers[qi].length === 0) {
+        return [custom]
+      }
+      if (q.multiple && custom) {
+        return [...answers[qi], custom]
+      }
+      return answers[qi]
+    })
+  }
+
+  function handleSubmit() {
+    const final = buildFinalAnswers()
+    const ready = final.every(a => a.length > 0)
+    if (ready) {
+      onReply?.(final)
+    }
+  }
+
+  // For single-question, single-select: submit immediately on click
+  function handleSingleQuestionSelect(label: string) {
+    onReply?.([[label]])
+  }
+
+  return (
+    <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+      <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+        <ChatCircleDots size={14} weight="fill" />
+        {isSingleQuestion ? 'Question' : `Questions (${totalQuestions})`}
+      </div>
+
+      {question.questions.map((q, qi) => {
+        const isMultiple = q.multiple ?? false
+        const hasCustom = q.custom ?? false
+        const selected = answers[qi]
+
+        return (
+          <div key={qi} className="flex flex-col gap-1.5">
+            {q.header && (
+              <div className="text-xs font-medium text-kumo-default">
+                {!isSingleQuestion && <span className="text-kumo-subtle mr-1">{qi + 1}.</span>}
+                {q.header}
+              </div>
+            )}
+            <div className="text-xs text-kumo-subtle">{q.question}</div>
+            {q.options.length > 0 && (
+              <div className="flex flex-col gap-1 mt-1">
+                {q.options.map((opt, oi) => {
+                  const isSelected = selected.includes(opt.label)
+
+                  // Single question + single select + no custom = instant submit (original behavior)
+                  if (isSingleQuestion && !isMultiple && !hasCustom) {
+                    return (
+                      <button
+                        key={oi}
+                        type="button"
+                        onClick={() => handleSingleQuestionSelect(opt.label)}
+                        className="flex flex-col items-start px-2.5 py-1.5 text-left text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 hover:border-status-input/40 hover:bg-status-input-bg/20 transition-colors"
+                      >
+                        <span className="font-medium text-kumo-default">{opt.label}</span>
+                        {opt.description && (
+                          <span className="text-kumo-subtle">{opt.description}</span>
+                        )}
+                      </button>
+                    )
+                  }
+
+                  return (
+                    <button
+                      key={oi}
+                      type="button"
+                      onClick={() => toggleOption(qi, opt.label, isMultiple)}
+                      className={`flex flex-col items-start px-2.5 py-1.5 text-left text-[11px] rounded-md border transition-colors ${
+                        isSelected
+                          ? 'bg-status-input-bg/40 border-status-input/50 ring-1 ring-status-input/30'
+                          : 'bg-kumo-overlay border-kumo-interact/20 hover:border-status-input/40 hover:bg-status-input-bg/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 w-full">
+                        <span className={`flex items-center justify-center w-3.5 h-3.5 rounded-${isMultiple ? 'sm' : 'full'} border ${
+                          isSelected
+                            ? 'border-status-input bg-status-input text-white'
+                            : 'border-kumo-interact/40'
+                        }`}>
+                          {isSelected && <Check size={8} weight="bold" />}
+                        </span>
+                        <span className="font-medium text-kumo-default">{opt.label}</span>
+                      </div>
+                      {opt.description && (
+                        <span className="text-kumo-subtle ml-5">{opt.description}</span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {hasCustom && (
+              <input
+                type="text"
+                value={customTexts[qi]}
+                onChange={(e) => setCustomAnswer(qi, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSubmit()
+                  }
+                }}
+                placeholder="Type your own answer..."
+                className="mt-1 px-2.5 py-1.5 text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 text-kumo-default outline-none focus:border-status-input/50 placeholder:text-kumo-subtle"
+              />
+            )}
+          </div>
+        )
+      })}
+
+      {/* Submit + Dismiss row — shown when we need explicit submission */}
+      {!(isSingleQuestion && !question.questions[0].multiple && !question.questions[0].custom) && (
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!allAnswered && !customTexts.some(t => t.trim())}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-status-input/15 border border-status-input/30 text-status-input hover:bg-status-input/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <PaperPlaneTilt size={12} weight="fill" /> Submit
+          </button>
+          {onReject && (
+            <button
+              type="button"
+              onClick={onReject}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+            >
+              <XCircle size={12} /> Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Dismiss for single-question instant-submit mode */}
+      {isSingleQuestion && !question.questions[0].multiple && !question.questions[0].custom && onReject && (
+        <button
+          type="button"
+          onClick={onReject}
+          className="self-start flex items-center gap-1 px-2.5 py-1.5 mt-1 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+        >
+          <XCircle size={12} /> Dismiss
+        </button>
+      )}
     </div>
   )
 }
