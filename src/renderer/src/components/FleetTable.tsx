@@ -492,12 +492,12 @@ function AgentRow({
       <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle">
         {formatBranchLabel(agent)}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 min-w-[7rem] max-w-[10rem]">
         {agent.model && agent.model !== 'starting...' && (
           <button
             onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
-            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors"
-            title="Click to change model"
+            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block"
+            title={agent.model}
           >
             {agent.model}
           </button>

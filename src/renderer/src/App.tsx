@@ -494,7 +494,9 @@ export function App() {
         }
         // Direct model set: /model provider/model-id
         const updateResult = await window.api.updateConfig(agentId, { model: commandArgs })
-        if (!updateResult.ok) {
+        if (updateResult.ok) {
+          store.setAgentModel(agentId, commandArgs)
+        } else {
           console.error('Failed to update model:', updateResult.error)
         }
         return true
@@ -663,6 +665,11 @@ export function App() {
     if (result?.ok && result.data) {
       const data = result.data as { id: string }
       setSelectedAgentId(data.id)
+
+      // Optimistically show the selected model in the table immediately
+      if (model && model !== 'auto') {
+        store.setAgentModel(data.id, model)
+      }
     }
   }, [store])
 
@@ -912,6 +919,7 @@ export function App() {
             if (!selectedAgentId) return
             const result = await window.api.updateConfig(selectedAgentId, { model: modelPath })
             if (result.ok) {
+              store.setAgentModel(selectedAgentId, modelPath)
               setShowModelPicker(false)
             } else {
               console.error('Failed to set model:', result.error)
