@@ -257,6 +257,10 @@ export function App() {
   )
 
   // ── Messages for selected agent ──
+  // Depend on messageVersion (bumped only on message/part changes) instead
+  // of the whole store object, so this memo doesn't recompute on unrelated
+  // store emissions (status updates, heartbeats, etc.) which would create a
+  // new array reference and trigger the DetailDrawer auto-scroll effect.
   const selectedMessages: Message[] = useMemo(() => {
     if (!selectedAgent) return []
 
@@ -324,7 +328,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [selectedAgent, store])
+  }, [selectedAgent, store.messageVersion])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -360,7 +364,7 @@ export function App() {
       }
 
     return tools
-  }, [selectedAgent, store])
+  }, [selectedAgent, store.messageVersion])
 
   // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {

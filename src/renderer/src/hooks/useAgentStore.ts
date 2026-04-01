@@ -116,6 +116,7 @@ interface AgentStoreState {
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
   healthy: boolean
+  messageVersion: number // bumped only when message data changes
 }
 
 let state: AgentStoreState = {
@@ -124,7 +125,8 @@ let state: AgentStoreState = {
   messages: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
-  healthy: true
+  healthy: true,
+  messageVersion: 0
 }
 
 let eventCounter = 0
@@ -137,6 +139,11 @@ function emit(): void {
   for (const listener of listeners) {
     listener()
   }
+}
+
+function emitMessageChange(): void {
+  state.messageVersion++
+  emit()
 }
 
 function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
@@ -564,7 +571,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         existing.role = role
       }
 
-      emit()
+      emitMessageChange()
       break
     }
 
@@ -627,7 +634,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
         }
 
-        emit()
+        emitMessageChange()
       }
       break
     }
@@ -1183,6 +1190,7 @@ export function useAgentStore() {
     agents,
     permissions,
     healthy: storeState.healthy,
+    messageVersion: storeState.messageVersion,
     launchAgent,
     sendMessage,
     listCommands,
