@@ -5,7 +5,7 @@ export interface IpcResult<T = unknown> {
 }
 
 export interface OrchestratorApi {
-  launchAgent: (options: { directory: string; prompt?: string; title?: string }) => Promise<IpcResult>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }) => Promise<IpcResult>
   sendMessage: (agentId: string, text: string) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
@@ -30,6 +30,7 @@ export interface OrchestratorApi {
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
+  listAllProviders: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
 
   // ── Workspace Operations ──

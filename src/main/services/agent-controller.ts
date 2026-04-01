@@ -102,8 +102,9 @@ class AgentController {
     directory: string
     prompt?: string
     title?: string
+    model?: string
   }): Promise<AgentHandle> {
-    const { directory, prompt, title } = options
+    const { directory, prompt, title, model } = options
 
     // Ensure we have a runtime for this directory
     const runtime = await this.ensureBridgeForDirectory(directory)
@@ -147,6 +148,14 @@ class AgentController {
 
     this.agents.set(agentId, handle)
     this.persistAgents()
+
+    // Apply model override if one was selected at launch
+    if (model && model !== 'auto') {
+      await client.config.update({
+        query: { directory },
+        body: { model }
+      })
+    }
 
     // Only send the initial prompt if one was provided
     if (prompt && prompt.trim()) {
@@ -391,6 +400,28 @@ class AgentController {
     })
 
     return result.data
+  }
+
+  /**
+   * List all providers using any available runtime.
+   * Useful for settings/launch screens where no specific agent is selected.
+   */
+  async getProvidersFromAnyRuntime(): Promise<unknown> {
+    // Try to find any agent with a known runtime
+    for (const handle of this.agents.values()) {
+      try {
+        const runtime = await this.ensureRuntimeForAgent(handle)
+        const result = await runtime.client.config.providers({
+          query: { directory: handle.directory }
+        })
+        return result.data
+      } catch {
+        // This runtime failed, try the next one
+        continue
+      }
+    }
+
+    return null
   }
 
   /**

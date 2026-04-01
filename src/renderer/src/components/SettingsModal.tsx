@@ -13,13 +13,7 @@ import {
   type AppSettings,
   type NotificationPrefs,
 } from '../data/settings'
-
-const MODEL_OPTIONS = [
-  { value: 'auto', label: 'Auto (recommended)' },
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  { value: 'claude-opus-4-20250515', label: 'Claude Opus 4' },
-  { value: 'claude-haiku-3-20240307', label: 'Claude Haiku 3' },
-] as const
+import { useModelOptions } from '../hooks/useModelOptions'
 
 const EDITOR_OPTIONS = [
   { value: 'vscode', label: 'VS Code' },
@@ -64,6 +58,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('general')
   const [settings, setSettings] = useState(loadSettings)
   const [appVersion, setAppVersion] = useState<string>('')
+  const { options: modelOptions } = useModelOptions()
 
   useEffect(() => {
     window.api.getVersion().then((result) => {
@@ -144,7 +139,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <SelectField
                     value={settings.model}
                     onChange={(value) => updateSettings({ model: value })}
-                    options={MODEL_OPTIONS}
+                    options={modelOptions}
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />

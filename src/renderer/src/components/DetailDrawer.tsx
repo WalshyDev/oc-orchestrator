@@ -12,7 +12,8 @@ import {
   CaretDown,
   CaretRight,
   Trash,
-  ChatCircleDots
+  ChatCircleDots,
+  Brain
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
@@ -67,6 +68,7 @@ interface DetailDrawerProps {
   onRemove?: () => void
   onCreatePr?: () => void
   onOpenInEditor?: () => void
+  onChangeModel?: () => void
 }
 
 export function DetailDrawer({
@@ -85,7 +87,8 @@ export function DetailDrawer({
   onAbort,
   onRemove,
   onCreatePr,
-  onOpenInEditor
+  onOpenInEditor,
+  onChangeModel
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -96,8 +99,6 @@ export function DetailDrawer({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
-  const isAutoScrollingRef = useRef(false)
-  const hasRenderedRef = useRef(false)
   const isResizingRef = useRef(false)
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
@@ -142,64 +143,22 @@ export function DetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive.
-  // First render uses 'instant' so the drawer opens already at the bottom
-  // without an animation the user has to fight against.
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current) {
       setShowJumpToLatest(false)
-      const container = transcriptScrollRef.current
-      if (container) {
-        const isFirstRender = !hasRenderedRef.current
-        hasRenderedRef.current = true
-
-        if (isFirstRender) {
-          // Jump instantly on first render — no animation to fight
-          container.scrollTop = container.scrollHeight
-        } else {
-          isAutoScrollingRef.current = true
-          container.scrollTo({
-            top: container.scrollHeight,
-            behavior: 'smooth'
-          })
-          setTimeout(() => {
-            isAutoScrollingRef.current = false
-          }, 400)
-        }
-      }
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
     } else if (activeTab === 'transcript' && messages.length > 0) {
       setShowJumpToLatest(true)
     }
   }, [messages, activeTab])
 
-  // Cancel any in-flight smooth-scroll when the user physically scrolls
-  // (wheel / trackpad). Programmatic scrollTo does NOT fire wheel events,
-  // so this cleanly distinguishes user intent from animation.
-  useEffect(() => {
-    const container = transcriptScrollRef.current
-    if (!container) return
-
-    const handleWheel = () => {
-      if (isAutoScrollingRef.current) {
-        isAutoScrollingRef.current = false
-        // Snap to current position to kill the smooth-scroll animation
-        container.scrollTo({ top: container.scrollTop, behavior: 'instant' })
-      }
-    }
-
-    container.addEventListener('wheel', handleWheel, { passive: true })
-    return () => container.removeEventListener('wheel', handleWheel)
-  }, [])
-
   const handleTranscriptScroll = () => {
-    // Ignore scroll events fired by programmatic smooth-scroll animations
-    if (isAutoScrollingRef.current) return
-
     const container = transcriptScrollRef.current
     if (!container) return
 
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    shouldAutoScrollRef.current = distanceFromBottom < 80
+    shouldAutoScrollRef.current = distanceFromBottom < 48
     if (shouldAutoScrollRef.current) {
       setShowJumpToLatest(false)
     }
@@ -208,17 +167,7 @@ export function DetailDrawer({
   const handleJumpToLatest = () => {
     shouldAutoScrollRef.current = true
     setShowJumpToLatest(false)
-    const container = transcriptScrollRef.current
-    if (container) {
-      isAutoScrollingRef.current = true
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: 'smooth'
-      })
-      setTimeout(() => {
-        isAutoScrollingRef.current = false
-      }, 400)
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
   const handleSend = () => {
@@ -453,6 +402,9 @@ export function DetailDrawer({
             <ActionButton icon={<Square size={12} weight="fill" />} label="Stop" onClick={onAbort} />
           )}
           <div className="flex-1" />
+          {onChangeModel && (
+            <ActionButton icon={<Brain size={12} />} label="Model" onClick={onChangeModel} />
+          )}
           {onCreatePr && (
             <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
           )}

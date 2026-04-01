@@ -8,7 +8,7 @@ export interface IpcResult<T = unknown> {
 
 const api = {
   // ── Agent Operations ──
-  launchAgent: (options: { directory: string; prompt?: string; title?: string }): Promise<IpcResult> =>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
   sendMessage: (agentId: string, text: string): Promise<IpcResult> =>
@@ -83,6 +83,9 @@ const api = {
 
   stopRuntime: (runtimeId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:stop', runtimeId),
+
+  listAllProviders: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:providers'),
 
   // ── Dialog ──
   selectDirectory: (): Promise<IpcResult<string>> =>

@@ -17,6 +17,7 @@ export function registerIpcHandlers(): void {
     directory: string
     prompt?: string
     title?: string
+    model?: string
   }) => {
     try {
       const handle = await agentController.launchAgent(options)
@@ -300,6 +301,16 @@ export function registerIpcHandlers(): void {
       await agentController.stopRuntime(runtimeId)
       return { ok: true }
     } catch (error) {
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('runtime:providers', async () => {
+    try {
+      const data = await agentController.getProvidersFromAnyRuntime()
+      return { ok: true, data }
+    } catch (error) {
+      console.error('[IPC] runtime:providers failed:', error)
       return { ok: false, error: String(error) }
     }
   })
