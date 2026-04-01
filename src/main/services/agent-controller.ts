@@ -842,7 +842,7 @@ class AgentController {
     if (!this.bridges.has(runtime.id)) {
       const bridge = new EventBridge(runtime.id, directory, runtime.client)
       this.bridges.set(runtime.id, bridge)
-      bridge.start()
+      await bridge.start()
     }
 
     return runtime
