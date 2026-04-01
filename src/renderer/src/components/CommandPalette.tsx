@@ -11,6 +11,7 @@ import {
   Warning,
   CircleNotch
 } from '@phosphor-icons/react'
+import { EMPTY_FILTER, type FilterState, type StatusFilter } from './FilterBar'
 
 interface CommandPaletteProps {
   agents: Array<{ id: string; name: string; projectName: string; status: string }>
@@ -18,7 +19,7 @@ interface CommandPaletteProps {
   onSelectAgent: (id: string) => void
   onLaunchAgent: () => void
   onOpenSettings: () => void
-  onFilterChange: (filter: string) => void
+  onFilterChange: (filter: FilterState) => void
   onStopAll: () => void
   onApproveAll: () => void
 }
@@ -144,7 +145,7 @@ export function CommandPalette({
         category: 'navigation',
         action: () => {
           onClose()
-          onFilterChange('')
+          onFilterChange(EMPTY_FILTER)
         }
       },
       {
@@ -155,7 +156,7 @@ export function CommandPalette({
         category: 'navigation',
         action: () => {
           onClose()
-          onFilterChange('blocked')
+          onFilterChange({ statuses: new Set<StatusFilter>(['blocked']), projects: new Set() })
         }
       },
       {
@@ -166,7 +167,7 @@ export function CommandPalette({
         category: 'navigation',
         action: () => {
           onClose()
-          onFilterChange('running')
+          onFilterChange({ statuses: new Set<StatusFilter>(['running']), projects: new Set() })
         }
       }
     ]

@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { TopBar } from './components/TopBar'
 import { InterruptBanner } from './components/InterruptBanner'
-import { FilterBar, matchesFilter, type FilterValue } from './components/FilterBar'
+import { FilterBar, matchesFilter, EMPTY_FILTER, type FilterState, type StatusFilter } from './components/FilterBar'
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
@@ -41,7 +41,7 @@ function mapToolState(toolState?: string): ToolCall['state'] {
 }
 
 export function App() {
-  const [filter, setFilter] = useState<FilterValue>('all')
+  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showLaunchModal, setShowLaunchModal] = useState(false)
@@ -145,7 +145,7 @@ export function App() {
   // ── Navigate to agent when desktop notification is clicked ──
   const navigateToAgent = useCallback((agentId: string) => {
     console.log('[App] Navigating to agent:', agentId)
-    setFilter('all')
+    setFilter(EMPTY_FILTER)
     setSearchQuery('')
     setSelectedAgentId(agentId)
   }, [])
@@ -902,13 +902,29 @@ export function App() {
       {displayInterrupts.length > 0 && (
         <InterruptBanner
           interrupts={displayInterrupts}
-          onReviewAll={() => setFilter('blocked')}
+          onReviewAll={() => setFilter({ statuses: new Set<StatusFilter>(['blocked']), projects: new Set() })}
         />
       )}
 
       <FilterBar
         filter={filter}
-        onFilterChange={setFilter}
+        onToggleStatus={(status) => {
+          setFilter((prev) => {
+            const next = new Set(prev.statuses)
+            if (next.has(status)) next.delete(status)
+            else next.add(status)
+            return { statuses: next, projects: new Set(prev.projects) }
+          })
+        }}
+        onToggleProject={(project) => {
+          setFilter((prev) => {
+            const next = new Set(prev.projects)
+            if (next.has(project)) next.delete(project)
+            else next.add(project)
+            return { statuses: new Set(prev.statuses), projects: next }
+          })
+        }}
+        onClearFilters={() => setFilter(EMPTY_FILTER)}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         counts={counts}
