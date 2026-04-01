@@ -152,10 +152,16 @@ class NotificationService {
 
     const mainWindow = windows[0]
 
+    // app.show() activates the Electron app at the OS level (macOS dock bounce),
+    // which is required before mainWindow.focus() will actually bring it to front
+    // when the app isn't the currently focused application.
+    app.show()
+
     if (mainWindow.isMinimized()) {
       mainWindow.restore()
     }
 
+    mainWindow.show()
     mainWindow.focus()
     mainWindow.webContents.send('notification:select-agent', { agentId })
   }
