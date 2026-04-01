@@ -149,6 +149,9 @@ const api = {
   setNotificationPreference: (eventType: string, enabled: boolean): Promise<IpcResult> =>
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
+  getPendingNotificationAgent: (): Promise<IpcResult<string | null>> =>
+    ipcRenderer.invoke('notifications:get-pending-agent'),
+
   // ── App Info ──
   getVersion: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('app:version'),

@@ -49,6 +49,12 @@ class NotificationService {
 
   private sentNotifications = new Map<string, number>()
 
+  // Prevent Notification objects from being garbage-collected before the
+  // user interacts with them.  Without this reference the 'click' handler
+  // is silently lost on macOS because V8 collects the otherwise-unreachable
+  // Notification instance.
+  private activeNotifications = new Set<Notification>()
+
   setPreference(eventType: NotifiableEventType, enabled: boolean): void {
     this.preferences[eventType] = enabled
   }
@@ -137,20 +143,60 @@ class NotificationService {
       silent: false
     })
 
+    // Prevent GC from collecting the notification before the user clicks it.
+    // Without this reference the 'click' handler is silently lost because V8
+    // collects the otherwise-unreachable Notification instance while the OS
+    // banner is still visible.
+    this.activeNotifications.add(notification)
+
     notification.on('click', () => {
+      console.log(`[NotificationService] Notification clicked for agent ${agentId}`)
       this.handleNotificationClick(agentId)
+      this.activeNotifications.delete(notification)
+    })
+
+    // On macOS the 'close' event fires when the banner auto-dismisses (~5s),
+    // but the user can still click the notification later in Notification
+    // Center.  Do NOT remove the reference on 'close' — that would allow GC
+    // to collect the object and silently drop the click handler.  Instead,
+    // clean up stale entries periodically.
+    notification.on('close', () => {
+      // Schedule cleanup after a generous window so clicks from Notification
+      // Center still work.  5 minutes is long enough for any realistic
+      // interaction; the Set is tiny so the memory cost is negligible.
+      setTimeout(() => {
+        this.activeNotifications.delete(notification)
+      }, 5 * 60 * 1000)
     })
 
     notification.show()
   }
 
+  // Stores the agent ID from the most recent notification click so the
+  // renderer can pull it if the initial IPC send arrives before the window
+  // is ready (e.g. waking from background on macOS).
+  private pendingAgentId: string | null = null
+
+  getPendingAgentId(): string | null {
+    const id = this.pendingAgentId
+    this.pendingAgentId = null
+    return id
+  }
+
   private handleNotificationClick(agentId: string): void {
     const windows = BrowserWindow.getAllWindows()
     if (windows.length === 0) {
+      console.warn('[NotificationService] No windows available for notification click')
       return
     }
 
     const mainWindow = windows[0]
+
+    console.log(`[NotificationService] Handling click: agentId=${agentId}, windowFocused=${mainWindow.isFocused()}, minimized=${mainWindow.isMinimized()}`)
+
+    // Stash the agent ID so the renderer can pull it on focus if the
+    // push-based IPC message gets lost during the window wake-up.
+    this.pendingAgentId = agentId
 
     // app.show() activates the Electron app at the OS level (macOS dock bounce),
     // which is required before mainWindow.focus() will actually bring it to front

@@ -132,12 +132,39 @@ export function App() {
   }, [])
 
   // ── Navigate to agent when desktop notification is clicked ──
+  const navigateToAgent = useCallback((agentId: string) => {
+    console.log('[App] Navigating to agent:', agentId)
+    setFilter('all')
+    setSearchQuery('')
+    setSelectedAgentId(agentId)
+  }, [])
+
+  // Push path: main process sends agentId directly via IPC
   useEffect(() => {
     if (!window.api?.onNotificationSelectAgent) return
     return window.api.onNotificationSelectAgent((data) => {
-      setSelectedAgentId(data.agentId)
+      console.log('[App] Notification select-agent received (push):', data.agentId)
+      navigateToAgent(data.agentId)
     })
-  }, [])
+  }, [navigateToAgent])
+
+  // Pull path: when the window gains focus, check if there's a pending
+  // notification click that the push path may have missed (e.g. the
+  // renderer was throttled while the app was in the background on macOS).
+  useEffect(() => {
+    if (!window.api?.getPendingNotificationAgent) return
+
+    const checkPending = async (): Promise<void> => {
+      const result = await window.api.getPendingNotificationAgent()
+      if (result.ok && result.data) {
+        console.log('[App] Notification select-agent received (pull on focus):', result.data)
+        navigateToAgent(result.data)
+      }
+    }
+
+    window.addEventListener('focus', checkPending)
+    return () => window.removeEventListener('focus', checkPending)
+  }, [navigateToAgent])
 
   // ── Convert live agents to AgentRuntime shape ──
   const liveAgentsAsRuntimes: AgentRuntime[] = useMemo(() => {
@@ -275,9 +302,15 @@ export function App() {
     return agents
   }, [displayAgents, filter, searchQuery, sortColumn, sortDirection])
 
+  // Look up in displayAgents first (preferred — includes latest derived fields),
+  // but fall back to the full unfiltered list so notification-driven navigation
+  // always finds the agent even if a filter or search would otherwise hide it.
   const selectedAgent = useMemo(
-    () => displayAgents.find((agent) => agent.id === selectedAgentId) ?? null,
-    [displayAgents, selectedAgentId]
+    () =>
+      displayAgents.find((agent) => agent.id === selectedAgentId)
+      ?? liveAgentsAsRuntimes.find((agent) => agent.id === selectedAgentId)
+      ?? null,
+    [displayAgents, liveAgentsAsRuntimes, selectedAgentId]
   )
 
   // ── Messages for selected agent ──
