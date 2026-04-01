@@ -70,6 +70,7 @@ interface DetailDrawerProps {
   onCreatePr?: () => void
   onOpenInEditor?: () => void
   onChangeModel?: () => void
+  onOpenTerminal?: () => void
 }
 
 export function DetailDrawer({
@@ -89,7 +90,8 @@ export function DetailDrawer({
   onRemove,
   onCreatePr,
   onOpenInEditor,
-  onChangeModel
+  onChangeModel,
+  onOpenTerminal
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -409,7 +411,7 @@ export function DetailDrawer({
           {onCreatePr && (
             <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
           )}
-          <ActionButton icon={<Terminal size={12} />} label="Terminal" />
+          <ActionButton icon={<Terminal size={12} />} label="Terminal" onClick={onOpenTerminal} />
           <ActionButton icon={<ArrowSquareOut size={12} />} label="Editor" onClick={onOpenInEditor} />
         </div>
 
