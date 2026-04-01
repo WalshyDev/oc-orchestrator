@@ -77,6 +77,15 @@ const api = {
   getStatuses: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:statuses'),
 
+  replyToQuestion: (agentId: string, requestId: string, answers: string[][]): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:reply-question', agentId, requestId, answers),
+
+  rejectQuestion: (agentId: string, requestId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:reject-question', agentId, requestId),
+
+  listQuestions: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:list-questions'),
+
   // ── Runtime Operations ──
   listRuntimes: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:list'),

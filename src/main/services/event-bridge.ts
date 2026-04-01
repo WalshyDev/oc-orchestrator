@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { OpencodeClient } from '@opencode-ai/sdk/client'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client'
 import { runtimeManager } from './runtime-manager'
 
 const INITIAL_BACKOFF_MS = 1_000
@@ -43,9 +43,7 @@ export class EventBridge {
   private async connectStream(): Promise<void> {
     try {
       const result = await this.client.event.subscribe({
-        headers: {
-          'x-opencode-directory': this.directory
-        }
+        directory: this.directory
       })
 
       // Connection succeeded — reset backoff state

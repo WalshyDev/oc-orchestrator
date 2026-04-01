@@ -1,5 +1,5 @@
 import { createOpencodeServer } from '@opencode-ai/sdk/server'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/client'
+import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2/client'
 import { BrowserWindow } from 'electron'
 import { createServer } from 'node:net'
 

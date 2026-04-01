@@ -77,6 +77,27 @@ export interface LivePermission {
   createdAt: number
 }
 
+export interface LiveQuestionOption {
+  label: string
+  description: string
+}
+
+export interface LiveQuestionInfo {
+  question: string
+  header: string
+  options: LiveQuestionOption[]
+  multiple?: boolean
+  custom?: boolean
+}
+
+export interface LiveQuestion {
+  id: string
+  agentId: string
+  sessionId: string
+  questions: LiveQuestionInfo[]
+  createdAt: number
+}
+
 export interface LiveMessage {
   id: string
   role: 'user' | 'assistant'
@@ -113,6 +134,7 @@ export interface EventLogEntry {
 interface AgentStoreState {
   agents: Map<string, LiveAgent>
   permissions: Map<string, LivePermission>
+  questions: Map<string, LiveQuestion>
   messages: Map<string, LiveMessage[]> // keyed by sessionId
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
@@ -122,6 +144,7 @@ interface AgentStoreState {
 let state: AgentStoreState = {
   agents: new Map(),
   permissions: new Map(),
+  questions: new Map(),
   messages: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
@@ -215,6 +238,14 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
       return `Permission requested: ${props.title ?? props.type ?? 'unknown'}`
     case 'permission.replied':
       return 'Permission resolved'
+    case 'question.asked': {
+      const questions = props.questions as Array<{ header?: string }> | undefined
+      return `Question asked: ${questions?.[0]?.header ?? 'unknown'}`
+    }
+    case 'question.replied':
+      return 'Question answered'
+    case 'question.rejected':
+      return 'Question dismissed'
     case 'file.edited':
       return `File edited: ${props.file ?? props.path ?? 'unknown'}`
     case 'file.created':
@@ -688,6 +719,63 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
+    case 'question.asked': {
+      const requestId = props.id as string
+      const sessionId = props.sessionID as string
+      const questions = props.questions as LiveQuestionInfo[] | undefined
+
+      const agent = findAgentBySession(sessionId)
+      if (agent && questions) {
+        notifyIfNeeded(agent, 'needs_input')
+        agent.status = 'needs_input'
+        agent.blockedSince = agent.blockedSince ?? Date.now()
+        agent.lastActivityAt = Date.now()
+
+        state.questions.set(requestId, {
+          id: requestId,
+          agentId: agent.id,
+          sessionId,
+          questions,
+          createdAt: Date.now()
+        })
+
+        emit()
+      }
+      break
+    }
+
+    case 'question.replied': {
+      const requestId = props.requestID as string
+      state.questions.delete(requestId)
+
+      const sessionId = props.sessionID as string
+      const agent = findAgentBySession(sessionId)
+      if (agent) {
+        agent.status = 'running'
+        agent.blockedSince = undefined
+        agent.lastActivityAt = Date.now()
+      }
+
+      emit()
+      break
+    }
+
+    case 'question.rejected': {
+      const requestId = props.requestID as string
+      state.questions.delete(requestId)
+
+      const sessionId = props.sessionID as string
+      const agent = findAgentBySession(sessionId)
+      if (agent) {
+        agent.status = 'running'
+        agent.blockedSince = undefined
+        agent.lastActivityAt = Date.now()
+      }
+
+      emit()
+      break
+    }
+
     case 'session.diff': {
       const sessionId = props.sessionID as string
       const diffs = props.diff as Array<Record<string, unknown>> | undefined
@@ -809,6 +897,12 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
     }
   }
 
+  for (const [questionId, question] of state.questions.entries()) {
+    if (question.agentId === payload.id || question.sessionId === agent.sessionId) {
+      state.questions.delete(questionId)
+    }
+  }
+
   // Update agent with new session
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
@@ -840,6 +934,12 @@ function removeAgentState(agentId: string): void {
   for (const [permissionId, permission] of state.permissions.entries()) {
     if (permission.agentId === agentId || permission.sessionId === agent.sessionId) {
       state.permissions.delete(permissionId)
+    }
+  }
+
+  for (const [questionId, question] of state.questions.entries()) {
+    if (question.agentId === agentId || question.sessionId === agent.sessionId) {
+      state.questions.delete(questionId)
     }
   }
 }
@@ -1022,6 +1122,27 @@ export function useAgentStore() {
       }
 
       if (shouldEmit) emit()
+
+      // Fetch pending questions for agents that are in needs_input state
+      try {
+        const questionsResult = await window.api.listQuestions()
+        if (!cancelled && questionsResult.ok && questionsResult.data) {
+          for (const entry of questionsResult.data as Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>) {
+            for (const q of entry.questions) {
+              state.questions.set(q.id, {
+                id: q.id,
+                agentId: entry.agentId,
+                sessionId: q.sessionID,
+                questions: q.questions,
+                createdAt: Date.now()
+              })
+            }
+          }
+          emit()
+        }
+      } catch {
+        // Questions API may not be available on older servers
+      }
     }
 
     const cleanups = [
@@ -1045,6 +1166,7 @@ export function useAgentStore() {
 
   const agents = Array.from(storeState.agents.values())
   const permissions = Array.from(storeState.permissions.values())
+  const questions = Array.from(storeState.questions.values())
 
   const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string) => {
     if (!window.api) return
@@ -1134,6 +1256,38 @@ export function useAgentStore() {
     return window.api.respondToPermission(agentId, permissionId, response)
   }, [])
 
+  const replyToQuestion = useCallback(async (agentId: string, requestId: string, answers: string[][]) => {
+    if (!window.api) return
+
+    // Optimistically clear question and set running
+    state.questions.delete(requestId)
+    const agent = state.agents.get(agentId)
+    if (agent) {
+      agent.status = 'running'
+      agent.blockedSince = undefined
+      agent.lastActivityAt = Date.now()
+    }
+    emit()
+
+    return window.api.replyToQuestion(agentId, requestId, answers)
+  }, [])
+
+  const rejectQuestion = useCallback(async (agentId: string, requestId: string) => {
+    if (!window.api) return
+
+    // Optimistically clear question and set running
+    state.questions.delete(requestId)
+    const agent = state.agents.get(agentId)
+    if (agent) {
+      agent.status = 'running'
+      agent.blockedSince = undefined
+      agent.lastActivityAt = Date.now()
+    }
+    emit()
+
+    return window.api.rejectQuestion(agentId, requestId)
+  }, [])
+
   const abortAgent = useCallback(async (agentId: string) => {
     if (!window.api) return
     return window.api.abortAgent(agentId)
@@ -1193,6 +1347,7 @@ export function useAgentStore() {
   return {
     agents,
     permissions,
+    questions,
     healthy: storeState.healthy,
     launchAgent,
     sendMessage,
@@ -1201,6 +1356,8 @@ export function useAgentStore() {
     prepareFreshAgent,
     resetSession,
     respondToPermission,
+    replyToQuestion,
+    rejectQuestion,
     abortAgent,
     removeAgent,
     renameAgent,
