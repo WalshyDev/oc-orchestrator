@@ -137,6 +137,10 @@ const api = {
   setNotificationPreference: (eventType: string, enabled: boolean): Promise<IpcResult> =>
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
+  // ── App Info ──
+  getVersion: (): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('app:version'),
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName),

@@ -54,6 +54,7 @@ export function App() {
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showMcpModal, setShowMcpModal] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
+  const [appVersion, setAppVersion] = useState('')
 
   const store = useAgentStore()
 
@@ -116,6 +117,13 @@ export function App() {
   useEffect(() => {
     setViewedAgentId(selectedAgentId)
   }, [selectedAgentId])
+
+  // ── Fetch app version ──
+  useEffect(() => {
+    window.api.getVersion().then((result) => {
+      if (result.ok && result.data) setAppVersion(result.data)
+    })
+  }, [])
 
   // ── Update notification ──
   useEffect(() => {
@@ -814,6 +822,7 @@ export function App() {
         agentCount={displayAgents.length}
         projectCount={projectNames.length}
         healthy={store.healthy}
+        version={appVersion}
       />
 
       {selectedAgent && (

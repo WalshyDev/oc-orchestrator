@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import { getAppVersion } from '../version'
 
 const NPM_REGISTRY_URL = 'https://registry.npmjs.org/oc-orchestrator/latest'
 const CHECK_INTERVAL_MS = 4 * 60 * 60_000 // every 4 hours
@@ -20,7 +21,7 @@ async function checkForUpdate(): Promise<void> {
     const data = await response.json() as { version?: string }
     if (!data.version) return
 
-    const currentVersion = app.getVersion()
+    const currentVersion = getAppVersion()
     if (data.version !== currentVersion && isNewer(data.version, currentVersion)) {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('update:available', {
