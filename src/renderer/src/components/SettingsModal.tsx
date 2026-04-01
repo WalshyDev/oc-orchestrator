@@ -74,6 +74,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     const updated = { ...settings, notifications: { ...settings.notifications, [key]: value } }
     setSettings(updated)
     saveSettings(updated)
+    window.api.setNotificationPreference(key, value)
   }
 
   const selectButtonClasses =

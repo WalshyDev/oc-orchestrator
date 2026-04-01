@@ -104,6 +104,14 @@ export function App() {
     return () => clearInterval(interval)
   }, [])
 
+  // ── Sync notification preferences to main process on startup ──
+  useEffect(() => {
+    const settings = loadSettings()
+    for (const [key, enabled] of Object.entries(settings.notifications)) {
+      window.api.setNotificationPreference(key as keyof typeof settings.notifications, enabled)
+    }
+  }, [])
+
   // ── Update notification ──
   useEffect(() => {
     if (!window.api?.onUpdateAvailable) return
