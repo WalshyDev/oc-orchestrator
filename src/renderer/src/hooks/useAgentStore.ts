@@ -1024,10 +1024,17 @@ function mapSessionStatus(statusType: string): AgentStatus {
   }
 }
 
-function formatModelName(modelId: string): string {
-  // Claude models: "claude-sonnet-4-20250514" -> "sonnet-4"
-  const claudeMatch = modelId.match(/(sonnet|opus|haiku)-?(\d[\d.]*)?/)
-  if (claudeMatch) return claudeMatch[0]
+export function formatModelName(modelId: string): string {
+  // Claude models: "claude-sonnet-4-20250514" -> "sonnet-4", "claude-opus-4-5-20250630" -> "opus-4.5"
+  const claudeMatch = modelId.match(/(sonnet|opus|haiku)-(\d+)(?:-(\d+))?/)
+  if (claudeMatch) {
+    const [, family, major, minor] = claudeMatch
+    // Skip date-like minor segments (6+ digits = date suffix, not a version)
+    if (minor && minor.length < 6) {
+      return `${family}-${major}.${minor}`
+    }
+    return `${family}-${major}`
+  }
 
   // GPT models: "gpt-4-turbo", "gpt-4o" -> "gpt-4-turbo", "gpt-4o"
   const gptMatch = modelId.match(/gpt-[\w.-]+/)
@@ -1335,6 +1342,13 @@ export function useAgentStore() {
     return extractToolCallsFromMessages(messages)
   }, [storeState])
 
+  const setAgentModel = useCallback((agentId: string, modelPath: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    agent.model = formatModelName(modelPath)
+    emit()
+  }, [])
+
   const renameAgent = useCallback((agentId: string, newName: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
@@ -1361,6 +1375,7 @@ export function useAgentStore() {
     abortAgent,
     removeAgent,
     renameAgent,
+    setAgentModel,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,
