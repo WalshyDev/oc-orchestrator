@@ -55,6 +55,9 @@ export interface OrchestratorApi {
   getNotificationPreferences: () => Promise<IpcResult<NotificationPreferences>>
   setNotificationPreference: (eventType: NotifiableEventType, enabled: boolean) => Promise<IpcResult>
 
+  // ── App Info ──
+  getVersion: () => Promise<IpcResult<string>>
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string) => Promise<IpcResult>
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }) => Promise<IpcResult>

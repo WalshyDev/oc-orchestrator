@@ -5,6 +5,7 @@ import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager } from './services/workspace-manager'
 import { database } from './services/database'
 import { notificationService, type NotifiableEventType } from './services/notification-service'
+import { getAppVersion } from './version'
 
 /**
  * Register all IPC handlers for renderer <-> main communication.
@@ -501,6 +502,12 @@ export function registerIpcHandlers(): void {
       console.error('[IPC] notifications:set-preference failed:', error)
       return { ok: false, error: String(error) }
     }
+  })
+
+  // ── App Info ──
+
+  ipcMain.handle('app:version', () => {
+    return { ok: true, data: getAppVersion() }
   })
 
   // ── Shell Integration ──

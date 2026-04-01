@@ -2,9 +2,10 @@ interface StatusBarProps {
   agentCount: number
   projectCount: number
   healthy: boolean
+  version?: string
 }
 
-export function StatusBar({ agentCount, projectCount, healthy }: StatusBarProps) {
+export function StatusBar({ agentCount, projectCount, healthy, version }: StatusBarProps) {
   return (
     <div className="flex items-center justify-between px-4 h-7 bg-kumo-elevated border-t border-kumo-line text-[11px] text-kumo-subtle shrink-0">
       <div className="flex items-center gap-3">
@@ -12,6 +13,12 @@ export function StatusBar({ agentCount, projectCount, healthy }: StatusBarProps)
         <span>{healthy ? 'All runtimes healthy' : 'Some runtimes unhealthy'}</span>
         <span>&middot;</span>
         <span>{agentCount} agents across {projectCount} projects</span>
+        {version && (
+          <>
+            <span>&middot;</span>
+            <span>v{version}</span>
+          </>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <span>
