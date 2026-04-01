@@ -102,6 +102,7 @@ export function DetailDrawer({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
+  const userScrolledRef = useRef(false)
   const isResizingRef = useRef(false)
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
@@ -146,31 +147,51 @@ export function DetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive.
+  // Uses 'instant' scroll to avoid smooth animations fighting with user scrolling.
+  // Once the user manually scrolls up, auto-scroll is disabled until they scroll
+  // back to the bottom (within threshold) on their own.
   useEffect(() => {
-    if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current) {
+    if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current && !userScrolledRef.current) {
       setShowJumpToLatest(false)
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
-    } else if (activeTab === 'transcript' && messages.length > 0) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'instant' })
+    } else if (activeTab === 'transcript' && messages.length > 0 && !shouldAutoScrollRef.current) {
       setShowJumpToLatest(true)
     }
   }, [messages, activeTab])
+
+  // Reset user-scrolled lock when switching to transcript tab
+  useEffect(() => {
+    if (activeTab === 'transcript') {
+      userScrolledRef.current = false
+      shouldAutoScrollRef.current = true
+    }
+  }, [activeTab])
 
   const handleTranscriptScroll = () => {
     const container = transcriptScrollRef.current
     if (!container) return
 
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    shouldAutoScrollRef.current = distanceFromBottom < 48
-    if (shouldAutoScrollRef.current) {
+    const isNearBottom = distanceFromBottom < 48
+
+    if (isNearBottom) {
+      // User scrolled back to bottom — re-enable auto-scroll
+      shouldAutoScrollRef.current = true
+      userScrolledRef.current = false
       setShowJumpToLatest(false)
+    } else {
+      // User scrolled away from bottom — disable auto-scroll
+      shouldAutoScrollRef.current = false
+      userScrolledRef.current = true
     }
   }
 
   const handleJumpToLatest = () => {
     shouldAutoScrollRef.current = true
+    userScrolledRef.current = false
     setShowJumpToLatest(false)
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
   }
 
   const handleSend = () => {
