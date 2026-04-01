@@ -55,6 +55,11 @@ export interface ChatCommand {
   description: string
 }
 
+export interface AgentConfigItem {
+  name: string
+  description?: string
+}
+
 interface DetailDrawerProps {
   agent: AgentRuntime
   messages: Message[]
@@ -64,6 +69,7 @@ interface DetailDrawerProps {
   tools?: ToolCall[]
   events?: EventEntry[]
   commands?: ChatCommand[]
+  agentConfigs?: AgentConfigItem[]
   sessionNotice?: string
   onClose: () => void
   onSendMessage?: (text: string) => void
@@ -89,6 +95,7 @@ export function DetailDrawer({
   tools = [],
   events = [],
   commands = [],
+  agentConfigs = [],
   sessionNotice,
   onClose,
   onSendMessage,
@@ -109,9 +116,13 @@ export function DetailDrawer({
   const [isVisible, setIsVisible] = useState(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [drawerWidth, setDrawerWidth] = useState(loadDrawerWidth)
+  const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
+  const [agentPickerIndex, setAgentPickerIndex] = useState(0)
+  const [cursorPos, setCursorPos] = useState(0)
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const shouldAutoScrollRef = useRef(true)
   const userScrolledRef = useRef(false)
   const isResizingRef = useRef(false)
@@ -151,6 +162,25 @@ export function DetailDrawer({
     : []
 
   const showCommandAutocomplete = matchingCommands.length > 0 && inputText.trim().length > 0
+
+  // ── @ Agent mention detection ──
+  // Find the @mention being typed at or before the cursor position.
+  // We look for "@" followed by optional word characters, where the cursor
+  // is within or right after this token.
+  const agentMentionResult = (() => {
+    if (agentConfigs.length === 0) return null
+    const textBeforeCursor = inputText.slice(0, cursorPos)
+    const match = textBeforeCursor.match(/@(\w*)$/)
+    if (!match) return null
+    const start = textBeforeCursor.length - match[0].length
+    return { query: match[1].toLowerCase(), start, end: cursorPos }
+  })()
+
+  const agentMention = !agentPickerDismissed ? agentMentionResult : null
+  const matchingAgents = agentMention
+    ? agentConfigs.filter((cfg) => cfg.name.toLowerCase().startsWith(agentMention.query))
+    : []
+  const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
 
   // Slide-in animation on mount
   useEffect(() => {
@@ -205,6 +235,35 @@ export function DetailDrawer({
     messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
   }
 
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputText(event.target.value)
+    setCursorPos(event.target.selectionStart)
+    // Reset agent picker dismissed state when text changes
+    // so the picker can reappear on new @ triggers
+    setAgentPickerDismissed(false)
+    setAgentPickerIndex(0)
+  }
+
+  const insertAgentMention = (agentName: string) => {
+    if (!agentMention) return
+    const before = inputText.slice(0, agentMention.start)
+    const after = inputText.slice(agentMention.end)
+    const newText = `${before}@${agentName} ${after}`
+    setInputText(newText)
+    setAgentPickerDismissed(false)
+    setAgentPickerIndex(0)
+    // Move cursor to after the inserted mention
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (textarea) {
+        const cursorPos = agentMention.start + agentName.length + 2 // @ + name + space
+        textarea.selectionStart = cursorPos
+        textarea.selectionEnd = cursorPos
+        textarea.focus()
+      }
+    })
+  }
+
   const handleSend = () => {
     if (!inputText.trim() || !onSendMessage) return
     onSendMessage(inputText.trim())
@@ -212,6 +271,32 @@ export function DetailDrawer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    // ── Agent picker keyboard handling ──
+    if (showAgentPicker) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setAgentPickerDismissed(true)
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = matchingAgents[agentPickerIndex]
+        if (selected) insertAgentMention(selected.name)
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setAgentPickerIndex((prev) => (prev + 1) % matchingAgents.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setAgentPickerIndex((prev) => (prev - 1 + matchingAgents.length) % matchingAgents.length)
+        return
+      }
+    }
+
+    // ── Command autocomplete ──
     if (event.key === 'Tab' && showCommandAutocomplete) {
       event.preventDefault()
       setInputText(`${matchingCommands[0].command} `)
@@ -484,16 +569,47 @@ export function DetailDrawer({
                 ))}
               </div>
             )}
+            {showAgentPicker && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
+                  Agents
+                </div>
+                {matchingAgents.map((cfg, index) => (
+                  <button
+                    key={cfg.name}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      insertAgentMention(cfg.name)
+                    }}
+                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                      index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                    }`}
+                  >
+                    <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                    {cfg.description && (
+                      <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
+                    )}
+                  </button>
+                ))}
+                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                </div>
+              </div>
+            )}
             <textarea
+              ref={textareaRef}
               value={inputText}
-              onChange={(event) => setInputText(event.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Send a message to this agent... Type / for commands."
+              onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              placeholder="Send a message to this agent... Type / for commands, @ for agents."
               rows={3}
               className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
             />
             <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter to send. Shift+Enter for a new line. Use Tab to autocomplete commands.
+              Enter to send. Shift+Enter for a new line. Tab to autocomplete / commands and @ agents.
             </div>
           </div>
           <button

@@ -11,8 +11,8 @@ const api = {
   launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
-  sendMessage: (agentId: string, text: string): Promise<IpcResult> =>
-    ipcRenderer.invoke('agent:send-message', agentId, text),
+  sendMessage: (agentId: string, text: string, agent?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:send-message', agentId, text, agent),
 
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject'): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:respond-permission', agentId, permissionId, response),

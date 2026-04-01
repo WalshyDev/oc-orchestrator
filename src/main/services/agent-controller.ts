@@ -252,8 +252,9 @@ class AgentController {
 
   /**
    * Send a message to an existing agent session.
+   * Optionally invoke a specific agent config by name.
    */
-  async sendMessage(agentId: string, text: string): Promise<void> {
+  async sendMessage(agentId: string, text: string, agent?: string): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
@@ -263,7 +264,8 @@ class AgentController {
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
-      parts: [{ type: 'text', text }]
+      parts: [{ type: 'text', text }],
+      ...(agent ? { agent } : {})
     })
   }
 

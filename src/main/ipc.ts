@@ -42,9 +42,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string) => {
+  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string, agent?: string) => {
     try {
-      await agentController.sendMessage(agentId, text)
+      await agentController.sendMessage(agentId, text, agent)
       return { ok: true }
     } catch (error) {
       console.error('[IPC] agent:send-message failed:', error)

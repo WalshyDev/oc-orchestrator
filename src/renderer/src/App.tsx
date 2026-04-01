@@ -21,6 +21,7 @@ type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
 type SortDirection = 'asc' | 'desc'
 
 const NEW_AGENT_COMMAND = '/new'
+const AGENT_MENTION_REGEX = /@(\w+)/
 
 function sanitizeSlugSegment(value: string, fallback: string): string {
   const sanitized = value
@@ -51,6 +52,7 @@ export function App() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [, setTick] = useState(0)
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
+  const [agentConfigs, setAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showMcpModal, setShowMcpModal] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
@@ -58,10 +60,11 @@ export function App() {
 
   const store = useAgentStore()
 
-  // ── Fetch available commands when an agent is selected ──
+  // ── Fetch available commands and agent configs when an agent is selected ──
   useEffect(() => {
     if (!selectedAgentId) {
       setAgentCommands([])
+      setAgentConfigs([])
       return
     }
 
@@ -92,7 +95,14 @@ export function App() {
       setAgentCommands(builtInCommands)
     }
 
+    const fetchAgentConfigs = async (): Promise<void> => {
+      const configs = await store.listAgentConfigs(selectedAgentId)
+      if (cancelled) return
+      setAgentConfigs(configs ?? [])
+    }
+
     void fetchCommands()
+    void fetchAgentConfigs()
 
     return () => { cancelled = true }
   }, [selectedAgentId, store])
@@ -594,8 +604,20 @@ export function App() {
       if (handled) return
     }
 
+    // Check for @agentname mentions — extract agent name and strip from text
+    const agentMatch = trimmedText.match(AGENT_MENTION_REGEX)
+    if (agentMatch) {
+      const mentionedAgent = agentMatch[1]
+      const isKnownAgent = agentConfigs.some((cfg) => cfg.name === mentionedAgent)
+      if (isKnownAgent) {
+        const cleanText = trimmedText.replace(AGENT_MENTION_REGEX, '').trim()
+        await store.sendMessage(selectedAgentId, cleanText || trimmedText, mentionedAgent)
+        return
+      }
+    }
+
     await store.sendMessage(selectedAgentId, text)
-  }, [handleBuiltInCommand, selectedAgentId, store])
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -921,6 +943,7 @@ export function App() {
           tools={selectedTools}
           events={selectedEvents}
           commands={agentCommands}
+          agentConfigs={agentConfigs}
           onClose={() => setSelectedAgentId(null)}
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}

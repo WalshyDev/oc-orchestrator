@@ -6,7 +6,7 @@ export interface IpcResult<T = unknown> {
 
 export interface OrchestratorApi {
   launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }) => Promise<IpcResult>
-  sendMessage: (agentId: string, text: string) => Promise<IpcResult>
+  sendMessage: (agentId: string, text: string, agent?: string) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
   removeAgent: (agentId: string) => Promise<IpcResult>

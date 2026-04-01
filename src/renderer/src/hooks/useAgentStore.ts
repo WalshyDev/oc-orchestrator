@@ -1214,7 +1214,7 @@ export function useAgentStore() {
     return result
   }, [])
 
-  const sendMessage = useCallback(async (agentId: string, text: string) => {
+  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string) => {
     if (!window.api) return
 
     // Don't allow sending while agent is stopping
@@ -1230,7 +1230,7 @@ export function useAgentStore() {
       emit()
     }
 
-    return window.api.sendMessage(agentId, text)
+    return window.api.sendMessage(agentId, text, agentConfig)
   }, [])
 
   const listCommands = useCallback(async (agentId: string) => {
@@ -1241,6 +1241,16 @@ export function useAgentStore() {
       return null
     }
     return result.data as Array<{ name: string; description?: string; template: string }> | null
+  }, [])
+
+  const listAgentConfigs = useCallback(async (agentId: string) => {
+    if (!window.api) return null
+    const result = await window.api.listAgentConfigs(agentId)
+    if (!result.ok) {
+      console.error('Failed to list agent configs:', result.error)
+      return null
+    }
+    return result.data as Array<{ name: string; description?: string }> | null
   }, [])
 
   const executeCommand = useCallback(async (agentId: string, command: string, args: string) => {
@@ -1427,6 +1437,7 @@ export function useAgentStore() {
     launchAgent,
     sendMessage,
     listCommands,
+    listAgentConfigs,
     executeCommand,
     prepareFreshAgent,
     resetSession,
