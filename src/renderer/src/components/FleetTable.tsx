@@ -4,6 +4,7 @@ import {
   CaretUp,
   CaretDown,
   Check,
+  GearSix,
   Pause,
   PencilSimple,
   Square,
@@ -508,14 +509,23 @@ function AgentRow({
         </span>
       </td>
       <td className="px-3 py-2">
-        <RowActions
-          agent={agent}
-          onApprove={onApprove}
-          onReply={onReply}
-          onStop={onStop}
-          onOpen={onOpen}
-          onRemove={onRemove}
-        />
+        <div className="flex items-center gap-1">
+          <RowActions
+            agent={agent}
+            onApprove={onApprove}
+            onReply={onReply}
+            onStop={onStop}
+            onOpen={onOpen}
+            onRemove={onRemove}
+          />
+          <button
+            onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
+            className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors"
+            title="Agent actions"
+          >
+            <GearSix size={13} />
+          </button>
+        </div>
       </td>
     </tr>
   )
