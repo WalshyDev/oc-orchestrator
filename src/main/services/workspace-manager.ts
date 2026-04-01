@@ -58,9 +58,11 @@ class WorkspaceManager {
    */
   createWorktree(repoRoot: string, projectSlug: string, taskSlug: string): WorktreeInfo {
     const timestamp = Date.now()
-    const branchName = `${projectSlug}/${taskSlug}-${timestamp}`
+    const safeProjSlug = projectSlug.slice(0, 50)
+    const safeTaskSlug = taskSlug.slice(0, 50)
+    const branchName = `${safeProjSlug}/${safeTaskSlug}-${timestamp}`
     const worktreeRoot = this.getWorktreeRoot()
-    const worktreePath = path.join(worktreeRoot, projectSlug, `${taskSlug}-${timestamp}`)
+    const worktreePath = path.join(worktreeRoot, safeProjSlug, `${safeTaskSlug}-${timestamp}`)
 
     try {
       // Ensure the parent directory exists
@@ -92,9 +94,11 @@ class WorkspaceManager {
    */
   createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string): FreshWorktreeInfo {
     const timestamp = Date.now()
-    const branchName = `${projectSlug}/${taskSlug}-${timestamp}`
+    const safeProjSlug = projectSlug.slice(0, 50)
+    const safeTaskSlug = taskSlug.slice(0, 50)
+    const branchName = `${safeProjSlug}/${safeTaskSlug}-${timestamp}`
     const worktreeRoot = this.getWorktreeRoot()
-    const worktreePath = path.join(worktreeRoot, projectSlug, `${taskSlug}-${timestamp}`)
+    const worktreePath = path.join(worktreeRoot, safeProjSlug, `${safeTaskSlug}-${timestamp}`)
 
     try {
       const parentDir = path.dirname(worktreePath)
@@ -327,7 +331,9 @@ class WorkspaceManager {
 
     const baseRef = this.getDefaultBaseRef(repoRoot)
     const timestamp = Date.now()
-    const branchName = `${projectSlug}/${taskSlug}-${timestamp}`
+    const safeProjSlug = projectSlug.slice(0, 50)
+    const safeTaskSlug = taskSlug.slice(0, 50)
+    const branchName = `${safeProjSlug}/${safeTaskSlug}-${timestamp}`
 
     // Discard uncommitted changes, create a fresh branch off the default branch
     execSync('git clean -fd', {
