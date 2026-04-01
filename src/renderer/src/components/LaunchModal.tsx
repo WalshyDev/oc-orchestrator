@@ -1,15 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { X, FolderOpen, Clock, Warning } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
-
-const MODEL_OPTIONS = [
-  { value: 'auto', label: 'Auto (recommended)' },
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  { value: 'claude-opus-4-20250515', label: 'Claude Opus 4' },
-  { value: 'claude-haiku-3-20240307', label: 'Claude Haiku 3' },
-] as const
-
-type ModelOption = (typeof MODEL_OPTIONS)[number]['value']
+import { useModelOptions } from '../hooks/useModelOptions'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
 
@@ -68,7 +60,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
-  const [model, setModel] = useState<ModelOption>('auto')
+  const [model, setModel] = useState('auto')
+  const { options: modelOptions } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [launching, setLaunching] = useState(false)
   const [recentDirs] = useState<string[]>(loadRecentDirs)
@@ -263,8 +256,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             <div className="relative">
               <SelectField
                 value={model}
-                onChange={(value) => setModel(value as ModelOption)}
-                options={MODEL_OPTIONS}
+                onChange={(value) => setModel(value)}
+                options={modelOptions}
                 buttonClassName={selectButtonClasses}
                 menuClassName={selectMenuClasses}
               />

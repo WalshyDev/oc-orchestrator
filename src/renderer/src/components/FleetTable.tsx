@@ -31,6 +31,7 @@ interface FleetTableProps {
   onOpenTerminal?: (agentId: string) => void
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
+  onChangeModel?: (agentId: string) => void
 }
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
@@ -69,7 +70,8 @@ export function FleetTable({
   onRename,
   onOpenTerminal,
   onOpenInEditor,
-  onCreatePr
+  onCreatePr,
+  onChangeModel
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -189,6 +191,7 @@ export function FleetTable({
               onStop={onStop ? () => onStop(agent.id) : undefined}
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
+              onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
             />
           ))}
         </tbody>
@@ -439,7 +442,8 @@ function AgentRow({
   onReply,
   onStop,
   onOpen,
-  onRemove
+  onRemove,
+  onChangeModel
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -450,6 +454,7 @@ function AgentRow({
   onStop?: () => void
   onOpen?: () => void
   onRemove?: () => void
+  onChangeModel?: () => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -488,9 +493,13 @@ function AgentRow({
       </td>
       <td className="px-3 py-2">
         {agent.model && agent.model !== 'starting...' && (
-          <span className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle">
+          <button
+            onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
+            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors"
+            title="Click to change model"
+          >
             {agent.model}
-          </span>
+          </button>
         )}
       </td>
       <td className="px-3 py-2">

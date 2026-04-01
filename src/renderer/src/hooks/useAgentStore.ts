@@ -34,6 +34,7 @@ interface HistoricalMessagePart {
     raw?: string
     input?: unknown
   }
+  reasoning?: string
   reason?: string
   snapshot?: string
 }
@@ -116,7 +117,6 @@ interface AgentStoreState {
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
   healthy: boolean
-  messageVersion: number // bumped only when message data changes
 }
 
 let state: AgentStoreState = {
@@ -125,8 +125,7 @@ let state: AgentStoreState = {
   messages: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
-  healthy: true,
-  messageVersion: 0
+  healthy: true
 }
 
 let eventCounter = 0
@@ -139,11 +138,6 @@ function emit(): void {
   for (const listener of listeners) {
     listener()
   }
-}
-
-function emitMessageChange(): void {
-  state.messageVersion++
-  emit()
 }
 
 function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string }): void {
@@ -356,7 +350,7 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
   const nextPart: LiveMessagePart = {
     id: part.id,
     type: part.type,
-    text: part.text ?? part.reason ?? part.snapshot
+    text: part.text ?? part.reasoning ?? part.reason ?? part.snapshot
   }
 
   if (part.type === 'tool') {
@@ -571,7 +565,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         existing.role = role
       }
 
-      emitMessageChange()
+      emit()
       break
     }
 
@@ -588,8 +582,18 @@ function processEvent(payload: OpenCodeEventPayload): void {
       if (message) {
         const existingPart = message.parts.find((partItem) => partItem.id === partId)
         const toolState = part.state as Record<string, unknown> | undefined
+
+        // Extract text content — for reasoning parts, also check 'reasoning' and 'content' fields
+        const extractText = (): string | undefined => {
+          if (partType === 'reasoning') {
+            const text = part.text ?? part.reasoning ?? part.content
+            return typeof text === 'string' ? text : undefined
+          }
+          return getToolOutput(part, toolState) ?? part.text as string | undefined
+        }
+
         if (existingPart) {
-          existingPart.text = getToolOutput(part, toolState) ?? part.text as string | undefined
+          existingPart.text = extractText()
           if (partType === 'tool') {
             existingPart.toolState = getToolState(toolState)
             existingPart.toolInput = stringifyToolInput(toolState?.input)
@@ -598,7 +602,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           const newPart: LiveMessagePart = {
             id: partId,
             type: partType,
-            text: getToolOutput(part, toolState) ?? part.text as string | undefined
+            text: extractText()
           }
           if (partType === 'tool') {
             newPart.toolName = part.tool as string | undefined
@@ -634,7 +638,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
         }
 
-        emitMessageChange()
+        emit()
       }
       break
     }
@@ -1042,9 +1046,9 @@ export function useAgentStore() {
   const agents = Array.from(storeState.agents.values())
   const permissions = Array.from(storeState.permissions.values())
 
-  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string) => {
+  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string) => {
     if (!window.api) return
-    const result = await window.api.launchAgent({ directory, prompt, title })
+    const result = await window.api.launchAgent({ directory, prompt, title, model })
     if (!result.ok) {
       console.error('Failed to launch agent:', result.error)
     } else if (result.data) {
@@ -1190,7 +1194,6 @@ export function useAgentStore() {
     agents,
     permissions,
     healthy: storeState.healthy,
-    messageVersion: storeState.messageVersion,
     launchAgent,
     sendMessage,
     listCommands,

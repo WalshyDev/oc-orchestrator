@@ -265,10 +265,6 @@ export function App() {
   )
 
   // ── Messages for selected agent ──
-  // Depend on messageVersion (bumped only on message/part changes) instead
-  // of the whole store object, so this memo doesn't recompute on unrelated
-  // store emissions (status updates, heartbeats, etc.) which would create a
-  // new array reference and trigger the DetailDrawer auto-scroll effect.
   const selectedMessages: Message[] = useMemo(() => {
     if (!selectedAgent) return []
 
@@ -336,7 +332,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [selectedAgent, store.messageVersion])
+  }, [selectedAgent, store])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -372,7 +368,7 @@ export function App() {
       }
 
     return tools
-  }, [selectedAgent, store.messageVersion])
+  }, [selectedAgent, store])
 
   // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {
@@ -590,7 +586,7 @@ export function App() {
     directory: string,
     prompt?: string,
     title?: string,
-    _model?: string,
+    model?: string,
     worktreeStrategy?: string
   ) => {
     let launchDirectory = directory
@@ -620,7 +616,7 @@ export function App() {
       launchDirectory = worktreeResult.data.worktreePath
     }
 
-    const result = await store.launchAgent(launchDirectory, prompt || undefined, title)
+    const result = await store.launchAgent(launchDirectory, prompt || undefined, title, model)
 
     // Auto-open the detail drawer for the newly launched agent
     // (especially useful when no prompt is given so the user can interact immediately)
@@ -816,6 +812,10 @@ export function App() {
         onOpenTerminal={handleOpenTerminal}
         onOpenInEditor={handleOpenInEditorForAgent}
         onCreatePr={handleCreatePrForAgent}
+        onChangeModel={(agentId) => {
+          setSelectedAgentId(agentId)
+          setShowModelPicker(true)
+        }}
       />
 
       <StatusBar
@@ -842,6 +842,7 @@ export function App() {
           onRemove={() => void handleRemoveAgent(selectedAgent.id)}
           onCreatePr={handleCreatePr}
           onOpenInEditor={handleOpenInEditor}
+          onChangeModel={() => setShowModelPicker(true)}
         />
       )}
 
