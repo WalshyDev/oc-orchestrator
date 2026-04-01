@@ -1,7 +1,7 @@
 import { MagnifyingGlass } from '@phosphor-icons/react'
 import type { AgentStatus } from '../types'
 
-export type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | string
+export type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | 'completed' | string
 
 interface FilterBarProps {
   filter: FilterValue
@@ -13,6 +13,7 @@ interface FilterBarProps {
     blocked: number
     running: number
     idle: number
+    completed: number
   }
   projects: string[]
 }
@@ -47,6 +48,7 @@ export function FilterBar({
       <FilterPill label={`Blocked (${counts.blocked})`} active={filter === 'blocked'} onClick={() => onFilterChange('blocked')} />
       <FilterPill label={`Running (${counts.running})`} active={filter === 'running'} onClick={() => onFilterChange('running')} />
       <FilterPill label={`Idle (${counts.idle})`} active={filter === 'idle'} onClick={() => onFilterChange('idle')} />
+      <FilterPill label={`Completed (${counts.completed})`} active={filter === 'completed'} onClick={() => onFilterChange('completed')} />
 
       <div className="w-px h-5 bg-kumo-line" />
 
@@ -95,7 +97,9 @@ export function matchesFilter(agent: { status: AgentStatus; projectName: string 
     case 'running':
       return agent.status === 'running'
     case 'idle':
-      return agent.status === 'idle' || agent.status === 'completed'
+      return agent.status === 'idle'
+    case 'completed':
+      return agent.status === 'completed' || agent.status === 'completed_manual'
     default:
       return agent.projectName === filter
   }

@@ -7,6 +7,7 @@ export type AgentStatus =
   | 'needs_approval'
   | 'idle'
   | 'completed'
+  | 'completed_manual'
   | 'errored'
   | 'disconnected'
   | 'stopping'
@@ -72,6 +73,10 @@ export function isUrgent(agent: AgentRuntime): boolean {
   return isBlocked(agent.status) || agent.status === 'errored'
 }
 
+export function canToggleManualComplete(status: AgentStatus): boolean {
+  return status === 'idle' || status === 'completed' || status === 'completed_manual'
+}
+
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
   return agent.branchName ?? ''
 }
@@ -84,6 +89,7 @@ export function statusLabel(status: AgentStatus): string {
     needs_approval: 'Needs Approval',
     idle: 'Idle',
     completed: 'Completed',
+    completed_manual: 'Completed',
     errored: 'Errored',
     disconnected: 'Disconnected',
     stopping: 'Stopping'

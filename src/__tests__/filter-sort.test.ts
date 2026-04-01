@@ -9,11 +9,12 @@ type AgentStatus =
   | 'needs_approval'
   | 'idle'
   | 'completed'
+  | 'completed_manual'
   | 'errored'
   | 'disconnected'
   | 'stopping'
 
-type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | string
+type FilterValue = 'all' | 'blocked' | 'running' | 'idle' | 'completed' | string
 
 interface AgentRow {
   id: string
@@ -37,10 +38,16 @@ function matchesFilter(agent: { status: AgentStatus; projectName: string }, filt
     case 'running':
       return agent.status === 'running'
     case 'idle':
-      return agent.status === 'idle' || agent.status === 'completed'
+      return agent.status === 'idle'
+    case 'completed':
+      return agent.status === 'completed' || agent.status === 'completed_manual'
     default:
       return agent.projectName === filter
   }
+}
+
+function canToggleManualComplete(status: AgentStatus): boolean {
+  return status === 'idle' || status === 'completed' || status === 'completed_manual'
 }
 
 // ── Sorting and search logic ──
@@ -123,7 +130,7 @@ describe('matchesFilter', () => {
   it('returns true for "all" filter regardless of status', () => {
     const statuses: AgentStatus[] = [
       'starting', 'running', 'needs_input', 'needs_approval',
-      'idle', 'completed', 'errored', 'disconnected', 'stopping'
+      'idle', 'completed', 'completed_manual', 'errored', 'disconnected', 'stopping'
     ]
     for (const status of statuses) {
       expect(matchesFilter({ status, projectName: 'proj' }, 'all')).toBe(true)
@@ -145,11 +152,20 @@ describe('matchesFilter', () => {
     expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, 'running')).toBe(false)
   })
 
-  it('returns true for "idle" filter when idle or completed', () => {
+  it('returns true for "idle" filter only when idle', () => {
     expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'idle')).toBe(true)
-    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'idle')).toBe(true)
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'idle')).toBe(false)
+    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, 'idle')).toBe(false)
     expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'idle')).toBe(false)
     expect(matchesFilter({ status: 'errored', projectName: 'proj' }, 'idle')).toBe(false)
+  })
+
+  it('returns true for "completed" filter when completed or completed_manual', () => {
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, 'completed')).toBe(true)
+    expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, 'completed')).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, 'completed')).toBe(false)
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, 'completed')).toBe(false)
+    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, 'completed')).toBe(false)
   })
 
   it('matches by project name for custom filter values', () => {
@@ -301,5 +317,31 @@ describe('sortUrgentFirst', () => {
     sortUrgentFirst(agents)
     expect(agents[0].id).toBe(original[0].id)
     expect(agents[1].id).toBe(original[1].id)
+  })
+
+  it('does not treat completed_manual as urgent', () => {
+    const running = createAgent({ id: 'r', status: 'running' })
+    const manual = createAgent({ id: 'm', status: 'completed_manual' })
+    const blocked = createAgent({ id: 'b', status: 'needs_input' })
+    const sorted = sortUrgentFirst([manual, running, blocked])
+    expect(sorted[0].id).toBe('b')
+  })
+})
+
+describe('canToggleManualComplete', () => {
+  it('returns true for idle, completed, and completed_manual', () => {
+    expect(canToggleManualComplete('idle')).toBe(true)
+    expect(canToggleManualComplete('completed')).toBe(true)
+    expect(canToggleManualComplete('completed_manual')).toBe(true)
+  })
+
+  it('returns false for active/blocked statuses', () => {
+    expect(canToggleManualComplete('running')).toBe(false)
+    expect(canToggleManualComplete('starting')).toBe(false)
+    expect(canToggleManualComplete('needs_input')).toBe(false)
+    expect(canToggleManualComplete('needs_approval')).toBe(false)
+    expect(canToggleManualComplete('errored')).toBe(false)
+    expect(canToggleManualComplete('disconnected')).toBe(false)
+    expect(canToggleManualComplete('stopping')).toBe(false)
   })
 })

@@ -4,6 +4,7 @@ import {
   CaretUp,
   CaretDown,
   Check,
+  CheckCircle,
   GearSix,
   Pause,
   PencilSimple,
@@ -12,10 +13,11 @@ import {
   Trash,
   Terminal,
   GitPullRequest,
-  ArrowSquareOut
+  ArrowSquareOut,
+  ArrowCounterClockwise
 } from '@phosphor-icons/react'
 import type { AgentRuntime } from '../types'
-import { formatBranchLabel, isUrgent } from '../types'
+import { formatBranchLabel, isUrgent, canToggleManualComplete } from '../types'
 import { StatusBadge } from './StatusBadge'
 
 interface FleetTableProps {
@@ -33,6 +35,7 @@ interface FleetTableProps {
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
   onChangeModel?: (agentId: string) => void
+  onToggleComplete?: (agentId: string) => void
 }
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
@@ -72,7 +75,8 @@ export function FleetTable({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
-  onChangeModel
+  onChangeModel,
+  onToggleComplete
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -193,6 +197,7 @@ export function FleetTable({
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
+              onToggleComplete={onToggleComplete ? () => onToggleComplete(agent.id) : undefined}
             />
           ))}
         </tbody>
@@ -235,6 +240,10 @@ export function FleetTable({
           }}
           onCreatePr={() => {
             onCreatePr?.(contextMenu.agentId)
+            closeContextMenu()
+          }}
+          onToggleComplete={() => {
+            onToggleComplete?.(contextMenu.agentId)
             closeContextMenu()
           }}
         />
@@ -337,7 +346,8 @@ function ContextMenu({
   onRemove,
   onOpenTerminal,
   onOpenInEditor,
-  onCreatePr
+  onCreatePr,
+  onToggleComplete
 }: {
   agent: AgentRuntime
   posX: number
@@ -351,6 +361,7 @@ function ContextMenu({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
   onCreatePr: () => void
+  onToggleComplete: () => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -416,6 +427,14 @@ function ContextMenu({
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
+      {canToggleManualComplete(agent.status) && (
+        <button className={itemClass} onClick={onToggleComplete}>
+          {agent.status === 'completed_manual'
+            ? <><ArrowCounterClockwise size={13} /> Unmark Completed</>
+            : <><CheckCircle size={13} /> Mark Completed</>
+          }
+        </button>
+      )}
 
       <div className="my-1 border-t border-kumo-line" />
 
@@ -445,7 +464,8 @@ function AgentRow({
   onStop,
   onOpen,
   onRemove,
-  onChangeModel
+  onChangeModel,
+  onToggleComplete
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -457,6 +477,7 @@ function AgentRow({
   onOpen?: () => void
   onRemove?: () => void
   onChangeModel?: () => void
+  onToggleComplete?: () => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -518,6 +539,7 @@ function AgentRow({
             onStop={onStop}
             onOpen={onOpen}
             onRemove={onRemove}
+            onToggleComplete={onToggleComplete}
           />
           <button
             onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
@@ -538,7 +560,8 @@ function RowActions({
   onReply,
   onStop,
   onOpen,
-  onRemove
+  onRemove,
+  onToggleComplete
 }: {
   agent: AgentRuntime
   onApprove?: () => void
@@ -546,6 +569,7 @@ function RowActions({
   onStop?: () => void
   onOpen?: () => void
   onRemove?: () => void
+  onToggleComplete?: () => void
 }) {
   const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors'
   const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors'
@@ -577,6 +601,18 @@ function RowActions({
           onClick={(event) => { event.stopPropagation(); onStop?.() }}
         >
           <Pause size={12} weight="bold" />
+        </button>
+      )}
+      {canToggleManualComplete(agent.status) && (
+        <button
+          className={buttonBase}
+          title={agent.status === 'completed_manual' ? 'Unmark Completed' : 'Mark Completed'}
+          onClick={(event) => { event.stopPropagation(); onToggleComplete?.() }}
+        >
+          {agent.status === 'completed_manual'
+            ? <ArrowCounterClockwise size={12} weight="bold" />
+            : <CheckCircle size={12} weight="bold" />
+          }
         </button>
       )}
       <button

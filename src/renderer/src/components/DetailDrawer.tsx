@@ -3,8 +3,10 @@ import {
   X,
   Square,
   Check,
+  CheckCircle,
   XCircle,
   ArrowSquareOut,
+  ArrowCounterClockwise,
   GitPullRequest,
   Terminal,
   Wrench,
@@ -17,7 +19,7 @@ import {
   PaperPlaneTilt
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
-import { formatBranchLabel } from '../types'
+import { formatBranchLabel, canToggleManualComplete } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
 import { Markdown } from './Markdown'
@@ -75,6 +77,7 @@ interface DetailDrawerProps {
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
+  onToggleComplete?: () => void
 }
 
 export function DetailDrawer({
@@ -98,7 +101,8 @@ export function DetailDrawer({
   onCreatePr,
   onOpenInEditor,
   onChangeModel,
-  onOpenTerminal
+  onOpenTerminal,
+  onToggleComplete
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -440,6 +444,13 @@ export function DetailDrawer({
           )}
           {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
             <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
+          )}
+          {onToggleComplete && canToggleManualComplete(agent.status) && (
+            <ActionButton
+              icon={agent.status === 'completed_manual' ? <ArrowCounterClockwise size={12} /> : <CheckCircle size={12} />}
+              label={agent.status === 'completed_manual' ? 'Unmark' : 'Complete'}
+              onClick={onToggleComplete}
+            />
           )}
           <div className="flex-1" />
           {onChangeModel && (
