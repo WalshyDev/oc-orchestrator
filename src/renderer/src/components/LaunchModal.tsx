@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { X, FolderOpen, Clock, Warning } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import { useModelOptions } from '../hooks/useModelOptions'
+import { loadSettings } from '../data/settings'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
 
@@ -60,7 +61,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
-  const [model, setModel] = useState('auto')
+  const [model, setModel] = useState(() => loadSettings().model)
   const { options: modelOptions } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [launching, setLaunching] = useState(false)

@@ -96,6 +96,9 @@ const api = {
   listAllProviders: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:providers'),
 
+  getSystemConfig: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:config'),
+
   // ── Dialog ──
   selectDirectory: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('dialog:select-directory'),
