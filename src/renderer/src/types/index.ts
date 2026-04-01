@@ -55,6 +55,12 @@ export interface Interrupt {
   resolvedAt?: string
 }
 
+export interface MessageImage {
+  mime: string
+  url: string
+  filename?: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'tool-group'
@@ -63,6 +69,7 @@ export interface Message {
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]
+  images?: MessageImage[]
 }
 
 export function isBlocked(status: AgentStatus): boolean {

@@ -11,8 +11,8 @@ const api = {
   launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
-  sendMessage: (agentId: string, text: string, agent?: string): Promise<IpcResult> =>
-    ipcRenderer.invoke('agent:send-message', agentId, text, agent),
+  sendMessage: (agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:send-message', agentId, text, agent, attachments),
 
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject'): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:respond-permission', agentId, permissionId, response),
@@ -65,8 +65,8 @@ const api = {
   listTools: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list-tools', agentId),
 
-  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string): Promise<IpcResult> =>
-    ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID),
+  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),

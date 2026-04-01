@@ -16,7 +16,8 @@ import {
   Trash,
   ChatCircleDots,
   Brain,
-  PaperPlaneTilt
+  PaperPlaneTilt,
+  Paperclip
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel, canToggleManualComplete } from '../types'
@@ -72,7 +73,7 @@ interface DetailDrawerProps {
   agentConfigs?: AgentConfigItem[]
   sessionNotice?: string
   onClose: () => void
-  onSendMessage?: (text: string) => void
+  onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
   onApprove?: () => void
   onDeny?: () => void
   onReplyQuestion?: (answers: string[][]) => void
@@ -119,13 +120,93 @@ export function DetailDrawer({
   const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
+  const [attachments, setAttachments] = useState<Array<{ mime: string; dataUrl: string; filename?: string }>>([])
+  const [isDragOver, setIsDragOver] = useState(false)
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const shouldAutoScrollRef = useRef(true)
   const userScrolledRef = useRef(false)
   const isResizingRef = useRef(false)
+
+  const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+  const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024 // 20 MB
+
+  const readFileAsDataUrl = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(file)
+    })
+  }, [])
+
+  const addImageFiles = useCallback(async (files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter(
+      (f) => ACCEPTED_IMAGE_TYPES.includes(f.type) && f.size <= MAX_ATTACHMENT_SIZE
+    )
+    if (imageFiles.length === 0) return
+
+    const newAttachments = await Promise.all(
+      imageFiles.map(async (f) => ({
+        mime: f.type,
+        dataUrl: await readFileAsDataUrl(f),
+        filename: f.name
+      }))
+    )
+    setAttachments((prev) => [...prev, ...newAttachments])
+  }, [readFileAsDataUrl])
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const handlePaste = useCallback((event: React.ClipboardEvent) => {
+    const items = event.clipboardData?.items
+    if (!items) return
+
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if (ACCEPTED_IMAGE_TYPES.includes(item.type)) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length > 0) {
+      event.preventDefault()
+      void addImageFiles(imageFiles)
+    }
+  }, [addImageFiles])
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDragOver(false)
+    if (event.dataTransfer?.files?.length) {
+      void addImageFiles(event.dataTransfer.files)
+    }
+  }, [addImageFiles])
+
+  const handleFileInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files?.length) {
+      void addImageFiles(event.target.files)
+      event.target.value = ''
+    }
+  }, [addImageFiles])
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -265,9 +346,10 @@ export function DetailDrawer({
   }
 
   const handleSend = () => {
-    if (!inputText.trim() || !onSendMessage) return
-    onSendMessage(inputText.trim())
+    if ((!inputText.trim() && attachments.length === 0) || !onSendMessage) return
+    onSendMessage(inputText.trim(), attachments.length > 0 ? attachments : undefined)
     setInputText('')
+    setAttachments([])
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -549,76 +631,134 @@ export function DetailDrawer({
         </div>
 
         {/* Input */}
-        <div className="flex gap-2 px-3 py-2 border-t border-kumo-line shrink-0">
-          <div className="relative flex-1 flex flex-col gap-1">
-            {showCommandAutocomplete && (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                {matchingCommands.map((item) => (
+        <div
+          className={`flex flex-col gap-0 px-3 py-2 border-t shrink-0 transition-colors ${
+            isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line'
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {/* Attachment thumbnails */}
+          {attachments.length > 0 && (
+            <div className="flex gap-2 px-1 py-1.5 overflow-x-auto">
+              {attachments.map((att, index) => (
+                <div key={index} className="relative group shrink-0">
+                  <img
+                    src={att.dataUrl}
+                    alt={att.filename ?? 'attachment'}
+                    className="h-16 w-16 rounded-md border border-kumo-line object-cover"
+                  />
                   <button
-                    key={item.command}
                     type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      setInputText(`${item.command} `)
-                    }}
-                    className="flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left hover:bg-kumo-fill transition-colors"
+                    onClick={() => removeAttachment(index)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
                   >
-                    <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
-                    <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                    <X size={8} weight="bold" />
                   </button>
-                ))}
-              </div>
-            )}
-            {showAgentPicker && (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
-                  Agents
+                  {att.filename && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
+                      {att.filename}
+                    </div>
+                  )}
                 </div>
-                {matchingAgents.map((cfg, index) => (
-                  <button
-                    key={cfg.name}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      insertAgentMention(cfg.name)
-                    }}
-                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                    }`}
-                  >
-                    <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
-                    {cfg.description && (
-                      <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
-                    )}
-                  </button>
-                ))}
-                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                </div>
-              </div>
-            )}
-            <textarea
-              ref={textareaRef}
-              value={inputText}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
-              onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
-              placeholder="Send a message to this agent... Type / for commands, @ for agents."
-              rows={3}
-              className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
-            />
-            <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter to send. Shift+Enter for a new line. Tab to autocomplete / commands and @ agents.
+              ))}
             </div>
+          )}
+
+          <div className="flex gap-2">
+            <div className="relative flex-1 flex flex-col gap-1">
+              {showCommandAutocomplete && (
+                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                  {matchingCommands.map((item) => (
+                    <button
+                      key={item.command}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        setInputText(`${item.command} `)
+                      }}
+                      className="flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left hover:bg-kumo-fill transition-colors"
+                    >
+                      <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                      <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showAgentPicker && (
+                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                  <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
+                    Agents
+                  </div>
+                  {matchingAgents.map((cfg, index) => (
+                    <button
+                      key={cfg.name}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        insertAgentMention(cfg.name)
+                      }}
+                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                        index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                      }`}
+                    >
+                      <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                      {cfg.description && (
+                        <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
+                      )}
+                    </button>
+                  ))}
+                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                  </div>
+                </div>
+              )}
+              <textarea
+                ref={textareaRef}
+                value={inputText}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
+                onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
+                onPaste={handlePaste}
+                placeholder={isDragOver ? 'Drop image here...' : 'Send a message to this agent... Type / for commands, @ for agents.'}
+                rows={3}
+                className={`w-full px-3 py-2 bg-kumo-control border rounded-md text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none transition-colors ${
+                  isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus:border-kumo-ring'
+                }`}
+              />
+              <div className="flex items-center gap-2 px-1">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors"
+                  title="Attach image"
+                >
+                  <Paperclip size={11} />
+                  <span>Attach image</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileInputChange}
+                />
+                <span className="text-[10px] text-kumo-subtle">
+                  Enter to send. Shift+Enter for new line. Paste or drag images.
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={handleSend}
+              disabled={!inputText.trim() && attachments.length === 0}
+              className="self-start px-3 py-2 bg-kumo-brand text-white text-xs font-medium rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
+            >
+              Send
+            </button>
           </div>
-          <button
-            onClick={handleSend}
-            disabled={!inputText.trim()}
-            className="self-start px-3 py-2 bg-kumo-brand text-white text-xs font-medium rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
-          >
-            Send
-          </button>
         </div>
       </div>
     </div>
@@ -928,10 +1068,30 @@ function MessageBubble({ message }: { message: Message }) {
       <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
         {isUser ? 'You' : 'Agent'}
       </div>
-      {isUser
-        ? <div className="whitespace-pre-wrap">{message.content}</div>
-        : <Markdown>{message.content}</Markdown>
-      }
+      {message.images && message.images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {message.images.map((img, index) => (
+            <div key={index} className="relative group">
+              <img
+                src={img.url}
+                alt={img.filename ?? 'attached image'}
+                className="max-h-48 max-w-full rounded-md border border-kumo-line object-contain cursor-pointer"
+                onClick={() => window.open(img.url, '_blank')}
+              />
+              {img.filename && (
+                <div className="text-[9px] text-kumo-subtle mt-0.5 truncate max-w-[200px]">
+                  {img.filename}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {message.content && (
+        isUser
+          ? <div className="whitespace-pre-wrap">{message.content}</div>
+          : <Markdown>{message.content}</Markdown>
+      )}
     </div>
   )
 }
