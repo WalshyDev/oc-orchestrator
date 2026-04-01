@@ -1284,6 +1284,19 @@ export function useAgentStore() {
 
   const respondToPermission = useCallback(async (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => {
     if (!window.api) return
+
+    // Optimistically clear permission and set running
+    state.permissions.delete(permissionId)
+    const agent = state.agents.get(agentId)
+    if (agent) {
+      if (agent.status !== 'stopping') {
+        agent.status = 'running'
+        agent.blockedSince = undefined
+      }
+      agent.lastActivityAt = Date.now()
+    }
+    emit()
+
     return window.api.respondToPermission(agentId, permissionId, response)
   }, [])
 
