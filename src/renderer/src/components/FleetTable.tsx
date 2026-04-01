@@ -383,6 +383,7 @@ function ContextMenu({
   }, [posX, posY])
 
   const isRunning = agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input'
+  const isStopping = agent.status === 'stopping'
 
   const itemClass = 'flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left'
   const dangerItemClass = 'flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-danger rounded hover:bg-kumo-danger/10 transition-colors text-left'
@@ -407,9 +408,9 @@ function ContextMenu({
           <Check size={13} weight="bold" /> Approve
         </button>
       )}
-      {isRunning && (
-        <button className={itemClass} onClick={onStop}>
-          <Square size={13} weight="fill" /> Stop
+      {(isRunning || isStopping) && (
+        <button className={itemClass} onClick={onStop} disabled={isStopping}>
+          <Square size={13} weight="fill" /> {isStopping ? 'Stopping…' : 'Stop'}
         </button>
       )}
       <button className={itemClass} onClick={onCreatePr}>
@@ -585,10 +586,11 @@ function RowActions({
       >
         <ArrowRight size={12} weight="bold" />
       </button>
-      {(agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval') && (
+      {(agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'stopping') && (
         <button
-          className={buttonBase}
-          title="Stop"
+          className={`${buttonBase} ${agent.status === 'stopping' ? 'opacity-50 cursor-not-allowed' : ''}`}
+          title={agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
+          disabled={agent.status === 'stopping'}
           onClick={(event) => { event.stopPropagation(); onStop?.() }}
         >
           <Square size={12} weight="fill" />

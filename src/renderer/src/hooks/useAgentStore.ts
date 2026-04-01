@@ -482,6 +482,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId)
       if (agent) {
         const newStatus = mapSessionStatus(statusInfo.type)
+        // While stopping, only allow transitions to terminal states (idle/completed/errored).
+        // Ignore 'running' or 'needs_input' events that may arrive after abort was sent.
+        if (agent.status === 'stopping' && newStatus !== 'idle' && newStatus !== 'completed' && newStatus !== 'errored') {
+          break
+        }
         if (agent.status !== newStatus) {
           notifyIfNeeded(agent, newStatus)
           agent.status = newStatus
@@ -643,11 +648,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
           message.parts.push(newPart)
         }
 
-        // Update agent activity (but don't clobber blocked states like needs_input/needs_approval)
+        // Update agent activity (but don't clobber blocked/stopping states)
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
-          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval') {
+          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping') {
             agent.status = 'running'
             agent.blockedSince = undefined
           }
@@ -710,8 +715,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        agent.status = 'running'
-        agent.blockedSince = undefined
+        if (agent.status !== 'stopping') {
+          agent.status = 'running'
+          agent.blockedSince = undefined
+        }
         agent.lastActivityAt = Date.now()
       }
 
@@ -751,8 +758,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        agent.status = 'running'
-        agent.blockedSince = undefined
+        if (agent.status !== 'stopping') {
+          agent.status = 'running'
+          agent.blockedSince = undefined
+        }
         agent.lastActivityAt = Date.now()
       }
 
@@ -767,8 +776,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        agent.status = 'running'
-        agent.blockedSince = undefined
+        if (agent.status !== 'stopping') {
+          agent.status = 'running'
+          agent.blockedSince = undefined
+        }
         agent.lastActivityAt = Date.now()
       }
 
@@ -1199,8 +1210,11 @@ export function useAgentStore() {
   const sendMessage = useCallback(async (agentId: string, text: string) => {
     if (!window.api) return
 
-    // Optimistically update task summary and status
+    // Don't allow sending while agent is stopping
     const agent = state.agents.get(agentId)
+    if (agent?.status === 'stopping') return
+
+    // Optimistically update task summary and status
     if (agent && text.trim()) {
       agent.taskSummary = text.trim().slice(0, 120)
       agent.status = 'running'
@@ -1290,7 +1304,42 @@ export function useAgentStore() {
 
   const abortAgent = useCallback(async (agentId: string) => {
     if (!window.api) return
-    return window.api.abortAgent(agentId)
+
+    // Optimistically set 'stopping' so the UI reflects intent immediately
+    const agent = state.agents.get(agentId)
+    if (agent) {
+      agent.status = 'stopping'
+      agent.lastActivityAt = Date.now()
+      emit()
+    }
+
+    const result = await window.api.abortAgent(agentId)
+
+    // If abort failed, the server never got the request — fall back to idle
+    // so the user isn't stuck in a phantom 'stopping'/'running' state
+    if (!result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'stopping') {
+        agentAfter.status = 'idle'
+        agentAfter.lastActivityAt = Date.now()
+        emit()
+      }
+    } else {
+      // Safety timeout: if the server acknowledged the abort but the SSE event
+      // (session.idle/completed) never arrives (broken stream, runtime crash),
+      // force-transition to idle so the user isn't stuck forever.
+      setTimeout(() => {
+        const agentAfter = state.agents.get(agentId)
+        if (agentAfter && agentAfter.status === 'stopping') {
+          console.warn(`[AgentStore] Agent ${agentId} stuck in 'stopping' for 10s, forcing idle`)
+          agentAfter.status = 'idle'
+          agentAfter.lastActivityAt = Date.now()
+          emit()
+        }
+      }, 10_000)
+    }
+
+    return result
   }, [])
 
   const resetSession = useCallback(async (agentId: string, prompt?: string) => {
