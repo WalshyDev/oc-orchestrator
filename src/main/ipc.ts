@@ -62,6 +62,36 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:reply-question', async (_event, agentId: string, requestId: string, answers: string[][]) => {
+    try {
+      await agentController.replyToQuestion(agentId, requestId, answers)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:reply-question failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:reject-question', async (_event, agentId: string, requestId: string) => {
+    try {
+      await agentController.rejectQuestion(agentId, requestId)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] agent:reject-question failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:list-questions', async () => {
+    try {
+      const questions = await agentController.getAllPendingQuestions()
+      return { ok: true, data: questions }
+    } catch (error) {
+      console.error('[IPC] agent:list-questions failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:abort', async (_event, agentId: string) => {
     try {
       await agentController.abortAgent(agentId)

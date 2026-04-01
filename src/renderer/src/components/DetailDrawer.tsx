@@ -17,7 +17,7 @@ import {
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
-import type { LivePermission } from '../hooks/useAgentStore'
+import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
@@ -56,6 +56,7 @@ interface DetailDrawerProps {
   agent: AgentRuntime
   messages: Message[]
   permission?: LivePermission | null
+  question?: LiveQuestion | null
   files?: FileChange[]
   tools?: ToolCall[]
   events?: EventEntry[]
@@ -65,6 +66,8 @@ interface DetailDrawerProps {
   onSendMessage?: (text: string) => void
   onApprove?: () => void
   onDeny?: () => void
+  onReplyQuestion?: (answers: string[][]) => void
+  onRejectQuestion?: () => void
   onAbort?: () => void
   onRemove?: () => void
   onCreatePr?: () => void
@@ -77,6 +80,7 @@ export function DetailDrawer({
   agent,
   messages,
   permission,
+  question,
   files = [],
   tools = [],
   events = [],
@@ -86,6 +90,8 @@ export function DetailDrawer({
   onSendMessage,
   onApprove,
   onDeny,
+  onReplyQuestion,
+  onRejectQuestion,
   onAbort,
   onRemove,
   onCreatePr,
@@ -359,8 +365,51 @@ export function DetailDrawer({
                 </div>
               )}
 
-              {/* Waiting for input card */}
-              {!permission && agent.status === 'needs_input' && (
+              {/* Question card */}
+              {!permission && question && agent.status === 'needs_input' && (
+                <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+                    <ChatCircleDots size={14} weight="fill" /> Question
+                  </div>
+                  {question.questions.map((q, qi) => (
+                    <div key={qi} className="flex flex-col gap-1.5">
+                      {q.header && (
+                        <div className="text-xs font-medium text-kumo-default">{q.header}</div>
+                      )}
+                      <div className="text-xs text-kumo-subtle">{q.question}</div>
+                      {q.options.length > 0 && (
+                        <div className="flex flex-col gap-1 mt-1">
+                          {q.options.map((opt, oi) => (
+                            <button
+                              key={oi}
+                              type="button"
+                              onClick={() => onReplyQuestion?.([[opt.label]])}
+                              className="flex flex-col items-start px-2.5 py-1.5 text-left text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 hover:border-status-input/40 hover:bg-status-input-bg/20 transition-colors"
+                            >
+                              <span className="font-medium text-kumo-default">{opt.label}</span>
+                              {opt.description && (
+                                <span className="text-kumo-subtle">{opt.description}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {onRejectQuestion && (
+                    <button
+                      type="button"
+                      onClick={onRejectQuestion}
+                      className="self-start flex items-center gap-1 px-2.5 py-1.5 mt-1 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+                    >
+                      <XCircle size={12} /> Dismiss
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Waiting for input (no structured question) */}
+              {!permission && !question && agent.status === 'needs_input' && (
                 <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
                   <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
                     <ChatCircleDots size={14} weight="fill" /> Waiting for your response

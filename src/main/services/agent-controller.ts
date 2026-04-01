@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { OpencodeClient } from '@opencode-ai/sdk/client'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
@@ -118,10 +118,8 @@ class AgentController {
 
     // Create a new session
     const sessionResult = await client.session.create({
-      headers: { 'x-opencode-directory': directory },
-      body: {
-        title: sessionTitle
-      }
+      directory,
+      title: sessionTitle
     })
 
     const session = sessionResult.data
@@ -152,19 +150,17 @@ class AgentController {
     // Apply model override if one was selected at launch
     if (model && model !== 'auto') {
       await client.config.update({
-        query: { directory },
-        body: { model }
+        directory,
+        config: { model }
       })
     }
 
     // Only send the initial prompt if one was provided
     if (prompt && prompt.trim()) {
       await client.session.promptAsync({
-        headers: { 'x-opencode-directory': directory },
-        path: { id: session.id },
-        body: {
-          parts: [{ type: 'text', text: prompt }]
-        }
+        sessionID: session.id,
+        directory,
+        parts: [{ type: 'text', text: prompt }]
       })
     }
 
@@ -207,8 +203,8 @@ class AgentController {
     const sessionTitle = prompt ? prompt.slice(0, 80) : `${projectSlug}-${Date.now()}`
 
     const sessionResult = await runtime.client.session.create({
-      headers: { 'x-opencode-directory': handle.directory },
-      body: { title: sessionTitle }
+      directory: handle.directory,
+      title: sessionTitle
     })
 
     const session = sessionResult.data
@@ -223,11 +219,9 @@ class AgentController {
 
     if (prompt && prompt.trim()) {
       await runtime.client.session.promptAsync({
-        headers: { 'x-opencode-directory': handle.directory },
-        path: { id: session.id },
-        body: {
-          parts: [{ type: 'text', text: prompt }]
-        }
+        sessionID: session.id,
+        directory: handle.directory,
+        parts: [{ type: 'text', text: prompt }]
       })
     }
 
@@ -267,11 +261,9 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.promptAsync({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId },
-      body: {
-        parts: [{ type: 'text', text }]
-      }
+      sessionID: handle.sessionId,
+      directory: handle.directory,
+      parts: [{ type: 'text', text }]
     })
   }
 
@@ -285,14 +277,61 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    await runtime.client.postSessionIdPermissionsPermissionId({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: {
-        id: handle.sessionId,
-        permissionID: permissionId
-      },
-      body: { response }
+    await runtime.client.permission.reply({
+      requestID: permissionId,
+      directory: handle.directory,
+      reply: response
     })
+  }
+
+  /**
+   * Reply to a question request from the agent.
+   */
+  async replyToQuestion(agentId: string, requestId: string, answers: string[][]): Promise<void> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    await runtime.client.question.reply({
+      requestID: requestId,
+      directory: handle.directory,
+      answers
+    })
+  }
+
+  /**
+   * Reject a question request from the agent.
+   */
+  async rejectQuestion(agentId: string, requestId: string): Promise<void> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    await runtime.client.question.reject({
+      requestID: requestId,
+      directory: handle.directory
+    })
+  }
+
+  /**
+   * List pending questions for an agent's runtime.
+   */
+  async listQuestions(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) return []
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.question.list({
+      directory: handle.directory
+    })
+
+    return result.data
   }
 
   /**
@@ -306,8 +345,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.abort({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId }
+      sessionID: handle.sessionId,
+      directory: handle.directory
     })
   }
 
@@ -322,7 +361,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.command.list({
-      headers: { 'x-opencode-directory': handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -339,12 +378,10 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.command({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId },
-      body: {
-        command,
-        arguments: args
-      }
+      sessionID: handle.sessionId,
+      directory: handle.directory,
+      command,
+      arguments: args
     })
 
     return result.data
@@ -361,7 +398,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.config.get({
-      query: { directory: handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -378,8 +415,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.config.update({
-      query: { directory: handle.directory },
-      body: config
+      directory: handle.directory,
+      config: config as never
     })
 
     return result.data
@@ -396,7 +433,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.config.providers({
-      query: { directory: handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -412,7 +449,7 @@ class AgentController {
       try {
         const runtime = await this.ensureRuntimeForAgent(handle)
         const result = await runtime.client.config.providers({
-          query: { directory: handle.directory }
+          directory: handle.directory
         })
         return result.data
       } catch {
@@ -435,7 +472,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.mcp.status({
-      query: { directory: handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -452,8 +489,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.mcp.connect({
-      path: { name },
-      query: { directory: handle.directory }
+      name,
+      directory: handle.directory
     })
 
     return result.data
@@ -470,8 +507,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.mcp.disconnect({
-      path: { name },
-      query: { directory: handle.directory }
+      name,
+      directory: handle.directory
     })
 
     return result.data
@@ -488,9 +525,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.summarize({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId },
-      body: { providerID: '', modelID: '' }
+      sessionID: handle.sessionId,
+      directory: handle.directory
     })
 
     return result.data
@@ -507,8 +543,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.share({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId }
+      sessionID: handle.sessionId,
+      directory: handle.directory
     })
 
     return result.data
@@ -525,7 +561,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.app.agents({
-      query: { directory: handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -542,7 +578,7 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.tool.ids({
-      query: { directory: handle.directory }
+      directory: handle.directory
     })
 
     return result.data
@@ -559,12 +595,10 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.promptAsync({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId },
-      body: {
-        parts: [{ type: 'text', text }],
-        model: { providerID, modelID }
-      }
+      sessionID: handle.sessionId,
+      directory: handle.directory,
+      parts: [{ type: 'text', text }],
+      model: { providerID, modelID }
     })
   }
 
@@ -579,8 +613,8 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.messages({
-      headers: { 'x-opencode-directory': handle.directory },
-      path: { id: handle.sessionId }
+      sessionID: handle.sessionId,
+      directory: handle.directory
     })
 
     return result.data
@@ -607,7 +641,7 @@ class AgentController {
       try {
         const directory = handles[0].directory
         const result = await runtime.client.session.status({
-          headers: { 'x-opencode-directory': directory }
+          directory
         })
 
         if (result.data) {
@@ -628,6 +662,45 @@ class AgentController {
     }
 
     return statuses
+  }
+
+  /**
+   * Fetch all pending questions across all agents.
+   */
+  async getAllPendingQuestions(): Promise<Array<{ agentId: string; questions: unknown[] }>> {
+    const result: Array<{ agentId: string; questions: unknown[] }> = []
+
+    const byRuntime = new Map<string, AgentHandle[]>()
+    for (const handle of this.agents.values()) {
+      const existing = byRuntime.get(handle.runtimeId) ?? []
+      existing.push(handle)
+      byRuntime.set(handle.runtimeId, existing)
+    }
+
+    for (const [runtimeId, handles] of byRuntime) {
+      const runtime = runtimeManager.getRuntime(runtimeId)
+      if (!runtime) continue
+
+      try {
+        const directory = handles[0].directory
+        const questionsResult = await runtime.client.question.list({
+          directory
+        })
+
+        if (questionsResult.data && Array.isArray(questionsResult.data)) {
+          for (const q of questionsResult.data as Array<{ id: string; sessionID: string }>) {
+            const agent = handles.find((h) => h.sessionId === q.sessionID)
+            if (agent) {
+              result.push({ agentId: agent.id, questions: [q] })
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`[AgentController] Failed to get questions for runtime ${runtimeId}:`, error)
+      }
+    }
+
+    return result
   }
 
   /**

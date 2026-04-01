@@ -28,6 +28,9 @@ export interface OrchestratorApi {
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
+  replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
+  rejectQuestion: (agentId: string, requestId: string) => Promise<IpcResult>
+  listQuestions: () => Promise<IpcResult<PendingQuestionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
   listAllProviders: () => Promise<IpcResult>
@@ -149,6 +152,34 @@ export type AgentStatusesPayload = Record<string, {
   status: {
     type: string
   }
+}>
+
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+export interface QuestionInfo {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiple?: boolean
+  custom?: boolean
+}
+
+export interface QuestionRequest {
+  id: string
+  sessionID: string
+  questions: QuestionInfo[]
+  tool?: {
+    messageID: string
+    callID: string
+  }
+}
+
+export type PendingQuestionsPayload = Array<{
+  agentId: string
+  questions: QuestionRequest[]
 }>
 
 export interface RuntimeStartedPayload {

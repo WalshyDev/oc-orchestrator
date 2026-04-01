@@ -174,8 +174,24 @@ export function App() {
       }
     })
 
+    const questionInterrupts = store.questions.map((q): Interrupt => {
+      const agent = store.agents.find((agnt) => agnt.id === q.agentId)
+      const firstQuestion = q.questions[0]
+      return {
+        id: q.id,
+        runtimeId: q.agentId,
+        agentName: agent?.name ?? 'unknown',
+        projectName: agent?.projectName ?? 'unknown',
+        kind: 'needs_input',
+        reason: firstQuestion?.header ?? firstQuestion?.question ?? 'Agent has a question',
+        createdAt: formatTimeAgo(q.createdAt)
+      }
+    })
+
+    // Only include generic needs_input interrupts for agents that don't have a structured question
+    const agentsWithQuestions = new Set(store.questions.map((q) => q.agentId))
     const inputInterrupts = store.agents
-      .filter((agent) => agent.status === 'needs_input')
+      .filter((agent) => agent.status === 'needs_input' && !agentsWithQuestions.has(agent.id))
       .map((agent): Interrupt => ({
         id: `input-${agent.id}`,
         runtimeId: agent.id,
@@ -186,8 +202,8 @@ export function App() {
         createdAt: formatTimeAgo(agent.blockedSince ?? agent.lastActivityAt)
       }))
 
-    return [...permissionInterrupts, ...inputInterrupts]
-  }, [store.permissions, store.agents])
+    return [...permissionInterrupts, ...questionInterrupts, ...inputInterrupts]
+  }, [store.permissions, store.questions, store.agents])
 
   // ── Display data: always live (no mock fallback) ──
   const displayAgents = liveAgentsAsRuntimes
@@ -385,6 +401,12 @@ export function App() {
     return store.permissions.find((perm) => perm.agentId === selectedAgent.id) ?? null
   }, [selectedAgent, store.permissions])
 
+  // ── Question for selected agent ──
+  const selectedQuestion = useMemo(() => {
+    if (!selectedAgent) return null
+    return store.questions.find((q) => q.agentId === selectedAgent.id) ?? null
+  }, [selectedAgent, store.questions])
+
   // ── Counts ──
   const counts = useMemo(
     () => ({
@@ -544,6 +566,16 @@ export function App() {
     if (!selectedAgentId) return
     await store.respondToPermission(selectedAgentId, permissionId, 'reject')
   }, [selectedAgentId, store])
+
+  const handleReplyQuestion = useCallback(async (answers: string[][]) => {
+    if (!selectedAgentId || !selectedQuestion) return
+    await store.replyToQuestion(selectedAgentId, selectedQuestion.id, answers)
+  }, [selectedAgentId, selectedQuestion, store])
+
+  const handleRejectQuestion = useCallback(async () => {
+    if (!selectedAgentId || !selectedQuestion) return
+    await store.rejectQuestion(selectedAgentId, selectedQuestion.id)
+  }, [selectedAgentId, selectedQuestion, store])
 
   const handleAbort = useCallback(async () => {
     if (!selectedAgentId) return
@@ -838,6 +870,7 @@ export function App() {
           agent={selectedAgent}
           messages={selectedMessages}
           permission={selectedPermission}
+          question={selectedQuestion}
           files={selectedFiles}
           tools={selectedTools}
           events={selectedEvents}
@@ -846,6 +879,8 @@ export function App() {
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}
           onDeny={selectedPermission ? () => handleDeny(selectedPermission.id) : undefined}
+          onReplyQuestion={selectedQuestion ? handleReplyQuestion : undefined}
+          onRejectQuestion={selectedQuestion ? handleRejectQuestion : undefined}
           onAbort={handleAbort}
           onRemove={() => void handleRemoveAgent(selectedAgent.id)}
           onCreatePr={handleCreatePr}
