@@ -339,7 +339,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             onClick={onClose}
             className="px-4 py-2 text-xs font-medium text-kumo-subtle border border-kumo-line rounded-md hover:bg-kumo-fill transition-colors"
           >
-            Close
+             Save
           </button>
         </div>
       </div>
