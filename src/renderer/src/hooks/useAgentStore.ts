@@ -406,6 +406,14 @@ function hydrateHistoricalMessages(entries: unknown): void {
   }
 }
 
+// ── Viewed Agent Suppression ──
+
+let viewedAgentId: string | null = null
+
+export function setViewedAgentId(agentId: string | null): void {
+  viewedAgentId = agentId
+}
+
 // ── Event Processing ──
 
 const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected', 'idle'])
@@ -413,6 +421,9 @@ const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored',
 function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
   if (agent.status === newStatus) return
   if (!NOTIFIABLE_STATUSES.has(newStatus)) return
+
+  // Don't notify for the agent whose transcript is currently open
+  if (agent.id === viewedAgentId) return
 
   // Treat running→idle as "completed" for notification purposes
   const notifyStatus = (newStatus === 'idle' && agent.status === 'running') ? 'completed' : newStatus
