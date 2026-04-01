@@ -138,9 +138,9 @@ export function App() {
     }))
   }, [store.agents])
 
-  // ── Convert live permissions to Interrupt shape ──
+  // ── Convert live permissions + needs_input agents to Interrupt shape ──
   const liveInterrupts: Interrupt[] = useMemo(() => {
-    return store.permissions.map((perm): Interrupt => {
+    const permissionInterrupts = store.permissions.map((perm): Interrupt => {
       const agent = store.agents.find((agnt) => agnt.id === perm.agentId)
       return {
         id: perm.id,
@@ -152,6 +152,20 @@ export function App() {
         createdAt: formatTimeAgo(perm.createdAt)
       }
     })
+
+    const inputInterrupts = store.agents
+      .filter((agent) => agent.status === 'needs_input')
+      .map((agent): Interrupt => ({
+        id: `input-${agent.id}`,
+        runtimeId: agent.id,
+        agentName: agent.name,
+        projectName: agent.projectName,
+        kind: 'needs_input',
+        reason: 'Agent is waiting for your response',
+        createdAt: formatTimeAgo(agent.blockedSince ?? agent.lastActivityAt)
+      }))
+
+    return [...permissionInterrupts, ...inputInterrupts]
   }, [store.permissions, store.agents])
 
   // ── Display data: always live (no mock fallback) ──

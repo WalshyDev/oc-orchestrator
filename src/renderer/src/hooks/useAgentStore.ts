@@ -590,12 +590,14 @@ function processEvent(payload: OpenCodeEventPayload): void {
           message.parts.push(newPart)
         }
 
-        // Update agent activity
+        // Update agent activity (but don't clobber blocked states like needs_input/needs_approval)
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
-          agent.status = 'running'
-          agent.blockedSince = undefined
+          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval') {
+            agent.status = 'running'
+            agent.blockedSince = undefined
+          }
 
           // Update task summary from first user text part
           if (message.role === 'user' && partType === 'text' && part.text) {
