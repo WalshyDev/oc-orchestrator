@@ -28,6 +28,15 @@ const EDITOR_OPTIONS = [
   { value: 'custom', label: 'Custom Command' },
 ] as const
 
+const TERMINAL_OPTIONS = [
+  { value: 'default', label: 'Default (Terminal.app)' },
+  { value: 'iTerm', label: 'iTerm2' },
+  { value: 'Warp', label: 'Warp' },
+  { value: 'Alacritty', label: 'Alacritty' },
+  { value: 'kitty', label: 'Kitty' },
+  { value: 'Ghostty', label: 'Ghostty' },
+] as const
+
 const KEYBOARD_SHORTCUTS = [
   { key: 'Cmd+N', action: 'Launch New Agent', scope: 'Global' },
   { key: 'Cmd+,', action: 'Open Settings', scope: 'Global' },
@@ -157,6 +166,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     className={`${inputClasses} font-mono mt-1`}
                   />
                 )}
+              </div>
+
+              {/* Terminal */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Terminal
+                </label>
+                <div className="relative">
+                  <SelectField
+                    value={settings.terminal}
+                    onChange={(value) => updateSettings({ terminal: value })}
+                    options={TERMINAL_OPTIONS}
+                    buttonClassName={selectButtonClasses}
+                    menuClassName={selectMenuClasses}
+                  />
+                </div>
               </div>
 
               {/* Notification Preferences */}

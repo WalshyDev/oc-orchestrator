@@ -141,7 +141,7 @@ const api = {
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
-  openTerminal: (options: { path: string }): Promise<IpcResult> =>
+  openTerminal: (options: { path: string; terminal?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-terminal', options),
 
   openExternal: (url: string): Promise<IpcResult> =>

@@ -57,7 +57,7 @@ export interface OrchestratorApi {
 
   // ── Shell Integration ──
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }) => Promise<IpcResult>
-  openTerminal: (options: { path: string }) => Promise<IpcResult>
+  openTerminal: (options: { path: string; terminal?: string }) => Promise<IpcResult>
   openExternal: (url: string) => Promise<IpcResult>
 
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void

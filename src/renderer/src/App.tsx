@@ -527,10 +527,8 @@ export function App() {
   const handleOpenTerminal = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
-    const apiObj = window.api as unknown as Record<string, unknown> | undefined
-    if (apiObj && typeof apiObj.openTerminal === 'function') {
-      (apiObj.openTerminal as (opts: { path: string }) => void)({ path: liveAgent.directory })
-    }
+    const settings = loadSettings()
+    window.api.openTerminal({ path: liveAgent.directory, terminal: settings.terminal })
   }, [findLiveAgent])
 
   const handleOpenInEditorForAgent = useCallback((agentId: string) => {

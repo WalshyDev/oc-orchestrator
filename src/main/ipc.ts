@@ -516,10 +516,24 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('shell:open-terminal', async (_event, options: { path: string }) => {
+  ipcMain.handle('shell:open-terminal', async (_event, options: { path: string; terminal?: string }) => {
     try {
+      const terminal = options.terminal || 'default'
+      let command: string
+
+      if (process.platform === 'darwin') {
+        if (terminal === 'default') {
+          // Use macOS `open` which respects the default terminal
+          command = `open -a Terminal "${options.path}"`
+        } else {
+          command = `open -a "${terminal}" "${options.path}"`
+        }
+      } else {
+        command = `xdg-open "${options.path}"`
+      }
+
       await new Promise<void>((resolve, reject) => {
-        exec(`open -a Terminal "${options.path}"`, (error) => {
+        exec(command, (error) => {
           if (error) reject(error)
           else resolve()
         })

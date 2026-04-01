@@ -9,6 +9,7 @@ export interface AppSettings {
   model: string
   editor: string
   customEditorCommand: string
+  terminal: string
   createPrPrompt: string
   notifications: NotificationPrefs
 }
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   model: 'auto',
   editor: 'vscode',
   customEditorCommand: '',
+  terminal: 'default',
   createPrPrompt: DEFAULT_CREATE_PR_PROMPT,
   notifications: {
     needs_approval: true,
