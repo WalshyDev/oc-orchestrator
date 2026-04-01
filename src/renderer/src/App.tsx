@@ -563,6 +563,14 @@ export function App() {
     window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' })
   }, [selectedAgentId, findLiveAgent])
 
+  const handleOpenTerminalForDrawer = useCallback(() => {
+    if (!selectedAgentId) return
+    const liveAgent = findLiveAgent(selectedAgentId)
+    if (!liveAgent) return
+    const settings = loadSettings()
+    window.api.openTerminal({ path: liveAgent.directory, terminal: settings.terminal })
+  }, [selectedAgentId, findLiveAgent])
+
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
     await store.sendMessage(agentId, loadSettings().createPrPrompt)
   }, [store])
@@ -843,6 +851,7 @@ export function App() {
           onCreatePr={handleCreatePr}
           onOpenInEditor={handleOpenInEditor}
           onChangeModel={() => setShowModelPicker(true)}
+          onOpenTerminal={handleOpenTerminalForDrawer}
         />
       )}
 
