@@ -11,7 +11,8 @@ import {
   CircleNotch,
   CaretDown,
   CaretRight,
-  Trash
+  Trash,
+  ChatCircleDots
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message } from '../types'
 import { formatBranchLabel } from '../types'
@@ -348,6 +349,18 @@ export function DetailDrawer({
                         <XCircle size={12} /> Deny
                       </button>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Waiting for input card */}
+              {!permission && agent.status === 'needs_input' && (
+                <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+                    <ChatCircleDots size={14} weight="fill" /> Waiting for your response
+                  </div>
+                  <div className="text-xs text-kumo-default">
+                    This agent has asked a question and is waiting for your reply. Use the input below to respond.
                   </div>
                 </div>
               )}
