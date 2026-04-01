@@ -458,6 +458,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        notifyIfNeeded(agent, 'idle')
         agent.status = 'idle'
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
