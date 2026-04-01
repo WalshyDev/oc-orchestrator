@@ -54,6 +54,7 @@ export function App() {
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
   const [agentConfigs, setAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
   const [showModelPicker, setShowModelPicker] = useState(false)
+  const [modelPickerAgentId, setModelPickerAgentId] = useState<string | null>(null)
   const [showMcpModal, setShowMcpModal] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
   const [appVersion, setAppVersion] = useState('')
@@ -920,7 +921,7 @@ export function App() {
         onOpenInEditor={handleOpenInEditorForAgent}
         onCreatePr={handleCreatePrForAgent}
         onChangeModel={(agentId) => {
-          setSelectedAgentId(agentId)
+          setModelPickerAgentId(agentId)
           setShowModelPicker(true)
         }}
         onToggleComplete={handleToggleComplete}
@@ -954,7 +955,7 @@ export function App() {
           onRemove={() => void handleRemoveAgent(selectedAgent.id)}
           onCreatePr={handleCreatePr}
           onOpenInEditor={handleOpenInEditor}
-          onChangeModel={() => setShowModelPicker(true)}
+          onChangeModel={() => { setModelPickerAgentId(selectedAgentId); setShowModelPicker(true) }}
           onOpenTerminal={handleOpenTerminalForDrawer}
           onToggleComplete={() => handleToggleComplete(selectedAgent.id)}
         />
@@ -973,17 +974,19 @@ export function App() {
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
 
-      {showModelPicker && selectedAgentId && (
+      {showModelPicker && modelPickerAgentId && (
         <ModelPickerModal
-          agentId={selectedAgentId}
-          currentModel={selectedAgent?.model}
-          onClose={() => setShowModelPicker(false)}
+          agentId={modelPickerAgentId}
+          currentModel={displayAgents.find((a) => a.id === modelPickerAgentId)?.model
+            ?? liveAgentsAsRuntimes.find((a) => a.id === modelPickerAgentId)?.model}
+          onClose={() => { setShowModelPicker(false); setModelPickerAgentId(null) }}
           onSelect={async (modelPath) => {
-            if (!selectedAgentId) return
-            const result = await window.api.updateConfig(selectedAgentId, { model: modelPath })
+            if (!modelPickerAgentId) return
+            const result = await window.api.updateConfig(modelPickerAgentId, { model: modelPath })
             if (result.ok) {
-              store.setAgentModel(selectedAgentId, modelPath)
+              store.setAgentModel(modelPickerAgentId, modelPath)
               setShowModelPicker(false)
+              setModelPickerAgentId(null)
             } else {
               console.error('Failed to set model:', result.error)
             }

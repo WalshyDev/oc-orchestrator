@@ -486,7 +486,7 @@ function AgentRow({
     <tr
       onClick={onSelect}
       onContextMenu={onContextMenu}
-      className={`group cursor-pointer transition-colors border-b border-kumo-line ${
+      className={`group cursor-default transition-colors border-b border-kumo-line ${
         selected
           ? 'bg-kumo-control'
           : urgent
@@ -518,7 +518,7 @@ function AgentRow({
         {agent.model && agent.model !== 'starting...' && (
           <button
             onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
-            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block"
+            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
             title={agent.model}
           >
             {agent.model}
@@ -543,7 +543,7 @@ function AgentRow({
           />
           <button
             onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
-            className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors"
+            className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"
             title="Agent actions"
           >
             <GearSix size={13} />
@@ -571,8 +571,8 @@ function RowActions({
   onRemove?: () => void
   onToggleComplete?: () => void
 }) {
-  const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors'
-  const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors'
+  const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer'
+  const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors cursor-pointer'
 
   return (
     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
