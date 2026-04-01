@@ -1246,9 +1246,17 @@ export function useAgentStore() {
       agent.taskSummary = text.trim().slice(0, 120)
       agent.status = 'running'
       agent.lastActivityAt = Date.now()
+      agent.blockedSince = undefined
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary })
-      emit()
     }
+
+    // Optimistically clear any pending questions for this agent
+    // (sending a message is the response to a needs_input state)
+    for (const [qId, q] of state.questions) {
+      if (q.agentId === agentId) state.questions.delete(qId)
+    }
+
+    emit()
 
     return window.api.sendMessage(agentId, text, agentConfig, attachments)
   }, [])

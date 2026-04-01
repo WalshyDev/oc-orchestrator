@@ -58,6 +58,7 @@ export function App() {
   const [showMcpModal, setShowMcpModal] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
   const [appVersion, setAppVersion] = useState('')
+  const [dismissedInterruptIds, setDismissedInterruptIds] = useState<Set<string> | null>(null)
 
   const store = useAgentStore()
 
@@ -246,6 +247,13 @@ export function App() {
   // ── Display data: always live (no mock fallback) ──
   const displayAgents = liveAgentsAsRuntimes
   const displayInterrupts = liveInterrupts
+
+  // Re-show banner if new interrupts appear that weren't in the dismissed set
+  const isBannerDismissed = dismissedInterruptIds !== null &&
+    liveInterrupts.length > 0 &&
+    liveInterrupts.every((interrupt) => dismissedInterruptIds.has(interrupt.id))
+
+  const showInterruptBanner = displayInterrupts.length > 0 && !isBannerDismissed
 
   // ── Filtered + sorted agents ──
   const filteredAgents = useMemo(() => {
@@ -899,10 +907,11 @@ export function App() {
         </div>
       )}
 
-      {displayInterrupts.length > 0 && (
+      {showInterruptBanner && (
         <InterruptBanner
           interrupts={displayInterrupts}
           onReviewAll={() => setFilter({ statuses: new Set<StatusFilter>(['blocked']), projects: new Set() })}
+          onDismiss={() => setDismissedInterruptIds(new Set(displayInterrupts.map((i) => i.id)))}
         />
       )}
 

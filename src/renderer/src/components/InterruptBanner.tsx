@@ -3,9 +3,10 @@ import type { Interrupt } from '../types'
 interface InterruptBannerProps {
   interrupts: Interrupt[]
   onReviewAll: () => void
+  onDismiss: () => void
 }
 
-export function InterruptBanner({ interrupts, onReviewAll }: InterruptBannerProps) {
+export function InterruptBanner({ interrupts, onReviewAll, onDismiss }: InterruptBannerProps) {
   if (interrupts.length === 0) return null
 
   const approvalCount = interrupts.filter((interrupt) => interrupt.kind === 'needs_approval').length
@@ -33,6 +34,15 @@ export function InterruptBanner({ interrupts, onReviewAll }: InterruptBannerProp
         className="px-2.5 py-1 text-[11px] font-medium bg-kumo-danger/15 text-kumo-danger border border-kumo-danger/25 rounded-md hover:bg-kumo-danger/25 transition-colors"
       >
         Review All &rarr;
+      </button>
+      <button
+        onClick={onDismiss}
+        className="ml-1 p-0.5 text-kumo-danger/60 hover:text-kumo-danger transition-colors rounded"
+        title="Dismiss banner"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M4 4l8 8M12 4l-8 8" />
+        </svg>
       </button>
     </div>
   )
