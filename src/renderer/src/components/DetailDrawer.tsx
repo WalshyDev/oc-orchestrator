@@ -179,12 +179,9 @@ export function DetailDrawer({
       return
     }
 
-    if (event.key === 'Enter') {
-      const isSlashCommand = inputText.trim().startsWith('/')
-      if (isSlashCommand || event.metaKey || event.ctrlKey) {
-        event.preventDefault()
-        handleSend()
-      }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      handleSend()
     }
   }
 
@@ -426,7 +423,7 @@ export function DetailDrawer({
               className="w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-kumo-default text-sm outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
             />
             <div className="px-1 text-[10px] text-kumo-subtle">
-              Enter adds a new line. Press Cmd+Enter or Ctrl+Enter to send. Use Tab to autocomplete commands.
+              Enter to send. Shift+Enter for a new line. Use Tab to autocomplete commands.
             </div>
           </div>
           <button
