@@ -1,6 +1,6 @@
 {
   "name": "oc-orchestrator",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "OpenCode Orchestrator — supervise concurrent coding agents",
   "main": "./out/main/index.js",
   "bin": {
