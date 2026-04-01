@@ -307,7 +307,7 @@ class AgentController {
    */
   async listCommands(agentId: string): Promise<unknown> {
     const handle = this.agents.get(agentId)
-    if (!handle) throw new Error(`Agent ${agentId} not found`)
+    if (!handle) return []
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
