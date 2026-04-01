@@ -518,7 +518,7 @@ function AgentRow({
         {agent.model && agent.model !== 'starting...' && (
           <button
             onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
-            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block"
+            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
             title={agent.model}
           >
             {agent.model}
