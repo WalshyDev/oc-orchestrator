@@ -26,6 +26,11 @@ export class EventBridge {
     private client: OpencodeClient
   ) {}
 
+  /**
+   * Subscribe to the SSE event stream and begin forwarding events.
+   * Resolves once the SSE connection is established so callers can
+   * safely send prompts knowing the bridge will capture the response.
+   */
   async start(): Promise<void> {
     if (this.connected) return
 
@@ -51,13 +56,11 @@ export class EventBridge {
       this.reconnectAttempts = 0
       this.currentBackoff = INITIAL_BACKOFF_MS
 
-      // The SDK returns an async iterable of SSE events
+      // The SDK returns an async iterable of SSE events.
+      // Consume the stream in the background so start() can resolve
+      // immediately after the connection is established.
       if ('stream' in result && result.stream) {
-        for await (const event of result.stream as AsyncIterable<{ type: string; properties: unknown }>) {
-          if (!this.connected) break
-
-          this.forwardEvent(event)
-        }
+        this.consumeStream(result.stream as AsyncIterable<{ type: string; properties: unknown }>)
       }
     } catch (error) {
       if (this.connected) {
@@ -67,6 +70,24 @@ export class EventBridge {
           error: String(error)
         })
 
+        this.scheduleReconnect()
+      }
+    }
+  }
+
+  private async consumeStream(stream: AsyncIterable<{ type: string; properties: unknown }>): Promise<void> {
+    try {
+      for await (const event of stream) {
+        if (!this.connected) break
+        this.forwardEvent(event)
+      }
+    } catch (error) {
+      if (this.connected) {
+        console.error(`[EventBridge:${this.runtimeId}] Stream consumption error:`, error)
+        this.broadcastToRenderer('event:error', {
+          runtimeId: this.runtimeId,
+          error: String(error)
+        })
         this.scheduleReconnect()
       }
     }
