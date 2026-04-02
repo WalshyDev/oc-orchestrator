@@ -182,7 +182,7 @@ const api = {
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName),
 
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }): Promise<IpcResult> =>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
   openTerminal: (options: { path: string; terminal?: string }): Promise<IpcResult> =>

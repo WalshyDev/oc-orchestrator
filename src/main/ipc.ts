@@ -654,13 +654,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('shell:open-in-editor', async (_event, options: {
     path: string
-    editor: 'vscode' | 'cursor' | 'windsurf'
+    editor: 'vscode' | 'cursor' | 'windsurf' | 'goland'
   }) => {
     try {
       const editorCommands: Record<string, string> = {
         vscode: 'code',
         cursor: 'cursor',
-        windsurf: 'windsurf'
+        windsurf: 'windsurf',
+        goland: 'goland'
       }
       const cmd = editorCommands[options.editor] ?? 'code'
       await run(cmd, [options.path])

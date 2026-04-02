@@ -19,6 +19,7 @@ const EDITOR_OPTIONS = [
   { value: 'vscode', label: 'VS Code' },
   { value: 'cursor', label: 'Cursor' },
   { value: 'windsurf', label: 'Windsurf' },
+  { value: 'goland', label: 'GoLand' },
   { value: 'custom', label: 'Custom Command' },
 ] as const
 

@@ -681,7 +681,7 @@ export function App() {
     const liveAgent = findLiveAgent(selectedAgentId)
     if (!liveAgent) return
     const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' })
+    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
   }, [selectedAgentId, findLiveAgent])
 
   const handleOpenTerminalForDrawer = useCallback(() => {
@@ -707,7 +707,7 @@ export function App() {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
     const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' })
+    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
   }, [findLiveAgent])
 
   // ── Launch modal actions ──
