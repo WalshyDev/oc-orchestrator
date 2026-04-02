@@ -63,6 +63,7 @@ export interface LiveAgent {
   model: string
   lastActivityAt: number
   blockedSince?: number
+  prUrl: string | null
   cost: number
   tokens: { input: number; output: number }
   /** Whether the name was auto-generated and should be replaced by the first prompt */
@@ -200,7 +201,7 @@ function emit(changed?: EmitFlags): void {
   }
 }
 
-function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }): void {
+function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }): void {
   window.api?.updateAgentMeta(agentId, meta)
 }
 
@@ -234,6 +235,16 @@ function deriveFreshAgentName(projectName: string): string {
     .replace(/-$/, '')
 
   return cleaned ? `${cleaned}-fresh` : 'fresh-agent'
+}
+
+// ── PR URL Extraction ──
+
+/** Matches GitHub and GitLab PR/MR URLs in message text. */
+const PR_URL_REGEX = /https?:\/\/(?:github\.com|gitlab\.com|gitlab\.[a-z0-9.-]+)\S*\/(?:pull|merge_requests)\/\d+\b/gi
+
+function extractPrUrl(text: string): string | null {
+  const matches = text.match(PR_URL_REGEX)
+  return matches ? matches[matches.length - 1] : null
 }
 
 function subscribe(listener: () => void): () => void {
@@ -479,6 +490,22 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
       if (entry.info.modelID) {
         agent.model = formatModelName(entry.info.modelID)
+      }
+
+      // Extract PR URL from historical assistant messages (text and tool output)
+      if (!agent.prUrl) {
+        for (const part of entry.parts) {
+          const text = part.type === 'tool'
+            ? (part.text ?? part.state?.output ?? part.state?.error)
+            : part.text
+          if ((part.type === 'text' || part.type === 'tool') && text) {
+            const prUrl = extractPrUrl(text)
+            if (prUrl) {
+              agent.prUrl = prUrl
+              break
+            }
+          }
+        }
       }
     }
   }
@@ -737,8 +764,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
           return getToolOutput(part, toolState) ?? part.text as string | undefined
         }
 
+        const partText = extractText()
         if (existingPart) {
-          existingPart.text = extractText()
+          existingPart.text = partText
           if (partType === 'tool') {
             existingPart.toolState = getToolState(toolState)
             existingPart.toolInput = stringifyToolInput(toolState?.input)
@@ -752,7 +780,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           const newPart: LiveMessagePart = {
             id: partId,
             type: partType,
-            text: extractText()
+            text: partText
           }
           if (partType === 'tool') {
             newPart.toolName = part.tool as string | undefined
@@ -771,6 +799,15 @@ function processEvent(payload: OpenCodeEventPayload): void {
         let agentChanged = false
         const agent = findAgentBySession(sessionId)
         if (agent) {
+          // Extract PR URL from assistant text and tool output parts
+          if (message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
+            const prUrl = extractPrUrl(partText)
+            if (prUrl && agent.prUrl !== prUrl) {
+              agent.prUrl = prUrl
+              agentChanged = true
+              persistAgentMeta(agent.id, { prUrl })
+            }
+          }
           agent.lastActivityAt = Date.now()
           if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed' && agent.status !== 'idle') {
             agent.status = 'running'
@@ -1071,6 +1108,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   // Update agent with new session
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
+  agent.prUrl = null
   agent.cost = 0
   agent.tokens = { input: 0, output: 0 }
   agent.lastActivityAt = Date.now()
@@ -1137,6 +1175,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     label: existingAgent?.label ?? null,
     model: existingAgent?.model ?? 'starting...',
+    prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
     tokens: existingAgent?.tokens ?? { input: 0, output: 0 },

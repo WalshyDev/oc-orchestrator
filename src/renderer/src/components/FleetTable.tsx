@@ -17,6 +17,7 @@ import {
 import type { AgentRuntime, AgentLabel } from '../types'
 import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
+import { PrBadge } from './PrBadge'
 import { LabelDropdown } from './LabelDropdown'
 
 interface FleetTableProps {
@@ -419,6 +420,11 @@ function ContextMenu({
           <Square size={13} weight="fill" /> {isStopping ? 'Stopping...' : 'Stop'}
         </button>
       )}
+      {agent.prUrl && (
+        <button className={itemClass} onClick={() => window.api?.openExternal(agent.prUrl!)}>
+          <GitPullRequest size={13} /> View PR
+        </button>
+      )}
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
@@ -521,7 +527,10 @@ function AgentRow({
         {agent.taskSummary}
       </td>
       <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle">
-        {formatBranchLabel(agent)}
+        <div className="flex items-center gap-1.5">
+          <span className="truncate">{formatBranchLabel(agent)}</span>
+          {agent.prUrl && <PrBadge url={agent.prUrl} stopPropagation />}
+        </div>
       </td>
       <td className="px-3 py-2 min-w-[7rem] max-w-[10rem]">
         {agent.model && agent.model !== 'starting...' && (

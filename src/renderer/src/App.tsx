@@ -237,6 +237,7 @@ export function App() {
       status: agent.status,
       label: agent.label,
       model: agent.model,
+      prUrl: agent.prUrl,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
       lastActivityAtMs: agent.lastActivityAt,
       blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,

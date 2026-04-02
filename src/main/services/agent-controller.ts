@@ -76,6 +76,7 @@ export interface AgentHandle {
   displayName: string
   taskSummary: string
   persistedStatus?: string
+  prUrl?: string
   bridge: EventBridge
 }
 
@@ -88,6 +89,7 @@ interface PersistedAgentHandle {
   displayName?: string
   taskSummary?: string
   persistedStatus?: string
+  prUrl?: string
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -289,13 +291,14 @@ class AgentController {
   /**
    * Update the persisted display name, task summary, and/or status for an agent.
    */
-  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }): void {
+  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }): void {
     const handle = this.agents.get(agentId)
     if (!handle) return
 
     if (meta.displayName !== undefined) handle.displayName = meta.displayName
     if (meta.taskSummary !== undefined) handle.taskSummary = meta.taskSummary
     if (meta.persistedStatus !== undefined) handle.persistedStatus = meta.persistedStatus
+    if (meta.prUrl !== undefined) handle.prUrl = meta.prUrl
     this.persistAgents()
   }
 
@@ -1137,7 +1140,8 @@ class AgentController {
       title: agent.title,
       displayName: agent.displayName,
       taskSummary: agent.taskSummary,
-      persistedStatus: agent.persistedStatus
+      persistedStatus: agent.persistedStatus,
+      prUrl: agent.prUrl
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))

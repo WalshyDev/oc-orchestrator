@@ -461,6 +461,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               <span className="truncate">
                 {agent.projectName} · {formatBranchLabel(agent) || agent.taskSummary.slice(0, 40)}
               </span>
+
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -641,6 +642,9 @@ export const DetailDrawer = memo(function DetailDrawer({
           <div className="flex-1" />
           {onChangeModel && (
             <ActionButton icon={<Brain size={12} />} label="Model" onClick={onChangeModel} />
+          )}
+          {agent.prUrl && (
+            <ActionButton icon={<GitPullRequest size={12} />} label="View PR" onClick={() => window.api?.openExternal(agent.prUrl!)} />
           )}
           {onCreatePr && (
             <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
