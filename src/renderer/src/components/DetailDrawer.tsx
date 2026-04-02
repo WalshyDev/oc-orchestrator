@@ -243,6 +243,10 @@ export const DetailDrawer = memo(function DetailDrawer({
   }, [])
 
   const lastScrollHeightRef = useRef(0)
+  // The scrollTop value we last set programmatically. Used by the scroll
+  // handler to distinguish "user scrolled up" from "content grew below the
+  // current position". Only a real decrease in scrollTop disables auto-follow.
+  const lastProgrammaticScrollTopRef = useRef(0)
   // Deadline until which scroll events are ignored — a single scrollTop
   // assignment can fire multiple browser events as the position settles.
   const ignoreScrollUntilRef = useRef(0)
@@ -250,6 +254,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   const scrollToBottom = (container: HTMLDivElement) => {
     ignoreScrollUntilRef.current = Date.now() + SCROLL_SETTLE_MS
     container.scrollTop = container.scrollHeight
+    lastProgrammaticScrollTopRef.current = container.scrollTop
   }
 
   useEffect(() => {
@@ -257,6 +262,7 @@ export const DetailDrawer = memo(function DetailDrawer({
       followBottomRef.current = true
       initialScrollDoneRef.current = false
       lastScrollHeightRef.current = 0
+      lastProgrammaticScrollTopRef.current = 0
       setShowJumpToLatest(false)
     }
   }, [activeTab])
@@ -298,8 +304,22 @@ export const DetailDrawer = memo(function DetailDrawer({
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     const nearBottom = distanceFromBottom < 80
 
-    followBottomRef.current = nearBottom
-    setShowJumpToLatest(!nearBottom)
+    if (nearBottom) {
+      followBottomRef.current = true
+      setShowJumpToLatest(false)
+      return
+    }
+
+    // Only disable auto-follow if the user actually scrolled up.
+    // When content grows below the viewport the browser keeps scrollTop
+    // constant, so distanceFromBottom increases without user interaction.
+    // Comparing against the last programmatic scrollTop distinguishes
+    // "user dragged up" from "content pushed the bottom further away".
+    const userScrolledUp = container.scrollTop < lastProgrammaticScrollTopRef.current
+    if (userScrolledUp) {
+      followBottomRef.current = false
+      setShowJumpToLatest(true)
+    }
   }
 
   const handleJumpToLatest = () => {
