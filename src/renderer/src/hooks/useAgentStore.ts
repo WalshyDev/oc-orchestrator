@@ -70,6 +70,10 @@ export interface LiveAgent {
   /** Timestamp of last user response (sendMessage/replyToQuestion/respondToPermission).
    *  Used to guard against stale SSE events that would re-block the agent. */
   respondedAt?: number
+  /** Stashed statusOverride while an interrupt is active. Managed by
+   *  stashOverrideForInterrupt() / restorePreInterruptOverride().
+   *  'none' = had no override; undefined = not stashed. */
+  preInterruptOverride?: StatusOverride | 'none'
 }
 
 export interface LivePermission {
@@ -580,10 +584,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.status = newStatus
           agent.lastActivityAt = Date.now()
           if (newStatus === 'needs_input' || newStatus === 'needs_approval') {
+            stashOverrideForInterrupt(agent)
             agent.blockedSince = agent.blockedSince ?? Date.now()
           } else {
             agent.blockedSince = undefined
             agent.respondedAt = undefined
+            restorePreInterruptOverride(agent)
           }
           if (newStatus === 'completed') {
             persistAgentMeta(agent.id, { persistedStatus: 'completed' })
@@ -603,6 +609,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
         agent.respondedAt = undefined
+        restorePreInterruptOverride(agent)
         emit({ agents: true })
       }
       break
@@ -616,6 +623,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
+        restorePreInterruptOverride(agent)
         emit({ agents: true })
       }
       break
@@ -630,6 +638,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
         agent.respondedAt = undefined
+        restorePreInterruptOverride(agent)
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
       }
@@ -814,6 +823,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId)
       if (agent) {
         notifyIfNeeded(agent, 'needs_approval')
+        stashOverrideForInterrupt(agent)
         agent.status = 'needs_approval'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.lastActivityAt = Date.now()
@@ -848,6 +858,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.blockedSince = undefined
         }
         agent.lastActivityAt = Date.now()
+        restorePreInterruptOverride(agent)
       }
 
       emit({ agents: true, permissions: true })
@@ -864,6 +875,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
       if (agent && questions) {
         notifyIfNeeded(agent, 'needs_input')
+        stashOverrideForInterrupt(agent)
         agent.status = 'needs_input'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.lastActivityAt = Date.now()
@@ -895,6 +907,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.blockedSince = undefined
         }
         agent.lastActivityAt = Date.now()
+        restorePreInterruptOverride(agent)
       }
 
       emit({ agents: true, questions: true })
@@ -913,6 +926,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.blockedSince = undefined
         }
         agent.lastActivityAt = Date.now()
+        restorePreInterruptOverride(agent)
       }
 
       emit({ agents: true, questions: true })
@@ -1155,9 +1169,11 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     }
     agent.status = nextStatus
     if (nextStatus === 'needs_input' || nextStatus === 'needs_approval') {
+      stashOverrideForInterrupt(agent)
       agent.blockedSince = agent.blockedSince ?? Date.now()
     } else {
       agent.blockedSince = undefined
+      restorePreInterruptOverride(agent)
     }
   }
 }
@@ -1211,10 +1227,12 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     agent.status = serverStatus
     agent.lastActivityAt = Date.now()
     if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
+      stashOverrideForInterrupt(agent)
       agent.blockedSince = agent.blockedSince ?? Date.now()
     } else {
       agent.blockedSince = undefined
       agent.respondedAt = undefined
+      restorePreInterruptOverride(agent)
     }
     changed = true
   }
@@ -1267,6 +1285,7 @@ function reconcileQuestions(
       console.warn(
         `[AgentStore] Reconciliation: agent ${agent.id} has pending questions but status is ${agent.status}, correcting to needs_input`
       )
+      stashOverrideForInterrupt(agent)
       agent.status = 'needs_input'
       agent.blockedSince = agent.blockedSince ?? Date.now()
       agent.lastActivityAt = Date.now()
@@ -1297,6 +1316,7 @@ function reconcileQuestions(
       agent.status = 'running'
       agent.blockedSince = undefined
       agent.lastActivityAt = Date.now()
+      restorePreInterruptOverride(agent)
       changed = true
     }
   }
@@ -1342,6 +1362,25 @@ function agentHasPendingInterrupts(agentId: string): boolean {
     if (permission.agentId === agentId) return true
   }
   return false
+}
+
+/** Stash the user's statusOverride so an interrupt (needs_input/needs_approval)
+ *  shows through displayStatus(). No-op if already stashed (overlapping interrupts). */
+function stashOverrideForInterrupt(agent: LiveAgent): void {
+  if (agent.preInterruptOverride === undefined) {
+    agent.preInterruptOverride = agent.statusOverride ?? 'none'
+  }
+  agent.statusOverride = null
+}
+
+/** Restore a stashed statusOverride after an interrupt is resolved.
+ *  Only restores when the agent has no remaining pending interrupts,
+ *  so overlapping questions/permissions don't clobber the stash. */
+function restorePreInterruptOverride(agent: LiveAgent): void {
+  if (agent.preInterruptOverride === undefined) return
+  if (agentHasPendingInterrupts(agent.id)) return
+  agent.statusOverride = agent.preInterruptOverride === 'none' ? null : agent.preInterruptOverride
+  agent.preInterruptOverride = undefined
 }
 
 function mapSessionStatus(statusType: string): AgentStatus {
@@ -1598,6 +1637,8 @@ export function useAgentStore() {
 
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
+    const previousPreInterruptOverride = agent?.preInterruptOverride
+    const previousOverride = agent?.statusOverride ?? null
 
     // Optimistically update task summary and status.
     // When a taskSummaryOverride is provided (e.g. "Create PR"), use it instead of
@@ -1614,6 +1655,7 @@ export function useAgentStore() {
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
       agent.respondedAt = Date.now()
+      restorePreInterruptOverride(agent)
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
     }
 
@@ -1639,6 +1681,8 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
+        agentAfter.preInterruptOverride = previousPreInterruptOverride
+        agentAfter.statusOverride = previousOverride
       }
       for (const [qId, q] of removedQuestions) {
         state.questions.set(qId, q)
@@ -1735,6 +1779,8 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
+    const previousPreInterruptOverride = agent?.preInterruptOverride
+    const previousOverride = agent?.statusOverride ?? null
     const removedPermission = state.permissions.get(permissionId)
 
     // Optimistically clear permission and set running
@@ -1746,6 +1792,7 @@ export function useAgentStore() {
       }
       agent.lastActivityAt = Date.now()
       agent.respondedAt = Date.now()
+      restorePreInterruptOverride(agent)
     }
     emit()
 
@@ -1758,6 +1805,8 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
+        agentAfter.preInterruptOverride = previousPreInterruptOverride
+        agentAfter.statusOverride = previousOverride
       }
       if (removedPermission) {
         state.permissions.set(permissionId, removedPermission)
@@ -1774,6 +1823,8 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
+    const previousPreInterruptOverride = agent?.preInterruptOverride
+    const previousOverride = agent?.statusOverride ?? null
     const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
@@ -1783,6 +1834,7 @@ export function useAgentStore() {
       agent.blockedSince = undefined
       agent.lastActivityAt = Date.now()
       agent.respondedAt = Date.now()
+      restorePreInterruptOverride(agent)
     }
     emit()
 
@@ -1795,6 +1847,8 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
+        agentAfter.preInterruptOverride = previousPreInterruptOverride
+        agentAfter.statusOverride = previousOverride
       }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
@@ -1811,6 +1865,8 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
+    const previousPreInterruptOverride = agent?.preInterruptOverride
+    const previousOverride = agent?.statusOverride ?? null
     const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
@@ -1820,6 +1876,7 @@ export function useAgentStore() {
       agent.blockedSince = undefined
       agent.lastActivityAt = Date.now()
       agent.respondedAt = Date.now()
+      restorePreInterruptOverride(agent)
     }
     emit()
 
@@ -1832,6 +1889,8 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
+        agentAfter.preInterruptOverride = previousPreInterruptOverride
+        agentAfter.statusOverride = previousOverride
       }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
@@ -1946,7 +2005,13 @@ export function useAgentStore() {
   const setStatusOverride = useCallback((agentId: string, override: StatusOverride | null) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
-    agent.statusOverride = override
+    // If an interrupt is active, update the stash so the user's new choice
+    // is restored when the interrupt resolves (instead of the old value).
+    if (agent.preInterruptOverride !== undefined) {
+      agent.preInterruptOverride = override ?? 'none'
+    } else {
+      agent.statusOverride = override
+    }
     agent.lastActivityAt = Date.now()
     persistAgentMeta(agentId, { persistedStatus: override ?? '' })
     emit()
