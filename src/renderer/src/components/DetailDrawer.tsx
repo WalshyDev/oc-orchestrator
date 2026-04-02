@@ -190,6 +190,15 @@ export function DetailDrawer({
     : []
   const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
 
+  // Chat input can reply to a question only when it's a single question accepting custom text
+  const canReplyViaChat = !!question
+    && question.questions.length === 1
+    && question.questions[0].custom !== false
+
+  let inputPlaceholder = 'Send a message to this agent... Type / for commands, @ for agents.'
+  if (isDragOver) inputPlaceholder = 'Drop image here...'
+  else if (canReplyViaChat) inputPlaceholder = 'Type your answer to the question above...'
+
   // Slide-in animation on mount
   const initialScrollDoneRef = useRef(false)
   useEffect(() => {
@@ -720,7 +729,7 @@ export function DetailDrawer({
                 onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
                 onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
                 onPaste={handlePaste}
-                placeholder={isDragOver ? 'Drop image here...' : 'Send a message to this agent... Type / for commands, @ for agents.'}
+                placeholder={inputPlaceholder}
                 rows={3}
                 className={`w-full px-3 py-2 bg-kumo-control border rounded-md text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none transition-colors ${
                   isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus:border-kumo-ring'
@@ -752,9 +761,11 @@ export function DetailDrawer({
             <button
               onClick={handleSend}
               disabled={!inputText.trim() && attachments.length === 0}
-              className="self-start px-3 py-2 bg-kumo-brand text-white text-xs font-medium rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
+              className={`self-start px-3 py-2 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 ${
+                canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
+              }`}
             >
-              Send
+              {canReplyViaChat ? 'Reply' : 'Send'}
             </button>
           </div>
         </div>

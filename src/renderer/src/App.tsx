@@ -615,6 +615,15 @@ export function App() {
     if (!selectedAgentId) return
     const trimmedText = text.trim()
 
+    // If there's a single pending question that accepts custom input, route chat as a reply
+    if (selectedQuestion && trimmedText && selectedQuestion.questions.length === 1) {
+      const q = selectedQuestion.questions[0]
+      if (q.custom !== false) {
+        await store.replyToQuestion(selectedAgentId, selectedQuestion.id, [[trimmedText]])
+        return
+      }
+    }
+
     if (trimmedText === NEW_AGENT_COMMAND || trimmedText.startsWith(`${NEW_AGENT_COMMAND} `)) {
       const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim() || undefined
       await store.resetSession(selectedAgentId, followUpPrompt)
@@ -644,7 +653,7 @@ export function App() {
     }
 
     await store.sendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, store])
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, store])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
