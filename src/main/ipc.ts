@@ -443,7 +443,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('workspace:common-repo-root', async (_event, directory: string) => {
     try {
-      const repoRoot = workspaceManager.getCommonRepoRoot(directory)
+      const repoRoot = await workspaceManager.getCommonRepoRoot(directory)
       return { ok: true, data: repoRoot }
     } catch (error) {
       console.error('[IPC] workspace:common-repo-root failed:', error)
@@ -484,7 +484,7 @@ export function registerIpcHandlers(): void {
     worktreePath: string
   }) => {
     try {
-      workspaceManager.removeWorktree(options.repoRoot, options.worktreePath)
+      await workspaceManager.removeWorktree(options.repoRoot, options.worktreePath)
       return { ok: true }
     } catch (error) {
       console.error('[IPC] workspace:remove failed:', error)

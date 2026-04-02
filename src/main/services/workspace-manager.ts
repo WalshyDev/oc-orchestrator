@@ -1,7 +1,10 @@
-import { execSync } from 'child_process'
+import { execSync, exec } from 'child_process'
+import { promisify } from 'util'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+
+const execAsync = promisify(exec)
 
 export interface WorktreeInfo {
   worktreePath: string
@@ -135,20 +138,18 @@ class WorkspaceManager {
   /**
    * Removes a worktree and prunes stale worktree references.
    */
-  removeWorktree(repoRoot: string, worktreePath: string): void {
+  async removeWorktree(repoRoot: string, worktreePath: string): Promise<void> {
     try {
       console.log(`[WorkspaceManager] Removing worktree at ${worktreePath}`)
 
-      execSync(`git worktree remove "${worktreePath}" --force`, {
+      await execAsync(`git worktree remove "${worktreePath}" --force`, {
         cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
+        encoding: 'utf-8'
       })
 
-      execSync('git worktree prune', {
+      await execAsync('git worktree prune', {
         cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
+        encoding: 'utf-8'
       })
 
       // Release the claim if it was claimed
@@ -241,15 +242,14 @@ class WorkspaceManager {
     }
   }
 
-  getCommonRepoRoot(directory: string): string {
+  async getCommonRepoRoot(directory: string): Promise<string> {
     try {
-      const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      const { stdout } = await execAsync('git rev-parse --path-format=absolute --git-common-dir', {
         cwd: directory,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      }).trim()
+        encoding: 'utf-8'
+      })
 
-      return path.dirname(gitCommonDir)
+      return path.dirname(stdout.trim())
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`[WorkspaceManager] Failed to get common repo root: ${message}`)
@@ -320,8 +320,8 @@ class WorkspaceManager {
    * Fetches origin, creates a new branch off the default branch, and checks
    * it out in the given directory.  Returns the new branch name.
    */
-  resetToDefaultBranch(directory: string, projectSlug: string, taskSlug: string): string {
-    const repoRoot = this.getCommonRepoRoot(directory)
+  async resetToDefaultBranch(directory: string, projectSlug: string, taskSlug: string): Promise<string> {
+    const repoRoot = await this.getCommonRepoRoot(directory)
 
     execSync('git fetch origin --prune', {
       cwd: directory,

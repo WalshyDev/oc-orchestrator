@@ -537,7 +537,7 @@ export function App() {
     store.setStatusOverride(agentId, override)
   }, [store])
 
-  const handleRemoveAgent = useCallback(async (agentId: string) => {
+  const handleRemoveAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
 
@@ -547,9 +547,7 @@ export function App() {
 
     if (!window.confirm(confirmMessage)) return
 
-    const result = await store.removeAgent(agentId)
-    if (!result?.ok) return
-
+    store.removeAgent(agentId)
 
     if (selectedAgentId === agentId) {
       setSelectedAgentId(null)
