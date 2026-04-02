@@ -12,13 +12,15 @@ const statusStyles: Record<string, string> = {
   idle: 'bg-status-idle-bg text-status-idle',
   completed: 'bg-status-completed-bg text-status-completed',
   completed_manual: 'bg-status-completed-bg text-status-completed',
+  in_review: 'bg-status-in-review-bg text-status-in-review',
+  blocked_manual: 'bg-status-errored-bg text-status-errored',
   errored: 'bg-status-errored-bg text-status-errored',
   starting: 'bg-kumo-fill text-kumo-subtle',
   stopping: 'bg-kumo-fill text-kumo-subtle',
   disconnected: 'bg-status-errored-bg text-status-errored'
 }
 
-const pulsing = new Set<AgentStatus>(['needs_input', 'needs_approval', 'errored'])
+const pulsing = new Set<AgentStatus>(['needs_input', 'needs_approval', 'errored', 'blocked_manual'])
 
 export function StatusBadge({ status }: StatusBadgeProps) {
   const style = statusStyles[status] ?? 'bg-kumo-fill text-kumo-subtle'

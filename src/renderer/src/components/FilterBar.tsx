@@ -1,7 +1,7 @@
 import { MagnifyingGlass } from '@phosphor-icons/react'
 import type { AgentStatus } from '../types'
 
-export type StatusFilter = 'blocked' | 'running' | 'idle' | 'completed'
+export type StatusFilter = 'blocked' | 'running' | 'idle' | 'in_review' | 'completed'
 
 export interface FilterState {
   statuses: Set<StatusFilter>
@@ -29,6 +29,7 @@ interface FilterBarProps {
     blocked: number
     running: number
     idle: number
+    in_review: number
     completed: number
   }
   projects: string[]
@@ -68,6 +69,7 @@ export function FilterBar({
       <FilterPill label={`Blocked (${counts.blocked})`} active={filter.statuses.has('blocked')} onClick={() => onToggleStatus('blocked')} />
       <FilterPill label={`Running (${counts.running})`} active={filter.statuses.has('running')} onClick={() => onToggleStatus('running')} />
       <FilterPill label={`Idle (${counts.idle})`} active={filter.statuses.has('idle')} onClick={() => onToggleStatus('idle')} />
+      <FilterPill label={`In Review (${counts.in_review})`} active={filter.statuses.has('in_review')} onClick={() => onToggleStatus('in_review')} />
       <FilterPill label={`Completed (${counts.completed})`} active={filter.statuses.has('completed')} onClick={() => onToggleStatus('completed')} />
 
       <div className="w-px h-5 bg-kumo-line" />
@@ -109,9 +111,10 @@ function FilterPill({
 }
 
 const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
-  blocked: ['needs_input', 'needs_approval'],
+  blocked: ['needs_input', 'needs_approval', 'blocked_manual'],
   running: ['running'],
   idle: ['idle'],
+  in_review: ['in_review'],
   completed: ['completed', 'completed_manual']
 }
 

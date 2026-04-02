@@ -4,7 +4,6 @@ import {
   CaretUp,
   CaretDown,
   Check,
-  CheckCircle,
   GearSix,
   Pause,
   PencilSimple,
@@ -13,12 +12,12 @@ import {
   Trash,
   Terminal,
   GitPullRequest,
-  ArrowSquareOut,
-  ArrowCounterClockwise
+  ArrowSquareOut
 } from '@phosphor-icons/react'
-import type { AgentRuntime } from '../types'
-import { formatBranchLabel, isUrgent, canToggleManualComplete } from '../types'
+import type { AgentRuntime, StatusOverride } from '../types'
+import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
+import { StatusDropdown } from './StatusDropdown'
 
 interface FleetTableProps {
   agents: AgentRuntime[]
@@ -35,7 +34,7 @@ interface FleetTableProps {
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
   onChangeModel?: (agentId: string) => void
-  onToggleComplete?: (agentId: string) => void
+  onSetStatusOverride?: (agentId: string, override: StatusOverride | null) => void
 }
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
@@ -76,7 +75,7 @@ export function FleetTable({
   onOpenInEditor,
   onCreatePr,
   onChangeModel,
-  onToggleComplete
+  onSetStatusOverride
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -197,7 +196,7 @@ export function FleetTable({
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-              onToggleComplete={onToggleComplete ? () => onToggleComplete(agent.id) : undefined}
+              onSetStatusOverride={onSetStatusOverride ? (override: StatusOverride | null) => onSetStatusOverride(agent.id, override) : undefined}
             />
           ))}
         </tbody>
@@ -242,8 +241,8 @@ export function FleetTable({
             onCreatePr?.(contextMenu.agentId)
             closeContextMenu()
           }}
-          onToggleComplete={() => {
-            onToggleComplete?.(contextMenu.agentId)
+          onSetStatusOverride={(override: StatusOverride | null) => {
+            onSetStatusOverride?.(contextMenu.agentId, override)
             closeContextMenu()
           }}
         />
@@ -347,7 +346,7 @@ function ContextMenu({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
-  onToggleComplete
+  onSetStatusOverride
 }: {
   agent: AgentRuntime
   posX: number
@@ -361,7 +360,7 @@ function ContextMenu({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
   onCreatePr: () => void
-  onToggleComplete: () => void
+  onSetStatusOverride: (override: StatusOverride | null) => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -427,14 +426,14 @@ function ContextMenu({
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
-      {canToggleManualComplete(agent.status) && (
-        <button className={itemClass} onClick={onToggleComplete}>
-          {agent.status === 'completed_manual'
-            ? <><ArrowCounterClockwise size={13} /> Unmark Completed</>
-            : <><CheckCircle size={13} /> Mark Completed</>
-          }
-        </button>
-      )}
+      <div className="px-2.5 py-1.5">
+        <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Status Override</div>
+        <StatusDropdown
+          current={agent.statusOverride}
+          onSelect={onSetStatusOverride}
+          variant="action"
+        />
+      </div>
 
       <div className="my-1 border-t border-kumo-line" />
 
@@ -465,7 +464,7 @@ function AgentRow({
   onOpen,
   onRemove,
   onChangeModel,
-  onToggleComplete
+  onSetStatusOverride
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -477,7 +476,7 @@ function AgentRow({
   onOpen?: () => void
   onRemove?: () => void
   onChangeModel?: () => void
-  onToggleComplete?: () => void
+  onSetStatusOverride?: (override: StatusOverride | null) => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -539,7 +538,7 @@ function AgentRow({
             onStop={onStop}
             onOpen={onOpen}
             onRemove={onRemove}
-            onToggleComplete={onToggleComplete}
+            onSetStatusOverride={onSetStatusOverride}
           />
           <button
             onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
@@ -561,7 +560,7 @@ function RowActions({
   onStop,
   onOpen,
   onRemove,
-  onToggleComplete
+  onSetStatusOverride
 }: {
   agent: AgentRuntime
   onApprove?: () => void
@@ -569,7 +568,7 @@ function RowActions({
   onStop?: () => void
   onOpen?: () => void
   onRemove?: () => void
-  onToggleComplete?: () => void
+  onSetStatusOverride?: (override: StatusOverride | null) => void
 }) {
   const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer'
   const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors cursor-pointer'
@@ -603,17 +602,12 @@ function RowActions({
           <Pause size={12} weight="bold" />
         </button>
       )}
-      {canToggleManualComplete(agent.status) && (
-        <button
-          className={buttonBase}
-          title={agent.status === 'completed_manual' ? 'Unmark Completed' : 'Mark Completed'}
-          onClick={(event) => { event.stopPropagation(); onToggleComplete?.() }}
-        >
-          {agent.status === 'completed_manual'
-            ? <ArrowCounterClockwise size={12} weight="bold" />
-            : <CheckCircle size={12} weight="bold" />
-          }
-        </button>
+      {onSetStatusOverride && (
+        <StatusDropdown
+          current={agent.statusOverride}
+          onSelect={onSetStatusOverride}
+          variant="row"
+        />
       )}
       <button
         className={buttonBase}

@@ -38,6 +38,8 @@
   --color-status-idle-bg: rgba(234, 179, 8, 0.1);
   --color-status-completed: #86efac;
   --color-status-completed-bg: rgba(34, 197, 94, 0.06);
+  --color-status-in-review: #c084fc;
+  --color-status-in-review-bg: rgba(168, 85, 247, 0.1);
   --color-status-errored: #f87171;
   --color-status-errored-bg: rgba(239, 68, 68, 0.1);
 

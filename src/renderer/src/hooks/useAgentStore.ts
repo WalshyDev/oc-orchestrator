@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import type { AgentStatus } from '../types'
+import type { AgentStatus, StatusOverride } from '../types'
 import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
@@ -58,6 +58,7 @@ export interface LiveAgent {
   workspaceName: string
   taskSummary: string
   status: AgentStatus
+  statusOverride: StatusOverride | null
   model: string
   lastActivityAt: number
   blockedSince?: number
@@ -1003,6 +1004,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
+    statusOverride: existingAgent?.statusOverride ?? null,
     model: existingAgent?.model ?? 'starting...',
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
@@ -1022,10 +1024,9 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     if (!agent) continue
 
     const nextStatus = mapSessionStatus(statusEntry.status.type)
-    // Don't let the server override a persisted completed/completed_manual status with idle.
-    // The server reports idle for finished sessions, but we want to preserve the user's
-    // manual completion or the previously-derived completed state across restarts.
-    if (nextStatus === 'idle' && (agent.status === 'completed' || agent.status === 'completed_manual')) {
+    // Don't let the server override a derived completed status with idle.
+    // The server reports idle for finished sessions, but we track completion separately.
+    if (nextStatus === 'idle' && agent.status === 'completed') {
       continue
     }
     agent.status = nextStatus
@@ -1145,10 +1146,14 @@ export function useAgentStore() {
 
       if (agentsResult.ok && agentsResult.data) {
         for (const agent of agentsResult.data) {
-          const restoredStatus = (agent.persistedStatus === 'completed' || agent.persistedStatus === 'completed_manual')
-            ? agent.persistedStatus as AgentStatus
-            : 'idle'
-          upsertAgent(agent, restoredStatus)
+          const restoredOverride = (agent.persistedStatus === 'completed_manual' || agent.persistedStatus === 'in_review' || agent.persistedStatus === 'blocked_manual')
+            ? agent.persistedStatus as StatusOverride
+            : null
+          upsertAgent(agent, restoredOverride ? undefined : 'idle')
+          const liveAgent = state.agents.get(agent.id)
+          if (liveAgent && restoredOverride) {
+            liveAgent.statusOverride = restoredOverride
+          }
           shouldEmit = true
         }
 
@@ -1471,16 +1476,12 @@ export function useAgentStore() {
     emit()
   }, [])
 
-  const toggleManualComplete = useCallback((agentId: string) => {
+  const setStatusOverride = useCallback((agentId: string, override: StatusOverride | null) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
-    if (agent.status === 'completed_manual') {
-      agent.status = 'idle'
-    } else if (agent.status === 'idle' || agent.status === 'completed') {
-      agent.status = 'completed_manual'
-    }
+    agent.statusOverride = override
     agent.lastActivityAt = Date.now()
-    persistAgentMeta(agentId, { persistedStatus: agent.status })
+    persistAgentMeta(agentId, { persistedStatus: override ?? '' })
     emit()
   }, [])
 
@@ -1503,7 +1504,7 @@ export function useAgentStore() {
     removeAgent,
     renameAgent,
     setAgentModel,
-    toggleManualComplete,
+    setStatusOverride,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,
