@@ -12,14 +12,21 @@ import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
-import { type AgentRuntime, type Interrupt, type Message, type StatusOverride, displayStatus } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type AgentLabel } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
 import { loadSettings } from './data/settings'
 
-type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
+type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
+
+function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
+}
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -196,8 +203,8 @@ export function App() {
       isWorktree: agent.isWorktree,
       workspaceName: agent.workspaceName,
       taskSummary: agent.taskSummary,
-      status: displayStatus(agent),
-      statusOverride: agent.statusOverride,
+      status: agent.status,
+      label: agent.label,
       model: agent.model,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
       lastActivityAtMs: agent.lastActivityAt,
@@ -312,10 +319,6 @@ export function App() {
           case 'model':
             leftVal = (left.model || '').toLowerCase()
             rightVal = (right.model || '').toLowerCase()
-            break
-          case 'activity':
-            leftVal = left.lastActivityAt || ''
-            rightVal = right.lastActivityAt || ''
             break
         }
 
@@ -480,11 +483,21 @@ export function App() {
   const counts = useMemo(
     () => ({
       all: displayAgents.length,
-      blocked: displayAgents.filter((agent) => agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'blocked_manual').length,
+      blocked: displayAgents.filter((agent) => agent.status === 'needs_input' || agent.status === 'needs_approval').length,
       running: displayAgents.filter((agent) => agent.status === 'running').length,
       idle: displayAgents.filter((agent) => agent.status === 'idle').length,
-      in_review: displayAgents.filter((agent) => agent.status === 'in_review').length,
-      completed: displayAgents.filter((agent) => agent.status === 'completed' || agent.status === 'completed_manual').length
+      errored: displayAgents.filter((agent) => agent.status === 'errored').length,
+      completed: displayAgents.filter((agent) => agent.status === 'completed').length
+    }),
+    [displayAgents]
+  )
+
+  const labelCounts = useMemo(
+    () => ({
+      in_review: displayAgents.filter((agent) => agent.label === 'in_review').length,
+      blocked: displayAgents.filter((agent) => agent.label === 'blocked').length,
+      done: displayAgents.filter((agent) => agent.label === 'done').length,
+      draft: displayAgents.filter((agent) => agent.label === 'draft').length
     }),
     [displayAgents]
   )
@@ -536,8 +549,8 @@ export function App() {
     setSelectedAgentId(agentId)
   }, [])
 
-  const handleSetStatusOverride = useCallback((agentId: string, override: StatusOverride | null) => {
-    store.setStatusOverride(agentId, override)
+  const handleSetLabel = useCallback((agentId: string, label: AgentLabel | null) => {
+    store.setLabel(agentId, label)
   }, [store])
 
   const handleRemoveAgent = useCallback((agentId: string) => {
@@ -702,15 +715,15 @@ export function App() {
     setShowModelPicker(true)
   }, [selectedAgentId])
 
-  const handleDrawerSetStatusOverride = useCallback((override: StatusOverride | null) => {
-    if (selectedAgentId) handleSetStatusOverride(selectedAgentId, override)
-  }, [selectedAgentId, handleSetStatusOverride])
+  const handleDrawerSetLabel = useCallback((label: AgentLabel | null) => {
+    if (selectedAgentId) handleSetLabel(selectedAgentId, label)
+  }, [selectedAgentId, handleSetLabel])
 
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
     const result = await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
     if (result?.ok) {
-      store.setStatusOverride(selectedAgentId, 'in_review')
+      store.setLabel(selectedAgentId, 'in_review')
     }
   }, [selectedAgentId, store])
 
@@ -733,7 +746,7 @@ export function App() {
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
     const result = await store.sendMessage(agentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
     if (result?.ok) {
-      store.setStatusOverride(agentId, 'in_review')
+      store.setLabel(agentId, 'in_review')
     }
   }, [store])
 
@@ -986,7 +999,7 @@ export function App() {
       {showInterruptBanner && (
         <InterruptBanner
           interrupts={displayInterrupts}
-          onReviewAll={() => setFilter({ statuses: new Set<StatusFilter>(['blocked']), projects: new Set() })}
+          onReviewAll={() => setFilter({ statuses: new Set<StatusFilter>(['blocked']), labels: new Set(), projects: new Set() })}
           onDismiss={() => setDismissedInterruptIds(new Set(displayInterrupts.map((i) => i.id)))}
         />
       )}
@@ -994,25 +1007,19 @@ export function App() {
       <FilterBar
         filter={filter}
         onToggleStatus={(status) => {
-          setFilter((prev) => {
-            const next = new Set(prev.statuses)
-            if (next.has(status)) next.delete(status)
-            else next.add(status)
-            return { statuses: next, projects: new Set(prev.projects) }
-          })
+          setFilter((prev) => ({ ...prev, statuses: toggleInSet(prev.statuses, status) }))
+        }}
+        onToggleLabel={(label) => {
+          setFilter((prev) => ({ ...prev, labels: toggleInSet(prev.labels, label) }))
         }}
         onToggleProject={(project) => {
-          setFilter((prev) => {
-            const next = new Set(prev.projects)
-            if (next.has(project)) next.delete(project)
-            else next.add(project)
-            return { statuses: new Set(prev.statuses), projects: next }
-          })
+          setFilter((prev) => ({ ...prev, projects: toggleInSet(prev.projects, project) }))
         }}
         onClearFilters={() => setFilter(EMPTY_FILTER)}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         counts={counts}
+        labelCounts={labelCounts}
         projects={projectNames}
       />
 
@@ -1034,7 +1041,7 @@ export function App() {
           setModelPickerAgentId(agentId)
           setShowModelPicker(true)
         }}
-        onSetStatusOverride={handleSetStatusOverride}
+        onSetLabel={handleSetLabel}
       />
 
       <StatusBar
@@ -1067,7 +1074,7 @@ export function App() {
           onOpenInEditor={handleOpenInEditor}
           onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
-          onSetStatusOverride={handleDrawerSetStatusOverride}
+          onSetLabel={handleDrawerSetLabel}
         />
       )}
 

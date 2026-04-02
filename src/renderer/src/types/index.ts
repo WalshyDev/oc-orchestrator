@@ -1,5 +1,7 @@
 import type { ToolCall } from '../components/ToolsUsage'
 
+// ── Status: server-derived, read-only ──
+
 export type AgentStatus =
   | 'starting'
   | 'running'
@@ -7,14 +9,13 @@ export type AgentStatus =
   | 'needs_approval'
   | 'idle'
   | 'completed'
-  | 'completed_manual'
-  | 'in_review'
-  | 'blocked_manual'
   | 'errored'
   | 'disconnected'
   | 'stopping'
 
-export type StatusOverride = 'completed_manual' | 'in_review' | 'blocked_manual'
+// ── Labels: user-applied workflow tags ──
+
+export type AgentLabel = 'in_review' | 'blocked' | 'done' | 'draft'
 
 export type InterruptKind =
   | 'needs_input'
@@ -41,7 +42,7 @@ export interface AgentRuntime {
   workspaceName: string
   taskSummary: string
   status: AgentStatus
-  statusOverride: StatusOverride | null
+  label: AgentLabel | null
   model: string
   lastActivityAt: string
   lastActivityAtMs: number
@@ -81,12 +82,8 @@ export function isBlocked(status: AgentStatus): boolean {
   return status === 'needs_input' || status === 'needs_approval'
 }
 
-export function isUrgent(agent: AgentRuntime): boolean {
-  return isBlocked(agent.status) || agent.status === 'errored' || agent.status === 'blocked_manual'
-}
-
-export function displayStatus(agent: { status: AgentStatus; statusOverride?: StatusOverride | null }): AgentStatus {
-  return agent.statusOverride ?? agent.status
+export function isUrgent(agent: { status: AgentStatus; label: AgentLabel | null }): boolean {
+  return isBlocked(agent.status) || agent.status === 'errored' || agent.label === 'blocked'
 }
 
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
@@ -101,9 +98,6 @@ export function statusLabel(status: AgentStatus): string {
     needs_approval: 'Needs Approval',
     idle: 'Idle',
     completed: 'Completed',
-    completed_manual: 'Completed',
-    in_review: 'In Review',
-    blocked_manual: 'Blocked',
     errored: 'Errored',
     disconnected: 'Disconnected',
     stopping: 'Stopping'
@@ -111,12 +105,13 @@ export function statusLabel(status: AgentStatus): string {
   return labels[status]
 }
 
-export function statusOverrideLabel(override: StatusOverride | null): string {
-  if (!override) return 'Auto'
-  const labels: Record<StatusOverride, string> = {
-    completed_manual: 'Completed',
+export function agentLabelDisplay(label: AgentLabel | null): string {
+  if (!label) return 'None'
+  const labels: Record<AgentLabel, string> = {
     in_review: 'In Review',
-    blocked_manual: 'Blocked'
+    blocked: 'Blocked',
+    done: 'Done',
+    draft: 'Draft'
   }
-  return labels[override]
+  return labels[label]
 }
