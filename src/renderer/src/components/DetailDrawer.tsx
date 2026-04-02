@@ -119,6 +119,7 @@ export function DetailDrawer({
   const [drawerWidth, setDrawerWidth] = useState(loadDrawerWidth)
   const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
+  const [commandPickerIndex, setCommandPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
   const {
     attachments, isDragOver, fileInputRef,
@@ -166,7 +167,9 @@ export function DetailDrawer({
     ? commands.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
     : []
 
-  const showCommandAutocomplete = matchingCommands.length > 0 && inputText.trim().length > 0
+  const trimmedInput = inputText.trim().toLowerCase()
+  const exactCommandMatch = commands.some(({ command }) => command === trimmedInput)
+  const showCommandAutocomplete = matchingCommands.length > 0 && trimmedInput.length > 0 && !exactCommandMatch
 
   // ── @ Agent mention detection ──
   // Find the @mention being typed at or before the cursor position.
@@ -286,6 +289,7 @@ export function DetailDrawer({
     // so the picker can reappear on new @ triggers
     setAgentPickerDismissed(false)
     setAgentPickerIndex(0)
+    setCommandPickerIndex(0)
   }
 
   const insertAgentMention = (agentName: string) => {
@@ -341,11 +345,29 @@ export function DetailDrawer({
       }
     }
 
-    // ── Command autocomplete ──
-    if (event.key === 'Tab' && showCommandAutocomplete) {
-      event.preventDefault()
-      setInputText(`${matchingCommands[0].command} `)
-      return
+    // ── Command autocomplete keyboard handling ──
+    if (showCommandAutocomplete) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setInputText('')
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = matchingCommands[commandPickerIndex]
+        if (selected) setInputText(`${selected.command} `)
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setCommandPickerIndex((prev) => (prev + 1) % matchingCommands.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setCommandPickerIndex((prev) => (prev - 1 + matchingCommands.length) % matchingCommands.length)
+        return
+      }
     }
 
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -639,7 +661,7 @@ export function DetailDrawer({
             <div className="relative flex-1 flex flex-col gap-1">
               {showCommandAutocomplete && (
                 <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                  {matchingCommands.map((item) => (
+                  {matchingCommands.map((item, index) => (
                     <button
                       key={item.command}
                       type="button"
@@ -647,12 +669,17 @@ export function DetailDrawer({
                         event.preventDefault()
                         setInputText(`${item.command} `)
                       }}
-                      className="flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left hover:bg-kumo-fill transition-colors"
+                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                        index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                      }`}
                     >
                       <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
                       <span className="text-[11px] text-kumo-subtle">{item.description}</span>
                     </button>
                   ))}
+                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                  </div>
                 </div>
               )}
               {showAgentPicker && (
