@@ -200,7 +200,7 @@ class AgentController {
     // Reset the working directory to a fresh branch off the default branch
     const projectSlug = sanitizeSlug(handle.projectName, 'project')
     const taskSlug = prompt ? sanitizeSlug(prompt, 'next-feature') : 'next-feature'
-    const newBranch = workspaceManager.resetToDefaultBranch(handle.directory, projectSlug, taskSlug)
+    const newBranch = await workspaceManager.resetToDefaultBranch(handle.directory, projectSlug, taskSlug)
     handle.branchName = newBranch
 
     const sessionTitle = prompt ? prompt.slice(0, 80) : `${projectSlug}-${Date.now()}`
@@ -860,27 +860,47 @@ class AgentController {
   }
 
   /**
-   * Remove an agent from orchestration and clean up its worktree when possible.
+   * Remove an agent from orchestration and clean up its resources.
+   *
+   * Bookkeeping (map removal + persist) is synchronous so the IPC response
+   * is fast.  Expensive cleanup (runtime stop, worktree removal) runs in
+   * the background and never blocks the caller.
    */
-  async removeAgent(agentId: string): Promise<void> {
+  removeAgent(agentId: string): void {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     const otherAgents = Array.from(this.agents.values()).filter((agent) => agent.id !== agentId)
-    const hasRuntimePeers = otherAgents.some((agent) => agent.runtimeId === handle.runtimeId)
-    const hasDirectoryPeers = otherAgents.some((agent) => agent.directory === handle.directory)
-
-    if (!hasRuntimePeers) {
-      await this.stopRuntime(handle.runtimeId)
-    }
-
-    if (handle.isWorktree && !hasDirectoryPeers) {
-      const repoRoot = workspaceManager.getCommonRepoRoot(handle.directory)
-      workspaceManager.removeWorktree(repoRoot, handle.directory)
-    }
+    const shouldStopRuntime = !otherAgents.some((agent) => agent.runtimeId === handle.runtimeId)
+    const shouldRemoveWorktree = handle.isWorktree && !otherAgents.some((agent) => agent.directory === handle.directory)
 
     this.agents.delete(agentId)
     this.persistAgents()
+
+    void this.backgroundCleanup(handle, shouldStopRuntime, shouldRemoveWorktree)
+  }
+
+  private async backgroundCleanup(
+    handle: AgentHandle,
+    shouldStopRuntime: boolean,
+    shouldRemoveWorktree: boolean
+  ): Promise<void> {
+    try {
+      if (shouldStopRuntime) {
+        await this.stopRuntime(handle.runtimeId)
+      }
+    } catch (error) {
+      console.error(`[AgentController] Background runtime cleanup failed for ${handle.id}:`, error)
+    }
+
+    try {
+      if (shouldRemoveWorktree) {
+        const repoRoot = await workspaceManager.getCommonRepoRoot(handle.directory)
+        await workspaceManager.removeWorktree(repoRoot, handle.directory)
+      }
+    } catch (error) {
+      console.error(`[AgentController] Background worktree cleanup failed for ${handle.id}:`, error)
+    }
   }
 
   startIdleRuntimeChecks(): void {

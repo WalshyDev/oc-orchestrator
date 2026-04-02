@@ -1555,17 +1555,20 @@ export function useAgentStore() {
     return window.api.resetSession(agentId, prompt)
   }, [])
 
-  const removeAgent = useCallback(async (agentId: string) => {
+  const removeAgent = useCallback((agentId: string) => {
     if (!window.api) return
-    const result = await window.api.removeAgent(agentId)
-    if (!result.ok) {
-      console.error('Failed to remove agent:', result.error)
-      return result
-    }
 
     removeAgentState(agentId)
     emit()
-    return result
+
+    // Background cleanup (runtime stop, worktree removal) in main process
+    window.api.removeAgent(agentId).then((result) => {
+      if (!result.ok) {
+        console.error('Failed to remove agent (background cleanup):', result.error)
+      }
+    })
+
+    return { ok: true }
   }, [])
 
   const selectDirectory = useCallback(async () => {
