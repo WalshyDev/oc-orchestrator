@@ -175,6 +175,7 @@ export function FleetTable({
               </th>
             ))}
             <th className="w-24 px-3 py-2 bg-kumo-overlay border-b border-kumo-line" />
+            <th className="w-10 p-0 bg-kumo-overlay border-b border-kumo-line border-l" />
           </tr>
         </thead>
         <tbody>
@@ -540,7 +541,6 @@ function AgentRow({
             onApprove={onApprove}
             onReply={onReply}
             onStop={onStop}
-            onOpen={onOpen}
             onRemove={onRemove}
           />
           <button
@@ -552,6 +552,15 @@ function AgentRow({
           </button>
         </div>
       </td>
+      <td className="w-10 p-0 border-l border-kumo-line bg-kumo-fill/50">
+        <button
+          onClick={(event) => { event.stopPropagation(); onOpen?.() }}
+          className="w-full h-full flex items-center justify-center text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"
+          title="Open"
+        >
+          <ArrowRight size={14} weight="bold" />
+        </button>
+      </td>
     </tr>
   )
 }
@@ -561,18 +570,18 @@ function RowActions({
   onApprove,
   onReply,
   onStop,
-  onOpen,
   onRemove
 }: {
   agent: AgentRuntime
   onApprove?: () => void
   onReply?: () => void
   onStop?: () => void
-  onOpen?: () => void
   onRemove?: () => void
 }) {
   const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer'
   const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors cursor-pointer'
+  const isStoppable = agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'stopping'
+  const isStopping = agent.status === 'stopping'
 
   return (
     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -603,18 +612,11 @@ function RowActions({
           <Pause size={12} weight="bold" />
         </button>
       )}
-      <button
-        className={buttonBase}
-        title="Open"
-        onClick={(event) => { event.stopPropagation(); onOpen?.() }}
-      >
-        <ArrowRight size={12} weight="bold" />
-      </button>
-      {(agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'stopping') && (
+      {isStoppable && (
         <button
-          className={`${buttonBase} ${agent.status === 'stopping' ? 'opacity-50 cursor-not-allowed' : ''}`}
-          title={agent.status === 'stopping' ? 'Stopping...' : 'Stop'}
-          disabled={agent.status === 'stopping'}
+          className={`${buttonBase} ${isStopping ? 'opacity-50 cursor-not-allowed' : ''}`}
+          title={isStopping ? 'Stopping...' : 'Stop'}
+          disabled={isStopping}
           onClick={(event) => { event.stopPropagation(); onStop?.() }}
         >
           <Square size={12} weight="fill" />

@@ -19,12 +19,22 @@ export function TopBar({
 }: TopBarProps) {
   return (
     <div className="drag-region flex items-center justify-between h-12 pl-20 pr-4 bg-kumo-elevated border-b border-kumo-line shrink-0">
-      {/* Left: Logo — pl-20 clears macOS traffic light buttons */}
+      {/* Left: Logo + Settings */}
       <div className="no-drag flex items-center gap-3">
         <div className="flex items-center gap-2">
           <img src="/favicon.svg" alt="" className="w-5 h-5" />
           <span className="font-bold text-sm text-kumo-strong">OC Orchestrator</span>
         </div>
+        {onSettings && (
+          <button
+            type="button"
+            onClick={onSettings}
+            className="flex items-center justify-center w-7 h-7 rounded-md text-kumo-subtle hover:bg-kumo-fill hover:text-kumo-default transition-colors"
+            title="Settings"
+          >
+            <GearSix size={16} />
+          </button>
+        )}
       </div>
 
       {/* Center: Fleet Stats */}
@@ -47,16 +57,6 @@ export function TopBar({
           </kbd>
           <span>Command</span>
         </button>
-        {onSettings && (
-          <button
-            type="button"
-            onClick={onSettings}
-            className="flex items-center justify-center w-8 h-8 rounded-md border border-kumo-line text-kumo-subtle hover:bg-kumo-fill hover:text-kumo-default transition-colors"
-            title="Settings"
-          >
-            <GearSix size={16} />
-          </button>
-        )}
         <button
           type="button"
           onClick={onLaunch}
