@@ -76,7 +76,7 @@ export interface OrchestratorApi {
 
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string) => Promise<IpcResult>
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' }) => Promise<IpcResult>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }) => Promise<IpcResult>
   openTerminal: (options: { path: string; terminal?: string }) => Promise<IpcResult>
   openExternal: (url: string) => Promise<IpcResult>
 
