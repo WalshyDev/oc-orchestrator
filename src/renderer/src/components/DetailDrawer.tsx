@@ -17,13 +17,13 @@ import {
   PaperPlaneTilt,
   Paperclip
 } from '@phosphor-icons/react'
-import type { AgentRuntime, Message, StatusOverride } from '../types'
+import type { AgentRuntime, Message, AgentLabel } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { loadSettings, SETTINGS_CHANGED_EVENT } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
-import { StatusDropdown } from './StatusDropdown'
+import { LabelDropdown } from './LabelDropdown'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
@@ -85,7 +85,7 @@ interface DetailDrawerProps {
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
-  onSetStatusOverride?: (override: StatusOverride | null) => void
+  onSetLabel?: (label: AgentLabel | null) => void
 }
 
 export const DetailDrawer = memo(function DetailDrawer({
@@ -111,7 +111,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   onOpenInEditor,
   onChangeModel,
   onOpenTerminal,
-  onSetStatusOverride
+  onSetLabel
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -632,10 +632,10 @@ export const DetailDrawer = memo(function DetailDrawer({
           {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
             <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
           )}
-          {onSetStatusOverride && (
-            <StatusDropdown
-              current={agent.statusOverride}
-              onSelect={onSetStatusOverride}
+          {onSetLabel && (
+            <LabelDropdown
+              current={agent.label}
+              onSelect={onSetLabel}
               variant="action"
             />
           )}

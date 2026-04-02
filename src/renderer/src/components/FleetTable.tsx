@@ -14,10 +14,10 @@ import {
   GitPullRequest,
   ArrowSquareOut
 } from '@phosphor-icons/react'
-import type { AgentRuntime, StatusOverride } from '../types'
+import type { AgentRuntime, AgentLabel } from '../types'
 import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
-import { StatusDropdown } from './StatusDropdown'
+import { LabelDropdown } from './LabelDropdown'
 
 interface FleetTableProps {
   agents: AgentRuntime[]
@@ -34,10 +34,10 @@ interface FleetTableProps {
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
   onChangeModel?: (agentId: string) => void
-  onSetStatusOverride?: (agentId: string, override: StatusOverride | null) => void
+  onSetLabel?: (agentId: string, label: AgentLabel | null) => void
 }
 
-type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model' | 'activity'
+type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
 
 const SORTABLE_COLUMNS: { key: SortColumn; label: string }[] = [
@@ -45,8 +45,7 @@ const SORTABLE_COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'status', label: 'Status' },
   { key: 'task', label: 'Task' },
   { key: 'branch', label: 'Branch' },
-  { key: 'model', label: 'Model' },
-  { key: 'activity', label: 'Activity' }
+  { key: 'model', label: 'Model' }
 ]
 
 interface ContextMenuState {
@@ -75,7 +74,7 @@ export function FleetTable({
   onOpenInEditor,
   onCreatePr,
   onChangeModel,
-  onSetStatusOverride
+  onSetLabel
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -128,10 +127,6 @@ export function FleetTable({
         case 'model':
           leftVal = (left.model || '').toLowerCase()
           rightVal = (right.model || '').toLowerCase()
-          break
-        case 'activity':
-          leftVal = left.lastActivityAt || ''
-          rightVal = right.lastActivityAt || ''
           break
         default:
           return 0
@@ -196,7 +191,7 @@ export function FleetTable({
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-              onSetStatusOverride={onSetStatusOverride ? (override: StatusOverride | null) => onSetStatusOverride(agent.id, override) : undefined}
+              onSetLabel={onSetLabel ? (label: AgentLabel | null) => onSetLabel(agent.id, label) : undefined}
             />
           ))}
         </tbody>
@@ -241,8 +236,8 @@ export function FleetTable({
             onCreatePr?.(contextMenu.agentId)
             closeContextMenu()
           }}
-          onSetStatusOverride={(override: StatusOverride | null) => {
-            onSetStatusOverride?.(contextMenu.agentId, override)
+          onSetLabel={(label: AgentLabel | null) => {
+            onSetLabel?.(contextMenu.agentId, label)
             closeContextMenu()
           }}
         />
@@ -346,7 +341,7 @@ function ContextMenu({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
-  onSetStatusOverride
+  onSetLabel
 }: {
   agent: AgentRuntime
   posX: number
@@ -360,7 +355,7 @@ function ContextMenu({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
   onCreatePr: () => void
-  onSetStatusOverride: (override: StatusOverride | null) => void
+  onSetLabel: (label: AgentLabel | null) => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -420,17 +415,17 @@ function ContextMenu({
       )}
       {(isRunning || isStopping) && (
         <button className={itemClass} onClick={onStop} disabled={isStopping}>
-          <Square size={13} weight="fill" /> {isStopping ? 'Stopping…' : 'Stop'}
+          <Square size={13} weight="fill" /> {isStopping ? 'Stopping...' : 'Stop'}
         </button>
       )}
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
       <div className="px-2.5 py-1.5">
-        <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Status Override</div>
-        <StatusDropdown
-          current={agent.statusOverride}
-          onSelect={onSetStatusOverride}
+        <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Label</div>
+        <LabelDropdown
+          current={agent.label}
+          onSelect={onSetLabel}
           variant="action"
         />
       </div>
@@ -464,7 +459,7 @@ function AgentRow({
   onOpen,
   onRemove,
   onChangeModel,
-  onSetStatusOverride
+  onSetLabel
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -476,7 +471,7 @@ function AgentRow({
   onOpen?: () => void
   onRemove?: () => void
   onChangeModel?: () => void
-  onSetStatusOverride?: (override: StatusOverride | null) => void
+  onSetLabel?: (label: AgentLabel | null) => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -505,7 +500,21 @@ function AgentRow({
         </div>
       </td>
       <td className="px-3 py-2">
-        <StatusBadge status={agent.status} />
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={agent.status} />
+            {onSetLabel && (
+              <LabelDropdown
+                current={agent.label}
+                onSelect={onSetLabel}
+                variant="inline"
+              />
+            )}
+          </div>
+          <span className={`font-mono text-[10px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>
+            {agent.lastActivityAt}
+          </span>
+        </div>
       </td>
       <td className="px-3 py-2 max-w-80 truncate text-kumo-default">
         {agent.taskSummary}
@@ -525,11 +534,6 @@ function AgentRow({
         )}
       </td>
       <td className="px-3 py-2">
-        <span className={`font-mono text-[11px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>
-          {agent.lastActivityAt}
-        </span>
-      </td>
-      <td className="px-3 py-2">
         <div className="flex items-center justify-end gap-1">
           <RowActions
             agent={agent}
@@ -538,7 +542,6 @@ function AgentRow({
             onStop={onStop}
             onOpen={onOpen}
             onRemove={onRemove}
-            onSetStatusOverride={onSetStatusOverride}
           />
           <button
             onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
@@ -559,8 +562,7 @@ function RowActions({
   onReply,
   onStop,
   onOpen,
-  onRemove,
-  onSetStatusOverride
+  onRemove
 }: {
   agent: AgentRuntime
   onApprove?: () => void
@@ -568,7 +570,6 @@ function RowActions({
   onStop?: () => void
   onOpen?: () => void
   onRemove?: () => void
-  onSetStatusOverride?: (override: StatusOverride | null) => void
 }) {
   const buttonBase = 'w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer'
   const destructiveButton = 'w-6 h-6 flex items-center justify-center bg-kumo-danger/10 border border-kumo-danger/20 rounded text-kumo-danger hover:bg-kumo-danger/20 transition-colors cursor-pointer'
@@ -602,13 +603,6 @@ function RowActions({
           <Pause size={12} weight="bold" />
         </button>
       )}
-      {onSetStatusOverride && (
-        <StatusDropdown
-          current={agent.statusOverride}
-          onSelect={onSetStatusOverride}
-          variant="row"
-        />
-      )}
       <button
         className={buttonBase}
         title="Open"
@@ -619,7 +613,7 @@ function RowActions({
       {(agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'stopping') && (
         <button
           className={`${buttonBase} ${agent.status === 'stopping' ? 'opacity-50 cursor-not-allowed' : ''}`}
-          title={agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
+          title={agent.status === 'stopping' ? 'Stopping...' : 'Stop'}
           disabled={agent.status === 'stopping'}
           onClick={(event) => { event.stopPropagation(); onStop?.() }}
         >
