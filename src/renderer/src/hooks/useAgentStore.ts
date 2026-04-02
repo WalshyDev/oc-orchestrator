@@ -178,6 +178,11 @@ let eventLogVersion = 0
 // Cleared when a server-generated session title arrives (which is a better summary).
 const taskSummaryLocked = new Set<string>()
 
+// Tracks agents that should have PR URL extraction enabled.  We only extract
+// PR URLs when the user explicitly triggered the "Create PR" flow so that
+// URLs the user pastes in their own messages don't get picked up.
+const prExtractEnabled = new Set<string>()
+
 const listeners = new Set<() => void>()
 
 interface EmitFlags {
@@ -519,21 +524,9 @@ function hydrateHistoricalMessages(entries: unknown): void {
         agent.model = formatModelName(entry.info.modelID)
       }
 
-      // Extract PR URL from historical assistant messages (text and tool output)
-      if (!agent.prUrl) {
-        for (const part of entry.parts) {
-          const text = part.type === 'tool'
-            ? (part.text ?? part.state?.output ?? part.state?.error)
-            : part.text
-          if ((part.type === 'text' || part.type === 'tool') && text) {
-            const prUrl = extractPrUrl(text)
-            if (prUrl) {
-              agent.prUrl = prUrl
-              break
-            }
-          }
-        }
-      }
+      // PR URLs are only extracted during the live "Create PR" flow and
+      // persisted to preferences, so historical messages are not scanned.
+      // This avoids picking up URLs the user pasted in their own prompts.
     }
   }
 }
@@ -657,6 +650,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
         agent.respondedAt = undefined
+        prExtractEnabled.delete(agent.id)
         emit({ agents: true })
       }
       break
@@ -670,6 +664,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
+        prExtractEnabled.delete(agent.id)
 
         emit({ agents: true })
       }
@@ -685,6 +680,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
         agent.respondedAt = undefined
+        prExtractEnabled.delete(agent.id)
 
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
@@ -826,8 +822,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
         let agentChanged = false
         const agent = findAgentBySession(sessionId)
         if (agent) {
-          // Extract PR URL from assistant text and tool output parts
-          if (message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
+          // Extract PR URL from assistant text and tool output parts, but only
+          // when the "Create PR" flow was explicitly triggered by the user.
+          if (prExtractEnabled.has(agent.id) && message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
             const prUrl = extractPrUrl(partText)
             if (prUrl && agent.prUrl !== prUrl) {
               agent.prUrl = prUrl
@@ -1136,6 +1133,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   agent.tokens = { input: 0, output: 0 }
   agent.lastActivityAt = Date.now()
   taskSummaryLocked.delete(payload.id)
+  prExtractEnabled.delete(payload.id)
 
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   if (hasPrompt) {
@@ -1155,6 +1153,7 @@ function removeAgentState(agentId: string): void {
   if (!agent) return
 
   taskSummaryLocked.delete(agentId)
+  prExtractEnabled.delete(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
@@ -1685,6 +1684,10 @@ export function useAgentStore() {
       if (taskSummaryOverride) {
         agent.taskSummary = taskSummaryOverride.slice(0, 120)
         taskSummaryLocked.add(agentId)
+        // Enable PR URL extraction only for the "Create PR" flow
+        if (taskSummaryOverride === 'Create PR') {
+          prExtractEnabled.add(agentId)
+        }
       } else {
         agent.taskSummary = text.trim().slice(0, 120)
         taskSummaryLocked.delete(agentId)
@@ -1713,6 +1716,7 @@ export function useAgentStore() {
 
     // Rollback optimistic state if the send failed
     if (result && !result.ok) {
+      prExtractEnabled.delete(agentId)
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
         agentAfter.status = previousStatus ?? 'idle'
