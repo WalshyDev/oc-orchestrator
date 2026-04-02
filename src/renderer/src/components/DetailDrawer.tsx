@@ -20,6 +20,7 @@ import {
 import type { AgentRuntime, Message, StatusOverride } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
+import { loadSettings, SETTINGS_CHANGED_EVENT } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
 import { StatusDropdown } from './StatusDropdown'
@@ -121,6 +122,14 @@ export function DetailDrawer({
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
   const [commandPickerIndex, setCommandPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
+
+  // Verbose mode: global setting, reactive to changes from SettingsModal
+  const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
+  useEffect(() => {
+    const onSettingsChanged = () => setIsVerbose(loadSettings().verboseMode)
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
+  }, [])
   const {
     attachments, isDragOver, fileInputRef,
     removeAttachment, clearAttachments,
@@ -496,7 +505,7 @@ export function DetailDrawer({
                       </div>
                     )}
                     {messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
+                      <MessageBubble key={message.id} message={message} verbose={isVerbose} />
                     ))}
                   </>
                 )}
@@ -574,8 +583,8 @@ export function DetailDrawer({
             )}
 
             {activeTab === 'files' && <FilesChanged files={files} />}
-            {activeTab === 'tools' && <ToolsUsage tools={tools} />}
-            {activeTab === 'events' && <EventLog events={events} />}
+            {activeTab === 'tools' && <ToolsUsage tools={tools} verbose={isVerbose} />}
+            {activeTab === 'events' && <EventLog events={events} verbose={isVerbose} />}
           </div>
 
           {/* Jump to latest — absolutely positioned over the scroll area
@@ -1025,9 +1034,9 @@ function Tab({
   )
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} />
+    return <ToolGroupBubble message={message} verbose={verbose} />
   }
 
   if (message.role === 'tool') {
@@ -1094,9 +1103,14 @@ function MessageBubble({ message }: { message: Message }) {
   )
 }
 
-function ToolGroupBubble({ message }: { message: Message }) {
-  const [expanded, setExpanded] = useState(false)
+function ToolGroupBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
+  const [expanded, setExpanded] = useState(verbose)
   const toolCalls = message.toolCalls ?? []
+
+  // Sync with verbose prop changes (e.g. user toggles verbose mode)
+  useEffect(() => {
+    if (verbose) setExpanded(true)
+  }, [verbose])
 
   return (
     <div className="max-w-[95%] self-start">

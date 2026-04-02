@@ -12,6 +12,7 @@ export interface AppSettings {
   terminal: string
   createPrPrompt: string
   notifications: NotificationPrefs
+  verboseMode: boolean
 }
 
 export const SETTINGS_STORAGE_KEY = 'oc-orchestrator:settings'
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     errored: true,
     completed: false,
   },
+  verboseMode: false,
 }
 
 export function loadSettings(): AppSettings {
@@ -62,6 +64,9 @@ export function loadSettings(): AppSettings {
   }
 }
 
+export const SETTINGS_CHANGED_EVENT = 'oc-orchestrator:settings-changed'
+
 export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT))
 }
