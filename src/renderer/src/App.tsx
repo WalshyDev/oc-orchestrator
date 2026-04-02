@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { TopBar } from './components/TopBar'
 import { InterruptBanner } from './components/InterruptBanner'
-import { FilterBar, matchesFilter, EMPTY_FILTER, type FilterState, type StatusFilter } from './components/FilterBar'
+import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, type FilterState, type StatusFilter } from './components/FilterBar'
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
@@ -20,13 +20,6 @@ import { loadSettings } from './data/settings'
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
-
-function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
-  const next = new Set(set)
-  if (next.has(value)) next.delete(value)
-  else next.add(value)
-  return next
-}
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -999,21 +992,30 @@ export function App() {
       {showInterruptBanner && (
         <InterruptBanner
           interrupts={displayInterrupts}
-          onReviewAll={() => setFilter({ statuses: new Set<StatusFilter>(['blocked']), labels: new Set(), projects: new Set() })}
+          onReviewAll={() => setFilter({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['blocked']) })}
           onDismiss={() => setDismissedInterruptIds(new Set(displayInterrupts.map((i) => i.id)))}
         />
       )}
 
       <FilterBar
         filter={filter}
-        onToggleStatus={(status) => {
-          setFilter((prev) => ({ ...prev, statuses: toggleInSet(prev.statuses, status) }))
+        onCycleStatus={(status) => {
+          setFilter((prev) => {
+            const { include, exclude } = cycleFilter(prev.statuses, prev.excludeStatuses, status)
+            return { ...prev, statuses: include, excludeStatuses: exclude }
+          })
         }}
-        onToggleLabel={(label) => {
-          setFilter((prev) => ({ ...prev, labels: toggleInSet(prev.labels, label) }))
+        onCycleLabel={(label) => {
+          setFilter((prev) => {
+            const { include, exclude } = cycleFilter(prev.labels, prev.excludeLabels, label)
+            return { ...prev, labels: include, excludeLabels: exclude }
+          })
         }}
-        onToggleProject={(project) => {
-          setFilter((prev) => ({ ...prev, projects: toggleInSet(prev.projects, project) }))
+        onCycleProject={(project) => {
+          setFilter((prev) => {
+            const { include, exclude } = cycleFilter(prev.projects, prev.excludeProjects, project)
+            return { ...prev, projects: include, excludeProjects: exclude }
+          })
         }}
         onClearFilters={() => setFilter(EMPTY_FILTER)}
         searchQuery={searchQuery}

@@ -4,27 +4,68 @@ import type { AgentStatus, AgentLabel } from '../types'
 export type StatusFilter = 'blocked' | 'running' | 'idle' | 'errored' | 'completed'
 export type LabelFilter = AgentLabel
 
+export type FilterMode = 'include' | 'exclude'
+
 export interface FilterState {
   statuses: Set<StatusFilter>
   labels: Set<LabelFilter>
   projects: Set<string>
+  excludeStatuses: Set<StatusFilter>
+  excludeLabels: Set<LabelFilter>
+  excludeProjects: Set<string>
 }
 
 export const EMPTY_FILTER: FilterState = {
   statuses: new Set(),
   labels: new Set(),
-  projects: new Set()
+  projects: new Set(),
+  excludeStatuses: new Set(),
+  excludeLabels: new Set(),
+  excludeProjects: new Set()
 }
 
 export function isFilterEmpty(filter: FilterState): boolean {
-  return filter.statuses.size === 0 && filter.labels.size === 0 && filter.projects.size === 0
+  return (
+    filter.statuses.size === 0 &&
+    filter.labels.size === 0 &&
+    filter.projects.size === 0 &&
+    filter.excludeStatuses.size === 0 &&
+    filter.excludeLabels.size === 0 &&
+    filter.excludeProjects.size === 0
+  )
+}
+
+export function getFilterMode(
+  includeSet: Set<unknown>,
+  excludeSet: Set<unknown>,
+  value: unknown
+): FilterMode | null {
+  if (includeSet.has(value)) return 'include'
+  if (excludeSet.has(value)) return 'exclude'
+  return null
+}
+
+export function cycleFilter<T>(includeSet: Set<T>, excludeSet: Set<T>, value: T): { include: Set<T>; exclude: Set<T> } {
+  const nextInclude = new Set(includeSet)
+  const nextExclude = new Set(excludeSet)
+
+  if (nextInclude.has(value)) {
+    nextInclude.delete(value)
+    nextExclude.add(value)
+  } else if (nextExclude.has(value)) {
+    nextExclude.delete(value)
+  } else {
+    nextInclude.add(value)
+  }
+
+  return { include: nextInclude, exclude: nextExclude }
 }
 
 interface FilterBarProps {
   filter: FilterState
-  onToggleStatus: (status: StatusFilter) => void
-  onToggleLabel: (label: LabelFilter) => void
-  onToggleProject: (project: string) => void
+  onCycleStatus: (status: StatusFilter) => void
+  onCycleLabel: (label: LabelFilter) => void
+  onCycleProject: (project: string) => void
   onClearFilters: () => void
   searchQuery: string
   onSearchChange: (query: string) => void
@@ -47,9 +88,9 @@ interface FilterBarProps {
 
 export function FilterBar({
   filter,
-  onToggleStatus,
-  onToggleLabel,
-  onToggleProject,
+  onCycleStatus,
+  onCycleLabel,
+  onCycleProject,
   onClearFilters,
   searchQuery,
   onSearchChange,
@@ -77,28 +118,28 @@ export function FilterBar({
       <div className="w-px h-5 bg-kumo-line" />
 
       {/* Status filters */}
-      <FilterPill label={`All (${counts.all})`} active={noFilters} onClick={onClearFilters} />
-      <FilterPill label={`Blocked (${counts.blocked})`} active={filter.statuses.has('blocked')} onClick={() => onToggleStatus('blocked')} />
-      <FilterPill label={`Running (${counts.running})`} active={filter.statuses.has('running')} onClick={() => onToggleStatus('running')} />
-      <FilterPill label={`Idle (${counts.idle})`} active={filter.statuses.has('idle')} onClick={() => onToggleStatus('idle')} />
-      <FilterPill label={`Errored (${counts.errored})`} active={filter.statuses.has('errored')} onClick={() => onToggleStatus('errored')} />
-      <FilterPill label={`Completed (${counts.completed})`} active={filter.statuses.has('completed')} onClick={() => onToggleStatus('completed')} />
+      <FilterPill label={`All (${counts.all})`} mode={noFilters ? 'include' : null} onClick={onClearFilters} />
+      <FilterPill label={`Blocked (${counts.blocked})`} mode={getFilterMode(filter.statuses, filter.excludeStatuses, 'blocked')} onClick={() => onCycleStatus('blocked')} />
+      <FilterPill label={`Running (${counts.running})`} mode={getFilterMode(filter.statuses, filter.excludeStatuses, 'running')} onClick={() => onCycleStatus('running')} />
+      <FilterPill label={`Idle (${counts.idle})`} mode={getFilterMode(filter.statuses, filter.excludeStatuses, 'idle')} onClick={() => onCycleStatus('idle')} />
+      <FilterPill label={`Errored (${counts.errored})`} mode={getFilterMode(filter.statuses, filter.excludeStatuses, 'errored')} onClick={() => onCycleStatus('errored')} />
+      <FilterPill label={`Completed (${counts.completed})`} mode={getFilterMode(filter.statuses, filter.excludeStatuses, 'completed')} onClick={() => onCycleStatus('completed')} />
 
       {/* Label filters */}
       {Object.values(labelCounts).some((count) => count > 0) && (
         <>
           <div className="w-px h-5 bg-kumo-line" />
           {labelCounts.draft > 0 && (
-            <FilterPill label={`Draft (${labelCounts.draft})`} active={filter.labels.has('draft')} onClick={() => onToggleLabel('draft')} variant="label" />
+            <FilterPill label={`Draft (${labelCounts.draft})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'draft')} onClick={() => onCycleLabel('draft')} variant="label" />
           )}
           {labelCounts.in_review > 0 && (
-            <FilterPill label={`Review (${labelCounts.in_review})`} active={filter.labels.has('in_review')} onClick={() => onToggleLabel('in_review')} variant="label" />
+            <FilterPill label={`Review (${labelCounts.in_review})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'in_review')} onClick={() => onCycleLabel('in_review')} variant="label" />
           )}
           {labelCounts.blocked > 0 && (
-            <FilterPill label={`Blocked (${labelCounts.blocked})`} active={filter.labels.has('blocked')} onClick={() => onToggleLabel('blocked')} variant="label" />
+            <FilterPill label={`Blocked (${labelCounts.blocked})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'blocked')} onClick={() => onCycleLabel('blocked')} variant="label" />
           )}
           {labelCounts.done > 0 && (
-            <FilterPill label={`Done (${labelCounts.done})`} active={filter.labels.has('done')} onClick={() => onToggleLabel('done')} variant="label" />
+            <FilterPill label={`Done (${labelCounts.done})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'done')} onClick={() => onCycleLabel('done')} variant="label" />
           )}
         </>
       )}
@@ -110,38 +151,51 @@ export function FilterBar({
         <FilterPill
           key={project}
           label={project}
-          active={filter.projects.has(project)}
-          onClick={() => onToggleProject(project)}
+          mode={getFilterMode(filter.projects, filter.excludeProjects, project)}
+          onClick={() => onCycleProject(project)}
         />
       ))}
     </div>
   )
 }
 
+const FILTER_TOOLTIPS: Record<string, string> = {
+  include: 'Showing only matching agents. Click to exclude instead.',
+  exclude: 'Hiding matching agents. Click to clear filter.',
+  inactive: 'Click to include. Click again to exclude.'
+}
+
 function FilterPill({
   label,
-  active,
+  mode,
   onClick,
   variant = 'status'
 }: {
   label: string
-  active: boolean
+  mode: FilterMode | null
   onClick: () => void
   variant?: 'status' | 'label'
 }) {
-  const activeClass = variant === 'label'
-    ? 'bg-kumo-brand/12 border-kumo-brand/30 text-kumo-brand'
-    : 'bg-kumo-interact/12 border-kumo-interact/30 text-kumo-link'
+  let modeClass: string
+  if (mode === 'include') {
+    modeClass = variant === 'label'
+      ? 'bg-kumo-brand/12 border-kumo-brand/30 text-kumo-brand'
+      : 'bg-kumo-interact/12 border-kumo-interact/30 text-kumo-link'
+  } else if (mode === 'exclude') {
+    modeClass = 'bg-red-500/12 border-red-500/30 text-red-400'
+  } else {
+    modeClass = 'bg-kumo-control border-kumo-line text-kumo-subtle hover:border-kumo-fill-hover hover:text-kumo-default'
+  }
+
+  const tooltip = mode ? FILTER_TOOLTIPS[mode] : FILTER_TOOLTIPS.inactive
 
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-colors cursor-pointer ${
-        active
-          ? activeClass
-          : 'bg-kumo-control border-kumo-line text-kumo-subtle hover:border-kumo-fill-hover hover:text-kumo-default'
-      }`}
+      title={tooltip}
+      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border transition-colors cursor-pointer ${modeClass}`}
     >
+      {mode === 'exclude' && <span aria-hidden="true" className="text-[9px] leading-none">−</span>}
       {label}
     </button>
   )
@@ -155,31 +209,29 @@ const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
   completed: ['completed']
 }
 
+function expandStatuses(filters: Set<StatusFilter>): Set<AgentStatus> {
+  const result = new Set<AgentStatus>()
+  for (const sf of filters) {
+    for (const s of STATUS_MAP[sf]) result.add(s)
+  }
+  return result
+}
+
 export function matchesFilter(
   agent: { status: AgentStatus; label: AgentLabel | null; projectName: string },
   filter: FilterState
 ): boolean {
-  const hasStatuses = filter.statuses.size > 0
-  const hasLabels = filter.labels.size > 0
-  const hasProjects = filter.projects.size > 0
+  if (isFilterEmpty(filter)) return true
 
-  if (!hasStatuses && !hasLabels && !hasProjects) return true
+  // Exclude filters: reject if agent matches any excluded value
+  if (filter.excludeStatuses.size > 0 && expandStatuses(filter.excludeStatuses).has(agent.status)) return false
+  if (filter.excludeLabels.size > 0 && agent.label && filter.excludeLabels.has(agent.label)) return false
+  if (filter.excludeProjects.size > 0 && filter.excludeProjects.has(agent.projectName)) return false
 
-  if (hasStatuses) {
-    const allowedStatuses = new Set<AgentStatus>()
-    for (const sf of filter.statuses) {
-      for (const s of STATUS_MAP[sf]) allowedStatuses.add(s)
-    }
-    if (!allowedStatuses.has(agent.status)) return false
-  }
-
-  if (hasLabels) {
-    if (!agent.label || !filter.labels.has(agent.label)) return false
-  }
-
-  if (hasProjects) {
-    if (!filter.projects.has(agent.projectName)) return false
-  }
+  // Include filters: agent must match at least one value in each active include dimension
+  if (filter.statuses.size > 0 && !expandStatuses(filter.statuses).has(agent.status)) return false
+  if (filter.labels.size > 0 && (!agent.label || !filter.labels.has(agent.label))) return false
+  if (filter.projects.size > 0 && !filter.projects.has(agent.projectName)) return false
 
   return true
 }
