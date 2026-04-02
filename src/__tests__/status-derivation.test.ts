@@ -75,6 +75,13 @@ interface MinimalAgent {
   status: AgentStatus
   lastActivityAt: number
   blockedSince?: number
+  respondedAt?: number
+}
+
+const OPTIMISTIC_GUARD_MS = 5_000
+
+function isWithinOptimisticGuard(agent: MinimalAgent): boolean {
+  return agent.respondedAt !== undefined && Date.now() - agent.respondedAt < OPTIMISTIC_GUARD_MS
 }
 
 /**
@@ -96,22 +103,70 @@ function applyMessagePartUpdate(agent: MinimalAgent): void {
  */
 function applySessionStatus(agent: MinimalAgent, statusType: string): void {
   const newStatus = mapSessionStatus(statusType)
+  // After the user responds, ignore stale 'waiting' status events
+  if ((newStatus === 'needs_input' || newStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
+    return
+  }
   agent.status = newStatus
   agent.lastActivityAt = Date.now()
   if (newStatus === 'needs_input' || newStatus === 'needs_approval') {
     agent.blockedSince = agent.blockedSince ?? Date.now()
   } else {
     agent.blockedSince = undefined
+    agent.respondedAt = undefined
   }
 }
 
 /**
+ * Mirrors the optimistic update when a user sends a message or replies to a question.
+ */
+function applyUserResponse(agent: MinimalAgent): void {
+  agent.status = 'running'
+  agent.blockedSince = undefined
+  agent.lastActivityAt = Date.now()
+  agent.respondedAt = Date.now()
+}
+
+/**
  * Mirrors the logic in processEvent 'permission.updated' handler.
+ * A new permission means the server has moved on, so the guard is cleared.
  */
 function applyPermissionUpdate(agent: MinimalAgent): void {
   agent.status = 'needs_approval'
   agent.blockedSince = agent.blockedSince ?? Date.now()
   agent.lastActivityAt = Date.now()
+  agent.respondedAt = undefined
+}
+
+/**
+ * Mirrors the logic in processEvent 'question.asked' handler.
+ * A new question means the server has moved on, so the guard is cleared.
+ */
+function applyQuestionAsked(agent: MinimalAgent): void {
+  agent.status = 'needs_input'
+  agent.blockedSince = agent.blockedSince ?? Date.now()
+  agent.lastActivityAt = Date.now()
+  agent.respondedAt = undefined
+}
+
+/**
+ * Mirrors the reconcileStatuses logic — same guard as applySessionStatus
+ * but only fires when the server-reported status disagrees with local status.
+ */
+function applyReconciliation(agent: MinimalAgent, serverStatusType: string): void {
+  const serverStatus = mapSessionStatus(serverStatusType)
+  if (agent.status === serverStatus) return
+  if ((serverStatus === 'needs_input' || serverStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
+    return
+  }
+  agent.status = serverStatus
+  agent.lastActivityAt = Date.now()
+  if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
+    agent.blockedSince = agent.blockedSince ?? Date.now()
+  } else {
+    agent.blockedSince = undefined
+    agent.respondedAt = undefined
+  }
 }
 
 // ── Tests ──
@@ -407,5 +462,163 @@ describe('event sequence: question flow (session.status → message.part.updated
     applyMessagePartUpdate(agent)
     expect(agent.status).toBe('needs_input')
     expect(agent.blockedSince).toBe(blockedTime)
+  })
+})
+
+describe('optimistic guard: stale blocked events after user response', () => {
+  it('ignores stale session.status "waiting" after user responds', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // Agent enters needs_input
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+
+    // User sends a response → optimistic update
+    applyUserResponse(agent)
+    expect(agent.status).toBe('running')
+    expect(agent.blockedSince).toBeUndefined()
+    expect(agent.respondedAt).toBeDefined()
+
+    // Stale session.status "waiting" arrives (was in-flight before server processed reply)
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('running')
+    expect(agent.blockedSince).toBeUndefined()
+  })
+
+  it('allows non-blocked status transitions during guard window', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    expect(agent.status).toBe('running')
+
+    // Server confirms running (busy) → allowed
+    applySessionStatus(agent, 'busy')
+    expect(agent.status).toBe('running')
+
+    // Server sends idle → allowed
+    applySessionStatus(agent, 'idle')
+    expect(agent.status).toBe('idle')
+  })
+
+  it('clears respondedAt when a non-blocked status arrives', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    expect(agent.respondedAt).toBeDefined()
+
+    // Server confirms busy → clears the guard
+    applySessionStatus(agent, 'busy')
+    expect(agent.respondedAt).toBeUndefined()
+  })
+
+  it('allows blocked status after guard window expires', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    // Simulate guard expiry by backdating respondedAt
+    agent.respondedAt = Date.now() - OPTIMISTIC_GUARD_MS - 1
+
+    // Now a waiting status should be accepted
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBeDefined()
+  })
+
+  it('full cycle: block → respond → stale event → server busy → new block', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // 1. Agent blocks on question
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+
+    // 2. User responds
+    applyUserResponse(agent)
+    expect(agent.status).toBe('running')
+
+    // 3. Stale 'waiting' arrives → ignored
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('running')
+
+    // 4. Server confirms busy → clears guard
+    applySessionStatus(agent, 'busy')
+    expect(agent.status).toBe('running')
+    expect(agent.respondedAt).toBeUndefined()
+
+    // 5. New legitimate question arrives (no guard active)
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+  })
+
+  it('question.asked clears the guard so subsequent events are not suppressed', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    expect(agent.respondedAt).toBeDefined()
+
+    // A new question arrives — this is a real new block, clears guard
+    applyQuestionAsked(agent)
+    expect(agent.status).toBe('needs_input')
+    expect(agent.respondedAt).toBeUndefined()
+
+    // Subsequent session.status "waiting" is now accepted (guard cleared)
+    applySessionStatus(agent, 'busy')
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+  })
+
+  it('permission.updated clears the guard so subsequent events are not suppressed', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    expect(agent.respondedAt).toBeDefined()
+
+    // A new permission arrives — this is a real new block, clears guard
+    applyPermissionUpdate(agent)
+    expect(agent.status).toBe('needs_approval')
+    expect(agent.respondedAt).toBeUndefined()
+  })
+})
+
+describe('reconcileStatuses: optimistic guard', () => {
+  it('ignores stale server "waiting" during guard window', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    expect(agent.status).toBe('running')
+
+    // Reconciliation polls server which still says "waiting"
+    applyReconciliation(agent, 'waiting')
+    expect(agent.status).toBe('running')
+  })
+
+  it('allows reconciliation after guard expires', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+    agent.respondedAt = Date.now() - OPTIMISTIC_GUARD_MS - 1
+
+    applyReconciliation(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBeDefined()
+  })
+
+  it('allows non-blocked reconciliation during guard window', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
+
+    applyUserResponse(agent)
+
+    // Server says idle — that's not blocked, should be accepted
+    applyReconciliation(agent, 'idle')
+    expect(agent.status).toBe('idle')
+    expect(agent.respondedAt).toBeUndefined()
+  })
+
+  it('skips reconciliation when statuses already match', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0, respondedAt: Date.now() }
+
+    // Server says "busy" → maps to "running" → matches → no change, guard preserved
+    applyReconciliation(agent, 'busy')
+    expect(agent.status).toBe('running')
+    expect(agent.respondedAt).toBeDefined()
   })
 })
