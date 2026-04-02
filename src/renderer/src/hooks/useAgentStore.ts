@@ -66,6 +66,9 @@ export interface LiveAgent {
   tokens: { input: number; output: number }
   /** Whether the name was auto-generated and should be replaced by the first prompt */
   autoNamed?: boolean
+  /** Timestamp of last user response (sendMessage/replyToQuestion/respondToPermission).
+   *  Used to guard against stale SSE events that would re-block the agent. */
+  respondedAt?: number
 }
 
 export interface LivePermission {
@@ -498,6 +501,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
         if (agent.status === 'stopping' && newStatus !== 'idle' && newStatus !== 'completed' && newStatus !== 'errored') {
           break
         }
+        // After the user responds, ignore stale 'waiting' status events that were
+        // in-flight before the server processed the reply. Without this guard the
+        // agent flips back to needs_input/needs_approval and the banner stays blocked.
+        if ((newStatus === 'needs_input' || newStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
+          break
+        }
         if (agent.status !== newStatus) {
           notifyIfNeeded(agent, newStatus)
           agent.status = newStatus
@@ -506,6 +515,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
             agent.blockedSince = agent.blockedSince ?? Date.now()
           } else {
             agent.blockedSince = undefined
+            agent.respondedAt = undefined
           }
           if (newStatus === 'completed') {
             persistAgentMeta(agent.id, { persistedStatus: 'completed' })
@@ -524,6 +534,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'idle'
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
+        agent.respondedAt = undefined
         emit()
       }
       break
@@ -536,6 +547,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         notifyIfNeeded(agent, 'errored')
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
+        agent.respondedAt = undefined
         emit()
       }
       break
@@ -549,6 +561,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'completed'
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
+        agent.respondedAt = undefined
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit()
       }
@@ -717,6 +730,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'needs_approval'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.lastActivityAt = Date.now()
+        // A new permission request means the server has moved on from whatever
+        // the user previously responded to, so clear the guard.
+        agent.respondedAt = undefined
 
         state.permissions.set(permissionId, {
           id: permissionId,
@@ -762,6 +778,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'needs_input'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.lastActivityAt = Date.now()
+        // A new question means the server has moved on, so clear the guard.
+        agent.respondedAt = undefined
 
         state.questions.set(requestId, {
           id: requestId,
@@ -1082,6 +1100,12 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     // If statuses already match, nothing to do
     if (agent.status === serverStatus) continue
 
+    // Don't re-block an agent the user just responded to — the server may
+    // still report 'waiting' until it finishes processing the reply.
+    if ((serverStatus === 'needs_input' || serverStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
+      continue
+    }
+
     console.warn(
       `[AgentStore] Reconciliation: agent ${agent.id} status ${agent.status} → ${serverStatus} (server says ${statusEntry.status.type})`
     )
@@ -1091,6 +1115,7 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
       agent.blockedSince = agent.blockedSince ?? Date.now()
     } else {
       agent.blockedSince = undefined
+      agent.respondedAt = undefined
     }
     changed = true
   }
@@ -1099,6 +1124,15 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
 }
 
 // ── Helpers ──
+
+/** How long (ms) after a user response we ignore stale blocked-status events.
+ *  This prevents SSE events that were in-flight before the server processed
+ *  the reply from flipping the agent back to needs_input / needs_approval. */
+const OPTIMISTIC_GUARD_MS = 5_000
+
+function isWithinOptimisticGuard(agent: LiveAgent): boolean {
+  return agent.respondedAt !== undefined && Date.now() - agent.respondedAt < OPTIMISTIC_GUARD_MS
+}
 
 function findAgentBySession(sessionId: string): LiveAgent | undefined {
   for (const agent of state.agents.values()) {
@@ -1339,6 +1373,7 @@ export function useAgentStore() {
     if (agent?.status === 'stopping') return
 
     const previousStatus = agent?.status
+    const previousBlockedSince = agent?.blockedSince
 
     // Optimistically update task summary and status
     if (agent && text.trim()) {
@@ -1346,27 +1381,37 @@ export function useAgentStore() {
       agent.status = 'running'
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
+      agent.respondedAt = Date.now()
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
     }
 
     // Optimistically clear any pending questions for this agent
     // (sending a message is the response to a needs_input state)
+    const removedQuestions: Array<[string, LiveQuestion]> = []
     for (const [qId, q] of state.questions) {
-      if (q.agentId === agentId) state.questions.delete(qId)
+      if (q.agentId === agentId) {
+        removedQuestions.push([qId, q])
+        state.questions.delete(qId)
+      }
     }
 
     emit()
 
     const result = await window.api.sendMessage(agentId, text, agentConfig, attachments)
 
-    // Rollback optimistic status if the send failed — prevents phantom 'running'
+    // Rollback optimistic state if the send failed
     if (result && !result.ok) {
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
         agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.blockedSince = previousBlockedSince
+        agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        emit()
       }
+      for (const [qId, q] of removedQuestions) {
+        state.questions.set(qId, q)
+      }
+      emit()
     }
 
     return result
@@ -1426,6 +1471,8 @@ export function useAgentStore() {
 
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
+    const previousBlockedSince = agent?.blockedSince
+    const removedPermission = state.permissions.get(permissionId)
 
     // Optimistically clear permission and set running
     state.permissions.delete(permissionId)
@@ -1435,6 +1482,7 @@ export function useAgentStore() {
         agent.blockedSince = undefined
       }
       agent.lastActivityAt = Date.now()
+      agent.respondedAt = Date.now()
     }
     emit()
 
@@ -1444,9 +1492,14 @@ export function useAgentStore() {
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
         agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.blockedSince = previousBlockedSince
+        agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        emit()
       }
+      if (removedPermission) {
+        state.permissions.set(permissionId, removedPermission)
+      }
+      emit()
     }
 
     return result
@@ -1457,6 +1510,8 @@ export function useAgentStore() {
 
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
+    const previousBlockedSince = agent?.blockedSince
+    const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
     state.questions.delete(requestId)
@@ -1464,6 +1519,7 @@ export function useAgentStore() {
       agent.status = 'running'
       agent.blockedSince = undefined
       agent.lastActivityAt = Date.now()
+      agent.respondedAt = Date.now()
     }
     emit()
 
@@ -1473,9 +1529,14 @@ export function useAgentStore() {
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
         agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.blockedSince = previousBlockedSince
+        agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        emit()
       }
+      if (removedQuestion) {
+        state.questions.set(requestId, removedQuestion)
+      }
+      emit()
     }
 
     return result
@@ -1486,6 +1547,8 @@ export function useAgentStore() {
 
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
+    const previousBlockedSince = agent?.blockedSince
+    const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
     state.questions.delete(requestId)
@@ -1493,6 +1556,7 @@ export function useAgentStore() {
       agent.status = 'running'
       agent.blockedSince = undefined
       agent.lastActivityAt = Date.now()
+      agent.respondedAt = Date.now()
     }
     emit()
 
@@ -1502,9 +1566,14 @@ export function useAgentStore() {
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
         agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.blockedSince = previousBlockedSince
+        agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        emit()
       }
+      if (removedQuestion) {
+        state.questions.set(requestId, removedQuestion)
+      }
+      emit()
     }
 
     return result
