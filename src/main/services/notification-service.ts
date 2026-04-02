@@ -75,7 +75,8 @@ class NotificationService {
     agentId: string,
     status: NotifiableEventType,
     agentName: string,
-    projectName?: string
+    projectName?: string,
+    preview?: string
   ): void {
     if (!this.preferences[status]) {
       return
@@ -86,7 +87,7 @@ class NotificationService {
     }
 
     this.recordNotification(agentId, status)
-    this.sendNotification(agentId, status, agentName, projectName)
+    this.sendNotification(agentId, status, agentName, projectName, preview)
   }
 
   private isDuplicate(agentId: string, eventType: NotifiableEventType): boolean {
@@ -127,7 +128,8 @@ class NotificationService {
     agentId: string,
     eventType: NotifiableEventType,
     agentName: string,
-    projectName?: string
+    projectName?: string,
+    preview?: string
   ): void {
     if (!Notification.isSupported()) {
       console.warn('[NotificationService] Notifications not supported on this platform')
@@ -135,7 +137,15 @@ class NotificationService {
     }
 
     const title = NOTIFICATION_TITLES[eventType](agentName)
-    const body = NOTIFICATION_BODIES[eventType](projectName)
+    const defaultBody = NOTIFICATION_BODIES[eventType](projectName)
+
+    // Only show preview for terminal statuses where "what did the agent say?" is relevant.
+    // For blocked statuses (needs_approval, needs_input, disconnected) the generic body
+    // ("Action requires your approval") is more useful than unrelated assistant text.
+    const usePreview = preview && (eventType === 'completed' || eventType === 'errored')
+    const body = usePreview
+      ? (projectName ? `${projectName}: ${preview}` : preview)
+      : defaultBody
 
     const notification = new Notification({
       title,

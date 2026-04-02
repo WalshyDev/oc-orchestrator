@@ -470,6 +470,30 @@ export function setViewedAgentId(agentId: string | null): void {
 
 const NOTIFIABLE_STATUSES = new Set(['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected', 'idle'])
 
+const MAX_PREVIEW_LENGTH = 200
+
+function getLastAssistantPreview(sessionId: string): string | undefined {
+  const messages = state.messages.get(sessionId)
+  if (!messages) return undefined
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role !== 'assistant') continue
+
+    const fullText = msg.parts
+      .filter((p) => p.type === 'text' && p.text)
+      .map((p) => p.text!)
+      .join(' ')
+      .trim()
+
+    if (fullText.length === 0) continue
+    return fullText.length > MAX_PREVIEW_LENGTH
+      ? fullText.slice(0, MAX_PREVIEW_LENGTH) + '…'
+      : fullText
+  }
+  return undefined
+}
+
 function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
   if (agent.status === newStatus) return
   if (!NOTIFIABLE_STATUSES.has(newStatus)) return
@@ -481,7 +505,8 @@ function notifyIfNeeded(agent: LiveAgent, newStatus: string): void {
   const notifyStatus = (newStatus === 'idle' && agent.status === 'running') ? 'completed' : newStatus
   if (notifyStatus === 'idle') return // only notify idle when coming from running
 
-  window.api?.notifyAgentStatus(agent.id, notifyStatus, agent.name, agent.projectName)
+  const preview = getLastAssistantPreview(agent.sessionId)
+  window.api?.notifyAgentStatus(agent.id, notifyStatus, agent.name, agent.projectName, preview)
 }
 
 function processEvent(payload: OpenCodeEventPayload): void {
