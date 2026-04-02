@@ -112,6 +112,12 @@ const api = {
   getSystemConfig: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:config'),
 
+  listAllCommands: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:commands'),
+
+  listAllAgentConfigs: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:agent-configs'),
+
   // ── Dialog ──
   selectDirectory: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('dialog:select-directory'),

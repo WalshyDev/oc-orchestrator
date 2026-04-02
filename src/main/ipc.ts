@@ -392,6 +392,26 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('runtime:commands', async () => {
+    try {
+      const data = await agentController.listCommandsFromAnyRuntime()
+      return { ok: true, data }
+    } catch (error) {
+      console.error('[IPC] runtime:commands failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('runtime:agent-configs', async () => {
+    try {
+      const data = await agentController.listAgentConfigsFromAnyRuntime()
+      return { ok: true, data }
+    } catch (error) {
+      console.error('[IPC] runtime:agent-configs failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('runtime:config', async () => {
     try {
       const data = await agentController.getConfigFromAnyRuntime()

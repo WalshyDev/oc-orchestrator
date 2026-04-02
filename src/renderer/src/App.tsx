@@ -62,6 +62,8 @@ export function App() {
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
   const [appVersion, setAppVersion] = useState('')
   const [dismissedInterruptIds, setDismissedInterruptIds] = useState<Set<string> | null>(null)
+  const [launchCommands, setLaunchCommands] = useState<ChatCommand[]>([])
+  const [launchAgentConfigs, setLaunchAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
 
   const store = useAgentStore()
 
@@ -115,6 +117,42 @@ export function App() {
 
     return () => { cancelled = true }
   }, [selectedAgentId, listCommands, listAgentConfigs])
+
+  // ── Fetch commands & agent configs for the launch modal from any available runtime ──
+  useEffect(() => {
+    if (!showLaunchModal) {
+      setLaunchCommands([])
+      setLaunchAgentConfigs([])
+      return
+    }
+
+    let cancelled = false
+
+    const fetchLaunchData = async (): Promise<void> => {
+      // Only custom runtime commands are shown — built-in drawer commands
+      // (/new, /model, /compact, etc.) don't apply at launch time.
+      try {
+        const cmdResult = await window.api.listAllCommands()
+        if (cancelled) return
+        const cmds = Array.isArray(cmdResult.data) ? cmdResult.data as Array<{ name: string; description?: string; template?: string }> : []
+        setLaunchCommands(cmds.map((cmd) => ({
+          command: `/${cmd.name}`,
+          description: cmd.description || cmd.template || cmd.name
+        })))
+      } catch { /* no runtime available */ }
+
+      try {
+        const cfgResult = await window.api.listAllAgentConfigs()
+        if (cancelled) return
+        const configs = Array.isArray(cfgResult.data) ? cfgResult.data as Array<{ name: string; description?: string }> : []
+        setLaunchAgentConfigs(configs)
+      } catch { /* no runtime available */ }
+    }
+
+    void fetchLaunchData()
+
+    return () => { cancelled = true }
+  }, [showLaunchModal])
 
   // ── Live timestamp refresh (every 30s) ──
   useEffect(() => {
@@ -791,22 +829,65 @@ export function App() {
       launchDirectory = worktreeResult.data.worktreePath
     }
 
-    const result = await store.launchAgent(launchDirectory, prompt || undefined, title, model, attachments)
+    // Detect leading @agent mentions and /commands in the prompt.
+    // Only leading tokens are treated as special syntax to avoid
+    // false positives from @mentions mid-sentence.
+    const trimmedPrompt = prompt?.trim() ?? ''
+    const isSlashCommand = trimmedPrompt.startsWith('/')
+    const leadingAgentMatch = trimmedPrompt.match(/^@(\w+)(?:\s|$)/)
+    const needsPostLaunchHandling = isSlashCommand || !!leadingAgentMatch
+
+    // If the prompt needs special handling, launch without it — the
+    // runtime must exist before we can route commands or agent mentions.
+    const launchPrompt = needsPostLaunchHandling ? undefined : (prompt || undefined)
+    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, attachments)
 
     if (!result?.ok) {
       throw new Error('Failed to launch agent')
     }
 
-    // Auto-open the detail drawer for the newly launched agent
-    // (especially useful when no prompt is given so the user can interact immediately)
-    if (result.data) {
-      const data = result.data as { id: string }
-      setSelectedAgentId(data.id)
+    if (!result.data) return
 
-      // Optimistically show the selected model in the table immediately
-      if (model && model !== 'auto') {
-        store.setAgentModel(data.id, model)
+    const agentId = (result.data as { id: string }).id
+    setSelectedAgentId(agentId)
+
+    if (model && model !== 'auto') {
+      store.setAgentModel(agentId, model)
+    }
+
+    if (!needsPostLaunchHandling || !trimmedPrompt) return
+
+    // Handle @agent mentions and /commands that were deferred from launch.
+    // Only custom runtime commands apply — built-in drawer commands
+    // (/new, /compact, /share, etc.) don't apply at launch time.
+    // Wrapped in try/catch so a failure here doesn't make the already-
+    // successful launch appear failed (which would keep the modal open).
+    try {
+      if (isSlashCommand) {
+        const spaceIndex = trimmedPrompt.indexOf(' ')
+        const commandName = spaceIndex === -1 ? trimmedPrompt.slice(1) : trimmedPrompt.slice(1, spaceIndex)
+        const commandArgs = spaceIndex === -1 ? '' : trimmedPrompt.slice(spaceIndex + 1).trim()
+
+        const runtimeCommands = await store.listCommands(agentId)
+        const isCustomCommand = runtimeCommands?.some((cmd: { name: string }) => cmd.name === commandName)
+        if (isCustomCommand) {
+          await store.executeCommand(agentId, commandName, commandArgs)
+        } else {
+          await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
+        }
+      } else if (leadingAgentMatch) {
+        const mentionedAgent = leadingAgentMatch[1]
+        const configs = await store.listAgentConfigs(agentId)
+        const isKnownAgent = configs?.some((cfg: { name: string }) => cfg.name === mentionedAgent)
+        if (isKnownAgent) {
+          const cleanText = trimmedPrompt.slice(leadingAgentMatch[0].length).trim()
+          await store.sendMessage(agentId, cleanText || trimmedPrompt, mentionedAgent, attachments)
+        } else {
+          await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
+        }
       }
+    } catch (error) {
+      console.error('[App] Post-launch command/agent handling failed:', error)
     }
   }, [store])
 
@@ -1091,6 +1172,8 @@ export function App() {
             directory: a.directory,
             isWorktree: a.isWorktree
           }))}
+          commands={launchCommands}
+          agentConfigs={launchAgentConfigs}
         />
       )}
 
