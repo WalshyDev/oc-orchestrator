@@ -105,7 +105,7 @@ export function SessionBrowser({
     }
 
     void seedFromAgents()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   // Validate directory
   useEffect(() => {
