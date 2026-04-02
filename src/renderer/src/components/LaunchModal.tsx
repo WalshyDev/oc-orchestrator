@@ -5,6 +5,7 @@ import { useModelOptions } from '../hooks/useModelOptions'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { Project, MessageAttachment } from '../types/api'
+import type { ChatCommand, AgentConfigItem } from './DetailDrawer'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
 
@@ -48,9 +49,11 @@ interface LaunchModalProps {
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
+  commands?: ChatCommand[]
+  agentConfigs?: AgentConfigItem[]
 }
 
-export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory, knownDirectories }: LaunchModalProps) {
+export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory, knownDirectories, commands = [], agentConfigs = [] }: LaunchModalProps) {
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
@@ -69,6 +72,121 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
   } = useImageAttachments()
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  const [cursorPos, setCursorPos] = useState(0)
+  const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
+  const [agentPickerIndex, setAgentPickerIndex] = useState(0)
+  const [commandPickerIndex, setCommandPickerIndex] = useState(0)
+
+  const trimmedPrompt = prompt.trim().toLowerCase()
+
+  const matchingCommands = useMemo(
+    () => prompt.startsWith('/')
+      ? commands.filter(({ command }) => command.startsWith(trimmedPrompt))
+      : [],
+    [prompt, trimmedPrompt, commands]
+  )
+
+  const showCommandAutocomplete = useMemo(() => {
+    if (matchingCommands.length === 0 || trimmedPrompt.length === 0) return false
+    return !commands.some(({ command }) => command === trimmedPrompt)
+  }, [matchingCommands, trimmedPrompt, commands])
+
+  const agentMentionResult = useMemo(() => {
+    if (agentConfigs.length === 0) return null
+    const textBeforeCursor = prompt.slice(0, cursorPos)
+    const match = textBeforeCursor.match(/@(\w*)$/)
+    if (!match) return null
+    const start = textBeforeCursor.length - match[0].length
+    return { query: match[1].toLowerCase(), start, end: cursorPos }
+  }, [agentConfigs.length, prompt, cursorPos])
+
+  const agentMention = !agentPickerDismissed ? agentMentionResult : null
+  const matchingAgents = useMemo(
+    () => agentMention
+      ? agentConfigs.filter((cfg) => cfg.name.toLowerCase().startsWith(agentMention.query))
+      : [],
+    [agentMention, agentConfigs]
+  )
+  const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
+
+  const handlePromptChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setPrompt(event.target.value)
+    setCursorPos(event.target.selectionStart)
+    setAgentPickerDismissed(false)
+    setAgentPickerIndex(0)
+    setCommandPickerIndex(0)
+  }
+
+  const insertAgentMention = (agentName: string) => {
+    if (!agentMention) return
+    const before = prompt.slice(0, agentMention.start)
+    const after = prompt.slice(agentMention.end)
+    const newText = `${before}@${agentName} ${after}`
+    const newCursorPos = agentMention.start + agentName.length + 2 // @ + name + space
+    setPrompt(newText)
+    setCursorPos(newCursorPos)
+    setAgentPickerDismissed(false)
+    setAgentPickerIndex(0)
+    requestAnimationFrame(() => {
+      const textarea = promptRef.current
+      if (textarea) {
+        textarea.selectionStart = newCursorPos
+        textarea.selectionEnd = newCursorPos
+        textarea.focus()
+      }
+    })
+  }
+
+  const handlePromptKeyDown = (event: React.KeyboardEvent) => {
+    if (showAgentPicker) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setAgentPickerDismissed(true)
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = matchingAgents[agentPickerIndex]
+        if (selected) insertAgentMention(selected.name)
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setAgentPickerIndex((prev) => (prev + 1) % matchingAgents.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setAgentPickerIndex((prev) => (prev - 1 + matchingAgents.length) % matchingAgents.length)
+        return
+      }
+    }
+
+    if (showCommandAutocomplete) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPrompt('')
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = matchingCommands[commandPickerIndex]
+        if (selected) setPrompt(`${selected.command} `)
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setCommandPickerIndex((prev) => (prev + 1) % matchingCommands.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setCommandPickerIndex((prev) => (prev - 1 + matchingCommands.length) % matchingCommands.length)
+        return
+      }
+    }
+  }
 
   const estimatedWorktreePath = useMemo(() => {
     if (worktreeStrategy !== 'new-worktree') return ''
@@ -426,7 +544,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
               Initial Prompt <span className="text-kumo-subtle/60">(optional — you can prompt from the session)</span>
             </label>
             <div
-              className={`flex flex-col gap-0 rounded-md border transition-colors ${
+              className={`relative flex flex-col gap-0 rounded-md border transition-colors ${
                 isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line focus-within:border-kumo-ring'
               }`}
               onDragOver={handleDragOver}
@@ -459,11 +577,71 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   ))}
                 </div>
               )}
+
+              {/* Command autocomplete dropdown */}
+              {showCommandAutocomplete && (
+                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                  {matchingCommands.map((item, index) => (
+                    <button
+                      key={item.command}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        setPrompt(`${item.command} `)
+                      }}
+                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                        index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                      }`}
+                    >
+                      <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                      <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                    </button>
+                  ))}
+                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                  </div>
+                </div>
+              )}
+
+              {/* Agent picker dropdown */}
+              {showAgentPicker && (
+                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                  <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
+                    Agents
+                  </div>
+                  {matchingAgents.map((cfg, index) => (
+                    <button
+                      key={cfg.name}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        insertAgentMention(cfg.name)
+                      }}
+                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                        index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                      }`}
+                    >
+                      <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                      {cfg.description && (
+                        <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
+                      )}
+                    </button>
+                  ))}
+                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                  </div>
+                </div>
+              )}
+
               <textarea
+                ref={promptRef}
                 value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
+                onChange={handlePromptChange}
+                onKeyDown={handlePromptKeyDown}
+                onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
+                onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
                 onPaste={handlePaste}
-                placeholder={isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session...'}
+                placeholder={isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session... Type / for commands, @ for agents.'}
                 rows={3}
                 className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
               />

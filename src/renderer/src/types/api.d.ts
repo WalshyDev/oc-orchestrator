@@ -44,6 +44,8 @@ export interface OrchestratorApi {
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
   listAllProviders: () => Promise<IpcResult>
   getSystemConfig: () => Promise<IpcResult>
+  listAllCommands: () => Promise<IpcResult>
+  listAllAgentConfigs: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
 
   // ── Workspace Operations ──

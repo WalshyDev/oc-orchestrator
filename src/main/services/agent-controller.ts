@@ -534,6 +534,46 @@ class AgentController {
   }
 
   /**
+   * List commands from any available runtime.
+   * Useful for launch screens where no specific agent is selected.
+   */
+  async listCommandsFromAnyRuntime(): Promise<unknown> {
+    for (const handle of this.agents.values()) {
+      try {
+        const runtime = await this.ensureRuntimeForAgent(handle)
+        const result = await runtime.client.command.list({
+          directory: handle.directory
+        })
+        return result.data
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * List agent configs from any available runtime.
+   * Useful for launch screens where no specific agent is selected.
+   */
+  async listAgentConfigsFromAnyRuntime(): Promise<unknown> {
+    for (const handle of this.agents.values()) {
+      try {
+        const runtime = await this.ensureRuntimeForAgent(handle)
+        const result = await runtime.client.app.agents({
+          directory: handle.directory
+        })
+        return result.data
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+
+  /**
    * Get MCP server status for an agent's runtime.
    */
   async getMcpStatus(agentId: string): Promise<unknown> {
