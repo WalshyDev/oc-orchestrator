@@ -53,7 +53,7 @@ export function App() {
 
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-  const [, setTick] = useState(0)
+  const [tick, setTick] = useState(0)
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
   const [agentConfigs, setAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
   const [showModelPicker, setShowModelPicker] = useState(false)
@@ -66,6 +66,9 @@ export function App() {
   const store = useAgentStore()
 
   // ── Fetch available commands and agent configs when an agent is selected ──
+  // Deps use specific stable callbacks (not the whole store object) to avoid
+  // re-fetching on unrelated SSE events.
+  const { listCommands, listAgentConfigs } = store
   useEffect(() => {
     if (!selectedAgentId) {
       setAgentCommands([])
@@ -76,7 +79,7 @@ export function App() {
     let cancelled = false
 
     const fetchCommands = async (): Promise<void> => {
-      const commands = await store.listCommands(selectedAgentId)
+      const commands = await listCommands(selectedAgentId)
       if (cancelled) return
 
       const builtInCommands: ChatCommand[] = [
@@ -102,7 +105,7 @@ export function App() {
     }
 
     const fetchAgentConfigs = async (): Promise<void> => {
-      const configs = await store.listAgentConfigs(selectedAgentId)
+      const configs = await listAgentConfigs(selectedAgentId)
       if (cancelled) return
       setAgentConfigs(configs ?? [])
     }
@@ -111,7 +114,7 @@ export function App() {
     void fetchAgentConfigs()
 
     return () => { cancelled = true }
-  }, [selectedAgentId, store])
+  }, [selectedAgentId, listCommands, listAgentConfigs])
 
   // ── Live timestamp refresh (every 30s) ──
   useEffect(() => {
@@ -201,7 +204,7 @@ export function App() {
       blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
       blockedSinceMs: agent.blockedSince
     }))
-  }, [store.agents])
+  }, [store.agents, tick])
 
   // ── Convert live permissions + needs_input agents to Interrupt shape ──
   const liveInterrupts: Interrupt[] = useMemo(() => {
@@ -247,7 +250,7 @@ export function App() {
       }))
 
     return [...permissionInterrupts, ...questionInterrupts, ...inputInterrupts]
-  }, [store.permissions, store.questions, store.agents])
+  }, [store.permissions, store.questions, store.agents, tick])
 
   // ── Display data: always live (no mock fallback) ──
   const displayAgents = liveAgentsAsRuntimes
@@ -671,6 +674,29 @@ export function App() {
     await store.abortAgent(selectedAgentId)
   }, [selectedAgentId, store])
 
+  const handleCloseDrawer = useCallback(() => setSelectedAgentId(null), [])
+
+  const handleDrawerApprove = useCallback(() => {
+    if (selectedPermission) handleApprove(selectedPermission.id)
+  }, [selectedPermission, handleApprove])
+
+  const handleDrawerDeny = useCallback(() => {
+    if (selectedPermission) handleDeny(selectedPermission.id)
+  }, [selectedPermission, handleDeny])
+
+  const handleDrawerRemove = useCallback(() => {
+    if (selectedAgentId) void handleRemoveAgent(selectedAgentId)
+  }, [selectedAgentId, handleRemoveAgent])
+
+  const handleDrawerChangeModel = useCallback(() => {
+    setModelPickerAgentId(selectedAgentId)
+    setShowModelPicker(true)
+  }, [selectedAgentId])
+
+  const handleDrawerSetStatusOverride = useCallback((override: StatusOverride | null) => {
+    if (selectedAgentId) handleSetStatusOverride(selectedAgentId, override)
+  }, [selectedAgentId, handleSetStatusOverride])
+
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
     const result = await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
@@ -1020,19 +1046,19 @@ export function App() {
           events={selectedEvents}
           commands={agentCommands}
           agentConfigs={agentConfigs}
-          onClose={() => setSelectedAgentId(null)}
+          onClose={handleCloseDrawer}
           onSendMessage={handleSendMessage}
-          onApprove={selectedPermission ? () => handleApprove(selectedPermission.id) : undefined}
-          onDeny={selectedPermission ? () => handleDeny(selectedPermission.id) : undefined}
+          onApprove={selectedPermission ? handleDrawerApprove : undefined}
+          onDeny={selectedPermission ? handleDrawerDeny : undefined}
           onReplyQuestion={selectedQuestion ? handleReplyQuestion : undefined}
           onRejectQuestion={selectedQuestion ? handleRejectQuestion : undefined}
           onAbort={handleAbort}
-          onRemove={() => void handleRemoveAgent(selectedAgent.id)}
+          onRemove={handleDrawerRemove}
           onCreatePr={handleCreatePr}
           onOpenInEditor={handleOpenInEditor}
-          onChangeModel={() => { setModelPickerAgentId(selectedAgentId); setShowModelPicker(true) }}
+          onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
-          onSetStatusOverride={(override) => handleSetStatusOverride(selectedAgent.id, override)}
+          onSetStatusOverride={handleDrawerSetStatusOverride}
         />
       )}
 

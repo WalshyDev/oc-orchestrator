@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   X,
   Square,
@@ -87,7 +87,7 @@ interface DetailDrawerProps {
   onSetStatusOverride?: (override: StatusOverride | null) => void
 }
 
-export function DetailDrawer({
+export const DetailDrawer = memo(function DetailDrawer({
   agent,
   messages,
   permission,
@@ -163,31 +163,40 @@ export function DetailDrawer({
     document.addEventListener('mouseup', handleMouseUp)
   }, [drawerWidth])
 
-  const matchingCommands = inputText.startsWith('/')
-    ? commands.filter(({ command }) => command.startsWith(inputText.trim().toLowerCase()))
-    : []
-
   const trimmedInput = inputText.trim().toLowerCase()
-  const exactCommandMatch = commands.some(({ command }) => command === trimmedInput)
-  const showCommandAutocomplete = matchingCommands.length > 0 && trimmedInput.length > 0 && !exactCommandMatch
+
+  const matchingCommands = useMemo(
+    () => inputText.startsWith('/')
+      ? commands.filter(({ command }) => command.startsWith(trimmedInput))
+      : [],
+    [inputText, trimmedInput, commands]
+  )
+
+  const showCommandAutocomplete = useMemo(() => {
+    if (matchingCommands.length === 0 || trimmedInput.length === 0) return false
+    return !commands.some(({ command }) => command === trimmedInput)
+  }, [matchingCommands, trimmedInput, commands])
 
   // ── @ Agent mention detection ──
   // Find the @mention being typed at or before the cursor position.
   // We look for "@" followed by optional word characters, where the cursor
   // is within or right after this token.
-  const agentMentionResult = (() => {
+  const agentMentionResult = useMemo(() => {
     if (agentConfigs.length === 0) return null
     const textBeforeCursor = inputText.slice(0, cursorPos)
     const match = textBeforeCursor.match(/@(\w*)$/)
     if (!match) return null
     const start = textBeforeCursor.length - match[0].length
     return { query: match[1].toLowerCase(), start, end: cursorPos }
-  })()
+  }, [agentConfigs.length, inputText, cursorPos])
 
   const agentMention = !agentPickerDismissed ? agentMentionResult : null
-  const matchingAgents = agentMention
-    ? agentConfigs.filter((cfg) => cfg.name.toLowerCase().startsWith(agentMention.query))
-    : []
+  const matchingAgents = useMemo(
+    () => agentMention
+      ? agentConfigs.filter((cfg) => cfg.name.toLowerCase().startsWith(agentMention.query))
+      : [],
+    [agentMention, agentConfigs]
+  )
   const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
 
   // Slide-in animation on mount
@@ -761,7 +770,7 @@ export function DetailDrawer({
       </div>
     </div>
   )
-}
+})
 
 function QuestionCard({
   question,

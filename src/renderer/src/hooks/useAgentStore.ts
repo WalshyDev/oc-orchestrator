@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { AgentStatus, StatusOverride } from '../types'
 import type {
   OpenCodeEventPayload,
@@ -161,6 +161,17 @@ let state: AgentStoreState = {
 
 let eventCounter = 0
 
+// Per-collection version counters. Incremented only when the corresponding Map
+// is actually mutated, allowing downstream useMemo hooks to skip re-derivation
+// when an SSE event only touches a different collection (e.g. a message update
+// shouldn't re-create the agents array).
+let agentsVersion = 0
+let permissionsVersion = 0
+let questionsVersion = 0
+let messagesVersion = 0
+let fileChangesVersion = 0
+let eventLogVersion = 0
+
 // Tracks agents whose taskSummary was set via an explicit override (e.g. "Create PR",
 // "/review") so the SSE echo of the raw prompt text doesn't clobber the friendly label.
 // Cleared when a server-generated session title arrives (which is a better summary).
@@ -168,7 +179,20 @@ const taskSummaryLocked = new Set<string>()
 
 const listeners = new Set<() => void>()
 
-function emit(): void {
+interface EmitFlags {
+  agents?: boolean
+  permissions?: boolean
+  questions?: boolean
+  messages?: boolean
+}
+
+function emit(changed?: EmitFlags): void {
+  // Bump per-collection version counters so downstream useMemo hooks can
+  // skip re-derivation when only unrelated collections changed.
+  if (!changed || changed.agents) agentsVersion++
+  if (!changed || changed.permissions) permissionsVersion++
+  if (!changed || changed.questions) questionsVersion++
+  if (!changed || changed.messages) messagesVersion++
   // Create new state reference to trigger re-renders
   state = { ...state }
   for (const listener of listeners) {
@@ -283,6 +307,7 @@ function logEvent(sessionId: string, type: string, props: Record<string, unknown
     data: props
   })
   state.eventLog.set(sessionId, entries)
+  eventLogVersion++
 }
 
 function resolveSessionIdForEvent(
@@ -315,6 +340,7 @@ function trackFileChange(sessionId: string, filePath: string, action: FileChange
     timestamp: Date.now()
   })
   state.fileChanges.set(sessionId, changes)
+  fileChangesVersion++
 }
 
 function getMessageCreatedAt(info: Record<string, unknown> | HistoricalMessageInfo): number {
@@ -562,7 +588,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           if (newStatus === 'completed') {
             persistAgentMeta(agent.id, { persistedStatus: 'completed' })
           }
-          emit()
+          emit({ agents: true })
         }
       }
       break
@@ -577,7 +603,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.blockedSince = undefined
         agent.respondedAt = undefined
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -590,7 +616,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -605,7 +631,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -628,7 +654,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.taskSummary = title.slice(0, 120)
           persistAgentMeta(agent.id, { taskSummary: agent.taskSummary })
         }
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -640,21 +666,27 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const role = info.role as 'user' | 'assistant'
       const createdAt = getMessageCreatedAt(info)
 
+      let agentChanged = false
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        // lastActivityAt is intentionally not tracked via agentChanged — it feeds
+        // the "Xs ago" display which already refreshes on a 30s timer. Tracking it
+        // here would bump agentsVersion on every message event, defeating the
+        // optimization for typing responsiveness.
         agent.lastActivityAt = Date.now()
 
         // Update cost/tokens from assistant messages
         if (role === 'assistant') {
           const cost = info.cost as number | undefined
           const tokens = info.tokens as { input: number; output: number } | undefined
-          if (cost !== undefined) agent.cost = cost
-          if (tokens) agent.tokens = { input: tokens.input, output: tokens.output }
+          if (cost !== undefined) { agent.cost = cost; agentChanged = true }
+          if (tokens) { agent.tokens = { input: tokens.input, output: tokens.output }; agentChanged = true }
 
           // Extract model info
           const modelId = info.modelID as string | undefined
           if (modelId) {
             agent.model = formatModelName(modelId)
+            agentChanged = true
           }
         }
       }
@@ -676,7 +708,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         existing.role = role
       }
 
-      emit()
+      emit({ messages: true, agents: agentChanged })
       break
     }
 
@@ -734,6 +766,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         }
 
         // Update agent activity (but don't clobber blocked/stopping/terminal states)
+        let agentChanged = false
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
@@ -758,11 +791,15 @@ function processEvent(payload: OpenCodeEventPayload): void {
               }
 
               persistAgentMeta(agent.id, { displayName: agent.name, taskSummary: agent.taskSummary })
+              agentChanged = true
             }
           }
         }
 
-        emit()
+        // This is the hottest event path — fire dozens of times per second while
+        // agents are working. Only flag the collections that actually changed to
+        // avoid invalidating unrelated useMemo hooks (e.g. agents array).
+        emit({ messages: true, agents: agentChanged })
       }
       break
     }
@@ -794,7 +831,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           createdAt: Date.now()
         })
 
-        emit()
+        emit({ agents: true, permissions: true })
       }
       break
     }
@@ -813,7 +850,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
       }
 
-      emit()
+      emit({ agents: true, permissions: true })
       break
     }
 
@@ -841,7 +878,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           createdAt: Date.now()
         })
 
-        emit()
+        emit({ agents: true, questions: true })
       }
       break
     }
@@ -860,7 +897,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
       }
 
-      emit()
+      emit({ agents: true, questions: true })
       break
     }
 
@@ -878,7 +915,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
       }
 
-      emit()
+      emit({ agents: true, questions: true })
       break
     }
 
@@ -897,7 +934,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
             inferFileAction(diff.before as string | undefined, diff.after as string | undefined)
           )
         }
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -909,7 +946,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         const filePath = (props.file ?? props.path ?? 'unknown') as string
         trackFileChange(agent.sessionId, filePath, 'modified')
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -928,7 +965,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
               : 'modified'
           trackFileChange(agent.sessionId, filePath, action)
         }
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -942,7 +979,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.lastActivityAt = Date.now()
         }
       }
-      emit()
+      emit({ agents: true })
       break
     }
 
@@ -952,7 +989,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         const filePath = (props.file ?? props.path ?? 'unknown') as string
         trackFileChange(agent.sessionId, filePath, 'created')
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -963,7 +1000,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         const filePath = (props.file ?? props.path ?? 'unknown') as string
         trackFileChange(agent.sessionId, filePath, 'deleted')
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -1501,9 +1538,28 @@ export function useAgentStore() {
     }
   }, [])
 
-  const agents = Array.from(storeState.agents.values())
-  const permissions = Array.from(storeState.permissions.values())
-  const questions = Array.from(storeState.questions.values())
+  // Stabilize array references: only create new arrays when the underlying Map
+  // contents actually change. Without this, every SSE event creates new arrays →
+  // all downstream useMemo deps invalidate → the entire App tree re-renders,
+  // causing typing lag in DetailDrawer.
+  //
+  // Deps intentionally use module-level version counters instead of storeState.
+  // This works because emit() always creates a new state reference which triggers
+  // useSyncExternalStore to re-render, at which point the updated counter value
+  // is visible to useMemo's comparison. The callback closures capture the current
+  // storeState from the render, so the data is always fresh when the memo executes.
+  const agents = useMemo(
+    () => Array.from(storeState.agents.values()),
+    [agentsVersion] // eslint-disable-line
+  )
+  const permissions = useMemo(
+    () => Array.from(storeState.permissions.values()),
+    [permissionsVersion] // eslint-disable-line
+  )
+  const questions = useMemo(
+    () => Array.from(storeState.questions.values()),
+    [questionsVersion] // eslint-disable-line
+  )
 
   const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, attachments?: MessageAttachment[]) => {
     if (!window.api) return
@@ -1856,20 +1912,20 @@ export function useAgentStore() {
 
   const getMessagesForSession = useCallback((sessionId: string): LiveMessage[] => {
     return storeState.messages.get(sessionId) ?? []
-  }, [storeState])
+  }, [messagesVersion]) // eslint-disable-line
 
   const getFileChangesForSession = useCallback((sessionId: string): FileChangeRecord[] => {
     return storeState.fileChanges.get(sessionId) ?? []
-  }, [storeState])
+  }, [fileChangesVersion]) // eslint-disable-line
 
   const getEventsForSession = useCallback((sessionId: string): EventLogEntry[] => {
     return storeState.eventLog.get(sessionId) ?? []
-  }, [storeState])
+  }, [eventLogVersion]) // eslint-disable-line
 
   const getToolCallsForSession = useCallback((sessionId: string): ToolCallInfo[] => {
     const messages = storeState.messages.get(sessionId) ?? []
     return extractToolCallsFromMessages(messages)
-  }, [storeState])
+  }, [messagesVersion]) // eslint-disable-line
 
   const setAgentModel = useCallback((agentId: string, modelPath: string) => {
     const agent = state.agents.get(agentId)
@@ -1896,7 +1952,7 @@ export function useAgentStore() {
     emit()
   }, [])
 
-  return {
+  return useMemo(() => ({
     agents,
     permissions,
     questions,
@@ -1921,5 +1977,14 @@ export function useAgentStore() {
     getFileChangesForSession,
     getEventsForSession,
     getToolCallsForSession
-  }
+  }), [
+    agents, permissions, questions, storeState.healthy,
+    launchAgent, sendMessage, listCommands, listAgentConfigs,
+    executeCommand, prepareFreshAgent, resetSession,
+    respondToPermission, replyToQuestion, rejectQuestion,
+    abortAgent, removeAgent, renameAgent, setAgentModel,
+    setStatusOverride, selectDirectory,
+    getMessagesForSession, getFileChangesForSession,
+    getEventsForSession, getToolCallsForSession
+  ])
 }
