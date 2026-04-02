@@ -44,6 +44,7 @@ export interface AgentRuntime {
   status: AgentStatus
   label: AgentLabel | null
   model: string
+  prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number
   blockedSince?: string
