@@ -17,11 +17,15 @@ type AgentLabel = 'in_review' | 'blocked' | 'done' | 'draft'
 
 type StatusFilter = 'blocked' | 'running' | 'idle' | 'errored' | 'completed'
 type LabelFilter = AgentLabel
+type FilterMode = 'include' | 'exclude'
 
 interface FilterState {
   statuses: Set<StatusFilter>
   labels: Set<LabelFilter>
   projects: Set<string>
+  excludeStatuses: Set<StatusFilter>
+  excludeLabels: Set<LabelFilter>
+  excludeProjects: Set<string>
 }
 
 interface AgentRow {
@@ -46,33 +50,68 @@ const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
   completed: ['completed']
 }
 
+function isFilterEmpty(filter: FilterState): boolean {
+  return (
+    filter.statuses.size === 0 &&
+    filter.labels.size === 0 &&
+    filter.projects.size === 0 &&
+    filter.excludeStatuses.size === 0 &&
+    filter.excludeLabels.size === 0 &&
+    filter.excludeProjects.size === 0
+  )
+}
+
+function expandStatuses(filters: Set<StatusFilter>): Set<AgentStatus> {
+  const result = new Set<AgentStatus>()
+  for (const sf of filters) {
+    for (const s of STATUS_MAP[sf]) result.add(s)
+  }
+  return result
+}
+
 function matchesFilter(
   agent: { status: AgentStatus; label: AgentLabel | null; projectName: string },
   filter: FilterState
 ): boolean {
-  const hasStatuses = filter.statuses.size > 0
-  const hasLabels = filter.labels.size > 0
-  const hasProjects = filter.projects.size > 0
+  if (isFilterEmpty(filter)) return true
 
-  if (!hasStatuses && !hasLabels && !hasProjects) return true
+  // Exclude filters: reject if agent matches any excluded value
+  if (filter.excludeStatuses.size > 0 && expandStatuses(filter.excludeStatuses).has(agent.status)) return false
+  if (filter.excludeLabels.size > 0 && agent.label && filter.excludeLabels.has(agent.label)) return false
+  if (filter.excludeProjects.size > 0 && filter.excludeProjects.has(agent.projectName)) return false
 
-  if (hasStatuses) {
-    const allowedStatuses = new Set<AgentStatus>()
-    for (const sf of filter.statuses) {
-      for (const s of STATUS_MAP[sf]) allowedStatuses.add(s)
-    }
-    if (!allowedStatuses.has(agent.status)) return false
-  }
-
-  if (hasLabels) {
-    if (!agent.label || !filter.labels.has(agent.label)) return false
-  }
-
-  if (hasProjects) {
-    if (!filter.projects.has(agent.projectName)) return false
-  }
+  // Include filters: agent must match at least one value in each active include dimension
+  if (filter.statuses.size > 0 && !expandStatuses(filter.statuses).has(agent.status)) return false
+  if (filter.labels.size > 0 && (!agent.label || !filter.labels.has(agent.label))) return false
+  if (filter.projects.size > 0 && !filter.projects.has(agent.projectName)) return false
 
   return true
+}
+
+function getFilterMode(
+  includeSet: Set<unknown>,
+  excludeSet: Set<unknown>,
+  value: unknown
+): FilterMode | null {
+  if (includeSet.has(value)) return 'include'
+  if (excludeSet.has(value)) return 'exclude'
+  return null
+}
+
+function cycleFilter<T>(includeSet: Set<T>, excludeSet: Set<T>, value: T): { include: Set<T>; exclude: Set<T> } {
+  const nextInclude = new Set(includeSet)
+  const nextExclude = new Set(excludeSet)
+
+  if (nextInclude.has(value)) {
+    nextInclude.delete(value)
+    nextExclude.add(value)
+  } else if (nextExclude.has(value)) {
+    nextExclude.delete(value)
+  } else {
+    nextInclude.add(value)
+  }
+
+  return { include: nextInclude, exclude: nextExclude }
 }
 
 // ── Sorting and search logic ──
@@ -150,22 +189,37 @@ function createAgent(overrides: Partial<AgentRow> = {}): AgentRow {
   }
 }
 
-const EMPTY: FilterState = { statuses: new Set(), labels: new Set(), projects: new Set() }
+const EMPTY: FilterState = {
+  statuses: new Set(), labels: new Set(), projects: new Set(),
+  excludeStatuses: new Set(), excludeLabels: new Set(), excludeProjects: new Set()
+}
 
 function statusFilter(...statuses: StatusFilter[]): FilterState {
-  return { statuses: new Set(statuses), labels: new Set(), projects: new Set() }
+  return { ...EMPTY, statuses: new Set(statuses) }
 }
 
 function labelFilter(...labels: LabelFilter[]): FilterState {
-  return { statuses: new Set(), labels: new Set(labels), projects: new Set() }
+  return { ...EMPTY, labels: new Set(labels) }
 }
 
 function projectFilter(...projects: string[]): FilterState {
-  return { statuses: new Set(), labels: new Set(), projects: new Set(projects) }
+  return { ...EMPTY, projects: new Set(projects) }
 }
 
 function combinedFilter(statuses: StatusFilter[], projects: string[]): FilterState {
-  return { statuses: new Set(statuses), labels: new Set(), projects: new Set(projects) }
+  return { ...EMPTY, statuses: new Set(statuses), projects: new Set(projects) }
+}
+
+function excludeStatusFilter(...statuses: StatusFilter[]): FilterState {
+  return { ...EMPTY, excludeStatuses: new Set(statuses) }
+}
+
+function excludeLabelFilter(...labels: LabelFilter[]): FilterState {
+  return { ...EMPTY, excludeLabels: new Set(labels) }
+}
+
+function excludeProjectFilter(...projects: string[]): FilterState {
+  return { ...EMPTY, excludeProjects: new Set(projects) }
 }
 
 // ── Tests ──
@@ -295,9 +349,9 @@ describe('label filters', () => {
 
   it('combines status AND label filters', () => {
     const filter: FilterState = {
+      ...EMPTY,
       statuses: new Set<StatusFilter>(['running']),
-      labels: new Set<LabelFilter>(['in_review']),
-      projects: new Set()
+      labels: new Set<LabelFilter>(['in_review'])
     }
     expect(matchesFilter({ status: 'running', label: 'in_review', projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'idle', label: 'in_review', projectName: 'proj' }, filter)).toBe(false)
@@ -308,6 +362,192 @@ describe('label filters', () => {
     const filter = statusFilter('running')
     expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'running', label: 'done', projectName: 'proj' }, filter)).toBe(true)
+  })
+})
+
+describe('negative (exclude) filters', () => {
+  it('excludes agents matching an excluded status', () => {
+    const filter = excludeStatusFilter('completed')
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', label: null, projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('excludes agents matching excluded "blocked" status (needs_input + needs_approval)', () => {
+    const filter = excludeStatusFilter('blocked')
+    expect(matchesFilter({ status: 'needs_input', label: null, projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'needs_approval', label: null, projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'proj' }, filter)).toBe(true)
+  })
+
+  it('excludes agents matching multiple excluded statuses', () => {
+    const filter: FilterState = { ...EMPTY, excludeStatuses: new Set<StatusFilter>(['completed', 'errored']) }
+    expect(matchesFilter({ status: 'completed', label: null, projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'errored', label: null, projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+  })
+
+  it('excludes agents matching an excluded label', () => {
+    const filter = excludeLabelFilter('done')
+    expect(matchesFilter({ status: 'running', label: 'done', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: 'in_review', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+  })
+
+  it('excludes agents matching an excluded project', () => {
+    const filter = excludeProjectFilter('my-app')
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'my-app' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'other-app' }, filter)).toBe(true)
+  })
+
+  it('combines include status + exclude status (e.g. running but not errored)', () => {
+    const filter: FilterState = {
+      ...EMPTY,
+      statuses: new Set<StatusFilter>(['running', 'errored']),
+      excludeStatuses: new Set<StatusFilter>(['errored'])
+    }
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'errored', label: null, projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('exclude takes precedence over include for same dimension', () => {
+    // Include running + exclude running = nothing matches for running
+    const filter: FilterState = {
+      ...EMPTY,
+      statuses: new Set<StatusFilter>(['running']),
+      excludeStatuses: new Set<StatusFilter>(['running'])
+    }
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('combines exclude status with include project', () => {
+    const filter: FilterState = {
+      ...EMPTY,
+      excludeStatuses: new Set<StatusFilter>(['completed']),
+      projects: new Set(['my-app'])
+    }
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'my-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', label: null, projectName: 'my-app' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'other-app' }, filter)).toBe(false)
+  })
+
+  it('combines include status with exclude project', () => {
+    const filter: FilterState = {
+      ...EMPTY,
+      statuses: new Set<StatusFilter>(['running']),
+      excludeProjects: new Set(['my-app'])
+    }
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'other-app' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'my-app' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'other-app' }, filter)).toBe(false)
+  })
+
+  it('combines exclude label with include status', () => {
+    const filter: FilterState = {
+      ...EMPTY,
+      statuses: new Set<StatusFilter>(['running']),
+      excludeLabels: new Set<LabelFilter>(['done'])
+    }
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', label: 'in_review', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'running', label: 'done', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('excludes multiple projects', () => {
+    const filter = excludeProjectFilter('app-a', 'app-b')
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'app-a' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'app-b' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'app-c' }, filter)).toBe(true)
+  })
+
+  it('exclude-only filter still passes agents not matching the exclusion', () => {
+    const filter = excludeStatusFilter('idle')
+    expect(matchesFilter({ status: 'running', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'completed', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'errored', label: null, projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', label: null, projectName: 'proj' }, filter)).toBe(false)
+  })
+})
+
+describe('cycleFilter', () => {
+  it('adds value to include set when not present in either set', () => {
+    const include = new Set<string>()
+    const exclude = new Set<string>()
+    const result = cycleFilter(include, exclude, 'running')
+    expect(result.include.has('running')).toBe(true)
+    expect(result.exclude.has('running')).toBe(false)
+  })
+
+  it('moves value from include to exclude on second cycle', () => {
+    const include = new Set(['running'])
+    const exclude = new Set<string>()
+    const result = cycleFilter(include, exclude, 'running')
+    expect(result.include.has('running')).toBe(false)
+    expect(result.exclude.has('running')).toBe(true)
+  })
+
+  it('removes value from exclude on third cycle', () => {
+    const include = new Set<string>()
+    const exclude = new Set(['running'])
+    const result = cycleFilter(include, exclude, 'running')
+    expect(result.include.has('running')).toBe(false)
+    expect(result.exclude.has('running')).toBe(false)
+  })
+
+  it('full cycle: off -> include -> exclude -> off', () => {
+    // off -> include
+    let result = cycleFilter(new Set<string>(), new Set<string>(), 'idle')
+    expect(result.include.has('idle')).toBe(true)
+    expect(result.exclude.has('idle')).toBe(false)
+
+    // include -> exclude
+    result = cycleFilter(result.include, result.exclude, 'idle')
+    expect(result.include.has('idle')).toBe(false)
+    expect(result.exclude.has('idle')).toBe(true)
+
+    // exclude -> off
+    result = cycleFilter(result.include, result.exclude, 'idle')
+    expect(result.include.has('idle')).toBe(false)
+    expect(result.exclude.has('idle')).toBe(false)
+  })
+
+  it('does not mutate original sets', () => {
+    const include = new Set(['a'])
+    const exclude = new Set(['b'])
+    const result = cycleFilter(include, exclude, 'a')
+    expect(include.has('a')).toBe(true)
+    expect(result.include.has('a')).toBe(false)
+    expect(result.exclude.has('a')).toBe(true)
+  })
+
+  it('preserves other values when cycling one value', () => {
+    const include = new Set(['a', 'b'])
+    const exclude = new Set<string>()
+    const result = cycleFilter(include, exclude, 'a')
+    expect(result.include.has('b')).toBe(true)
+    expect(result.include.has('a')).toBe(false)
+    expect(result.exclude.has('a')).toBe(true)
+  })
+})
+
+describe('getFilterMode', () => {
+  it('returns "include" when value is in include set', () => {
+    expect(getFilterMode(new Set(['a']), new Set(), 'a')).toBe('include')
+  })
+
+  it('returns "exclude" when value is in exclude set', () => {
+    expect(getFilterMode(new Set(), new Set(['a']), 'a')).toBe('exclude')
+  })
+
+  it('returns null when value is in neither set', () => {
+    expect(getFilterMode(new Set(), new Set(), 'a')).toBeNull()
+  })
+
+  it('returns "include" when value is in both (include takes precedence)', () => {
+    expect(getFilterMode(new Set(['a']), new Set(['a']), 'a')).toBe('include')
   })
 })
 

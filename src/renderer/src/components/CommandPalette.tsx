@@ -171,7 +171,7 @@ export function CommandPalette({
         category: 'navigation',
         action: () => {
           onClose()
-          onFilterChange({ statuses: new Set<StatusFilter>(['blocked']), labels: new Set(), projects: new Set() })
+          onFilterChange({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['blocked']) })
         }
       },
       {
@@ -182,7 +182,7 @@ export function CommandPalette({
         category: 'navigation',
         action: () => {
           onClose()
-          onFilterChange({ statuses: new Set<StatusFilter>(['running']), labels: new Set(), projects: new Set() })
+          onFilterChange({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['running']) })
         }
       }
     ]
