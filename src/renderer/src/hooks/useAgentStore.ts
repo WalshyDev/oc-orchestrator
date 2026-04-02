@@ -513,6 +513,17 @@ function processEvent(payload: OpenCodeEventPayload): void {
         if ((newStatus === 'needs_input' || newStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
           break
         }
+        // Don't let a 'busy' status clobber needs_input/needs_approval when there are
+        // still pending questions or permissions. The server can send session.status 'busy'
+        // after question.asked due to event ordering; without this guard the agent appears
+        // to go back to 'running' and the user never sees the question card.
+        if (
+          (agent.status === 'needs_input' || agent.status === 'needs_approval') &&
+          newStatus === 'running' &&
+          agentHasPendingInterrupts(agent.id)
+        ) {
+          break
+        }
         if (agent.status !== newStatus) {
           notifyIfNeeded(agent, newStatus)
           agent.status = newStatus
@@ -786,7 +797,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const questions = props.questions as LiveQuestionInfo[] | undefined
 
-      const agent = findAgentBySession(sessionId)
+      // Try session-based lookup first, fall back to runtime-based lookup
+      // in case the sessionID doesn't match (e.g. event ordering race)
+      const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
       if (agent && questions) {
         notifyIfNeeded(agent, 'needs_input')
         agent.status = 'needs_input'
@@ -798,7 +811,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         state.questions.set(requestId, {
           id: requestId,
           agentId: agent.id,
-          sessionId,
+          sessionId: sessionId ?? agent.sessionId,
           questions,
           createdAt: Date.now()
         })
@@ -1113,6 +1126,14 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     // Don't let the server override completed with idle (same as applyStatuses)
     if (serverStatus === 'idle' && agent.status === 'completed') continue
 
+    // Don't override blocked states when there are pending interrupts
+    // (the question reconciliation that follows will correct if needed)
+    if (
+      (agent.status === 'needs_input' || agent.status === 'needs_approval') &&
+      serverStatus === 'running' &&
+      agentHasPendingInterrupts(agent.id)
+    ) continue
+
     // If statuses already match, nothing to do
     if (agent.status === serverStatus) continue
 
@@ -1134,6 +1155,88 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
       agent.respondedAt = undefined
     }
     changed = true
+  }
+
+  if (changed) emit()
+}
+
+/**
+ * Reconcile pending questions from the server with local state.
+ * - Adds any questions we missed (SSE gap for question.asked)
+ * - Removes stale local questions the server no longer reports (SSE gap for question.replied)
+ * - Ensures agents with pending questions are in 'needs_input' status
+ */
+function reconcileQuestions(
+  serverQuestions: Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>
+): void {
+  let changed = false
+
+  // Build a set of all server-reported question IDs and which agents were queried
+  const serverQuestionIds = new Set<string>()
+  const reconciledAgentIds = new Set<string>()
+  for (const entry of serverQuestions) {
+    reconciledAgentIds.add(entry.agentId)
+    for (const q of entry.questions) {
+      serverQuestionIds.add(q.id)
+    }
+  }
+
+  // Add questions the server has that we missed
+  for (const entry of serverQuestions) {
+    for (const q of entry.questions) {
+      if (!state.questions.has(q.id)) {
+        console.warn(
+          `[AgentStore] Reconciliation: recovered missed question ${q.id} for agent ${entry.agentId}`
+        )
+        state.questions.set(q.id, {
+          id: q.id,
+          agentId: entry.agentId,
+          sessionId: q.sessionID,
+          questions: q.questions,
+          createdAt: Date.now()
+        })
+        changed = true
+      }
+    }
+
+    // If we have pending questions for this agent, ensure it shows needs_input
+    const agent = state.agents.get(entry.agentId)
+    if (agent && entry.questions.length > 0 && agent.status !== 'needs_input' && agent.status !== 'stopping') {
+      console.warn(
+        `[AgentStore] Reconciliation: agent ${agent.id} has pending questions but status is ${agent.status}, correcting to needs_input`
+      )
+      agent.status = 'needs_input'
+      agent.blockedSince = agent.blockedSince ?? Date.now()
+      agent.lastActivityAt = Date.now()
+      changed = true
+    }
+  }
+
+  // Remove stale local questions that the server no longer reports.
+  // Only prune for agents that appeared in the server response — if an agent
+  // is absent entirely it means we didn't query that runtime, not that its
+  // questions were answered.
+  for (const [localId, localQ] of state.questions) {
+    if (reconciledAgentIds.has(localQ.agentId) && !serverQuestionIds.has(localId)) {
+      console.warn(
+        `[AgentStore] Reconciliation: removing stale question ${localId} for agent ${localQ.agentId}`
+      )
+      state.questions.delete(localId)
+      changed = true
+    }
+  }
+
+  // For agents whose questions were all cleaned up, clear blocked state
+  // so the interrupt guard doesn't permanently lock them in needs_input
+  for (const agentId of reconciledAgentIds) {
+    const agent = state.agents.get(agentId)
+    if (!agent) continue
+    if (agent.status === 'needs_input' && !agentHasPendingInterrupts(agentId)) {
+      agent.status = 'running'
+      agent.blockedSince = undefined
+      agent.lastActivityAt = Date.now()
+      changed = true
+    }
   }
 
   if (changed) emit()
@@ -1162,6 +1265,21 @@ function findAgentByRuntime(runtimeId: string): LiveAgent | undefined {
     if (agent.runtimeId === runtimeId) return agent
   }
   return undefined
+}
+
+/**
+ * Check whether an agent has pending questions or permissions in the store.
+ * Used to prevent session.status events from clobbering blocked states
+ * when the server sends a 'busy' status while questions/permissions are still pending.
+ */
+function agentHasPendingInterrupts(agentId: string): boolean {
+  for (const question of state.questions.values()) {
+    if (question.agentId === agentId) return true
+  }
+  for (const permission of state.permissions.values()) {
+    if (permission.agentId === agentId) return true
+  }
+  return false
 }
 
 function mapSessionStatus(statusType: string): AgentStatus {
@@ -1336,6 +1454,15 @@ export function useAgentStore() {
         if (cancelled) return
         if (statusesResult.ok && statusesResult.data) {
           reconcileStatuses(statusesResult.data)
+        }
+
+        // Also re-fetch pending questions. If a question.asked SSE event was
+        // missed (reconnection gap, event ordering race), the agent would be
+        // stuck in 'running' with no question card. Polling recovers from this.
+        const questionsResult = await window.api.listQuestions()
+        if (cancelled) return
+        if (questionsResult.ok && questionsResult.data) {
+          reconcileQuestions(questionsResult.data as Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>)
         }
       } catch {
         // Silently ignore — next interval will retry

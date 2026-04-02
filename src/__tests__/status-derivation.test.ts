@@ -100,11 +100,20 @@ function applyMessagePartUpdate(agent: MinimalAgent): void {
 /**
  * Mirrors the logic in processEvent 'session.status' handler.
  * Sets agent status from a session status event.
+ * @param hasPendingInterrupts - Whether the agent has pending questions/permissions
  */
-function applySessionStatus(agent: MinimalAgent, statusType: string): void {
+function applySessionStatus(agent: MinimalAgent, statusType: string, hasPendingInterrupts = false): void {
   const newStatus = mapSessionStatus(statusType)
   // After the user responds, ignore stale 'waiting' status events
   if ((newStatus === 'needs_input' || newStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
+    return
+  }
+  // Don't let 'busy' clobber blocked states when interrupts are pending
+  if (
+    (agent.status === 'needs_input' || agent.status === 'needs_approval') &&
+    newStatus === 'running' &&
+    hasPendingInterrupts
+  ) {
     return
   }
   agent.status = newStatus
@@ -462,6 +471,51 @@ describe('event sequence: question flow (session.status → message.part.updated
     applyMessagePartUpdate(agent)
     expect(agent.status).toBe('needs_input')
     expect(agent.blockedSince).toBe(blockedTime)
+  })
+
+  it('does NOT let session.status busy clobber needs_input when questions are pending', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    // question.asked arrives → sets needs_input
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+    const blockedTime = agent.blockedSince
+
+    // session.status busy arrives due to event ordering, but question is still pending
+    applySessionStatus(agent, 'busy', true)
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBe(blockedTime)
+  })
+
+  it('does NOT let session.status busy clobber needs_approval when permissions are pending', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    applyPermissionUpdate(agent)
+    expect(agent.status).toBe('needs_approval')
+
+    // session.status busy while permission is pending
+    applySessionStatus(agent, 'busy', true)
+    expect(agent.status).toBe('needs_approval')
+  })
+
+  it('allows session.status busy to clear needs_input once questions are resolved', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+
+    applySessionStatus(agent, 'waiting')
+    expect(agent.status).toBe('needs_input')
+
+    // User answered → question removed → hasPendingInterrupts=false
+    applySessionStatus(agent, 'busy', false)
+    expect(agent.status).toBe('running')
+    expect(agent.blockedSince).toBeUndefined()
+  })
+
+  it('allows terminal statuses to override needs_input even with pending questions', () => {
+    const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0, blockedSince: Date.now() }
+
+    // completed/errored should always override, regardless of pending interrupts
+    applySessionStatus(agent, 'completed', true)
+    expect(agent.status).toBe('completed')
   })
 })
 

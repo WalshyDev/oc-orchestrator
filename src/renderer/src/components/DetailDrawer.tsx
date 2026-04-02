@@ -546,8 +546,10 @@ export function DetailDrawer({
                   </div>
                 )}
 
-                {/* Question card */}
-                {!permission && question && agent.status === 'needs_input' && (
+                {/* Question card — show whenever we have question data, regardless of
+                    agent status. The presence of a question in state is the authoritative
+                    signal; status may lag behind due to event ordering races. */}
+                {!permission && question && (
                   <QuestionCard
                     question={question}
                     onReply={onReplyQuestion}
