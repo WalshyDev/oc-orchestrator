@@ -10,11 +10,15 @@ type AgentStatus =
   | 'idle'
   | 'completed'
   | 'completed_manual'
+  | 'in_review'
+  | 'blocked_manual'
   | 'errored'
   | 'disconnected'
   | 'stopping'
 
-type StatusFilter = 'blocked' | 'running' | 'idle' | 'completed'
+type StatusOverride = 'completed_manual' | 'in_review' | 'blocked_manual'
+
+type StatusFilter = 'blocked' | 'running' | 'idle' | 'in_review' | 'completed'
 
 interface FilterState {
   statuses: Set<StatusFilter>
@@ -35,9 +39,10 @@ interface AgentRow {
 // ── Logic extracted from src/renderer/src/components/FilterBar.tsx ──
 
 const STATUS_MAP: Record<StatusFilter, AgentStatus[]> = {
-  blocked: ['needs_input', 'needs_approval'],
+  blocked: ['needs_input', 'needs_approval', 'blocked_manual'],
   running: ['running'],
   idle: ['idle'],
+  in_review: ['in_review'],
   completed: ['completed', 'completed_manual']
 }
 
@@ -65,8 +70,8 @@ function matchesFilter(
   return true
 }
 
-function canToggleManualComplete(status: AgentStatus): boolean {
-  return status === 'idle' || status === 'completed' || status === 'completed_manual'
+function displayStatus(agent: { status: AgentStatus; statusOverride?: StatusOverride | null }): AgentStatus {
+  return agent.statusOverride ?? agent.status
 }
 
 // ── Sorting and search logic ──
@@ -79,7 +84,7 @@ function isBlocked(status: AgentStatus): boolean {
 }
 
 function isUrgent(agent: AgentRow): boolean {
-  return isBlocked(agent.status) || agent.status === 'errored'
+  return isBlocked(agent.status) || agent.status === 'errored' || agent.status === 'blocked_manual'
 }
 
 function compareAgents(
@@ -163,17 +168,18 @@ describe('matchesFilter', () => {
   it('returns true for empty filter (no statuses, no projects) regardless of status', () => {
     const statuses: AgentStatus[] = [
       'starting', 'running', 'needs_input', 'needs_approval',
-      'idle', 'completed', 'completed_manual', 'errored', 'disconnected', 'stopping'
+      'idle', 'completed', 'completed_manual', 'in_review', 'blocked_manual', 'errored', 'disconnected', 'stopping'
     ]
     for (const status of statuses) {
       expect(matchesFilter({ status, projectName: 'proj' }, EMPTY)).toBe(true)
     }
   })
 
-  it('returns true for "blocked" status filter only when needs_input or needs_approval', () => {
+  it('returns true for "blocked" status filter when needs_input, needs_approval, or blocked_manual', () => {
     const filter = statusFilter('blocked')
     expect(matchesFilter({ status: 'needs_input', projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'needs_approval', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'blocked_manual', projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
     expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
     expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
@@ -201,6 +207,15 @@ describe('matchesFilter', () => {
     expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'completed_manual', projectName: 'proj' }, filter)).toBe(true)
     expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
+  })
+
+  it('returns true for "in_review" status filter only when in_review', () => {
+    const filter = statusFilter('in_review')
+    expect(matchesFilter({ status: 'in_review', projectName: 'proj' }, filter)).toBe(true)
+    expect(matchesFilter({ status: 'idle', projectName: 'proj' }, filter)).toBe(false)
+    expect(matchesFilter({ status: 'completed', projectName: 'proj' }, filter)).toBe(false)
     expect(matchesFilter({ status: 'running', projectName: 'proj' }, filter)).toBe(false)
     expect(matchesFilter({ status: 'errored', projectName: 'proj' }, filter)).toBe(false)
   })
@@ -412,22 +427,57 @@ describe('sortUrgentFirst', () => {
     const sorted = sortUrgentFirst([manual, running, blocked])
     expect(sorted[0].id).toBe('b')
   })
-})
 
-describe('canToggleManualComplete', () => {
-  it('returns true for idle, completed, and completed_manual', () => {
-    expect(canToggleManualComplete('idle')).toBe(true)
-    expect(canToggleManualComplete('completed')).toBe(true)
-    expect(canToggleManualComplete('completed_manual')).toBe(true)
+  it('does not treat in_review as urgent', () => {
+    const running = createAgent({ id: 'r', status: 'running' })
+    const review = createAgent({ id: 'rv', status: 'in_review' })
+    const blocked = createAgent({ id: 'b', status: 'needs_input' })
+    const sorted = sortUrgentFirst([review, running, blocked])
+    expect(sorted[0].id).toBe('b')
   })
 
-  it('returns false for active/blocked statuses', () => {
-    expect(canToggleManualComplete('running')).toBe(false)
-    expect(canToggleManualComplete('starting')).toBe(false)
-    expect(canToggleManualComplete('needs_input')).toBe(false)
-    expect(canToggleManualComplete('needs_approval')).toBe(false)
-    expect(canToggleManualComplete('errored')).toBe(false)
-    expect(canToggleManualComplete('disconnected')).toBe(false)
-    expect(canToggleManualComplete('stopping')).toBe(false)
+  it('treats blocked_manual as urgent', () => {
+    const running = createAgent({ id: 'r', status: 'running' })
+    const blockedManual = createAgent({ id: 'bm', status: 'blocked_manual' })
+    const idle = createAgent({ id: 'i', status: 'idle' })
+    const sorted = sortUrgentFirst([idle, running, blockedManual])
+    expect(sorted[0].id).toBe('bm')
+  })
+})
+
+describe('displayStatus', () => {
+  it('returns the override when set', () => {
+    expect(displayStatus({ status: 'idle', statusOverride: 'completed_manual' })).toBe('completed_manual')
+    expect(displayStatus({ status: 'running', statusOverride: 'in_review' })).toBe('in_review')
+    expect(displayStatus({ status: 'completed', statusOverride: 'blocked_manual' })).toBe('blocked_manual')
+  })
+
+  it('returns the real status when override is null', () => {
+    expect(displayStatus({ status: 'idle', statusOverride: null })).toBe('idle')
+    expect(displayStatus({ status: 'running', statusOverride: null })).toBe('running')
+    expect(displayStatus({ status: 'errored', statusOverride: null })).toBe('errored')
+  })
+
+  it('returns the real status when override is undefined', () => {
+    expect(displayStatus({ status: 'idle' })).toBe('idle')
+    expect(displayStatus({ status: 'running' })).toBe('running')
+  })
+
+  it('override persists even when agent is running', () => {
+    expect(displayStatus({ status: 'running', statusOverride: 'in_review' })).toBe('in_review')
+    expect(displayStatus({ status: 'running', statusOverride: 'blocked_manual' })).toBe('blocked_manual')
+    expect(displayStatus({ status: 'running', statusOverride: 'completed_manual' })).toBe('completed_manual')
+  })
+})
+
+describe('blocked_manual in filters', () => {
+  it('blocked_manual matches the "blocked" filter', () => {
+    const filter = statusFilter('blocked')
+    expect(matchesFilter({ status: 'blocked_manual', projectName: 'proj' }, filter)).toBe(true)
+  })
+
+  it('blocked_manual does not match "running" or "idle" filters', () => {
+    expect(matchesFilter({ status: 'blocked_manual', projectName: 'proj' }, statusFilter('running'))).toBe(false)
+    expect(matchesFilter({ status: 'blocked_manual', projectName: 'proj' }, statusFilter('idle'))).toBe(false)
   })
 })

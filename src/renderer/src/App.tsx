@@ -11,7 +11,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
-import { type AgentRuntime, type Interrupt, type Message } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type StatusOverride, displayStatus } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -190,7 +190,8 @@ export function App() {
       isWorktree: agent.isWorktree,
       workspaceName: agent.workspaceName,
       taskSummary: agent.taskSummary,
-      status: agent.status,
+      status: displayStatus(agent),
+      statusOverride: agent.statusOverride,
       model: agent.model,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
       lastActivityAtMs: agent.lastActivityAt,
@@ -473,9 +474,10 @@ export function App() {
   const counts = useMemo(
     () => ({
       all: displayAgents.length,
-      blocked: displayAgents.filter((agent) => agent.status === 'needs_input' || agent.status === 'needs_approval').length,
+      blocked: displayAgents.filter((agent) => agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'blocked_manual').length,
       running: displayAgents.filter((agent) => agent.status === 'running').length,
       idle: displayAgents.filter((agent) => agent.status === 'idle').length,
+      in_review: displayAgents.filter((agent) => agent.status === 'in_review').length,
       completed: displayAgents.filter((agent) => agent.status === 'completed' || agent.status === 'completed_manual').length
     }),
     [displayAgents]
@@ -528,8 +530,8 @@ export function App() {
     setSelectedAgentId(agentId)
   }, [])
 
-  const handleToggleComplete = useCallback((agentId: string) => {
-    store.toggleManualComplete(agentId)
+  const handleSetStatusOverride = useCallback((agentId: string, override: StatusOverride | null) => {
+    store.setStatusOverride(agentId, override)
   }, [store])
 
   const handleRemoveAgent = useCallback(async (agentId: string) => {
@@ -959,7 +961,7 @@ export function App() {
           setModelPickerAgentId(agentId)
           setShowModelPicker(true)
         }}
-        onToggleComplete={handleToggleComplete}
+        onSetStatusOverride={handleSetStatusOverride}
       />
 
       <StatusBar
@@ -992,7 +994,7 @@ export function App() {
           onOpenInEditor={handleOpenInEditor}
           onChangeModel={() => { setModelPickerAgentId(selectedAgentId); setShowModelPicker(true) }}
           onOpenTerminal={handleOpenTerminalForDrawer}
-          onToggleComplete={() => handleToggleComplete(selectedAgent.id)}
+          onSetStatusOverride={(override) => handleSetStatusOverride(selectedAgent.id, override)}
         />
       )}
 

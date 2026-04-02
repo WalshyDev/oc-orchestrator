@@ -3,10 +3,8 @@ import {
   X,
   Square,
   Check,
-  CheckCircle,
   XCircle,
   ArrowSquareOut,
-  ArrowCounterClockwise,
   GitPullRequest,
   Terminal,
   Wrench,
@@ -19,10 +17,11 @@ import {
   PaperPlaneTilt,
   Paperclip
 } from '@phosphor-icons/react'
-import type { AgentRuntime, Message } from '../types'
-import { formatBranchLabel, canToggleManualComplete } from '../types'
+import type { AgentRuntime, Message, StatusOverride } from '../types'
+import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
+import { StatusDropdown } from './StatusDropdown'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
@@ -84,7 +83,7 @@ interface DetailDrawerProps {
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
-  onToggleComplete?: () => void
+  onSetStatusOverride?: (override: StatusOverride | null) => void
 }
 
 export function DetailDrawer({
@@ -110,7 +109,7 @@ export function DetailDrawer({
   onOpenInEditor,
   onChangeModel,
   onOpenTerminal,
-  onToggleComplete
+  onSetStatusOverride
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -612,11 +611,11 @@ export function DetailDrawer({
           {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
             <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
           )}
-          {onToggleComplete && canToggleManualComplete(agent.status) && (
-            <ActionButton
-              icon={agent.status === 'completed_manual' ? <ArrowCounterClockwise size={12} /> : <CheckCircle size={12} />}
-              label={agent.status === 'completed_manual' ? 'Unmark' : 'Complete'}
-              onClick={onToggleComplete}
+          {onSetStatusOverride && (
+            <StatusDropdown
+              current={agent.statusOverride}
+              onSelect={onSetStatusOverride}
+              variant="action"
             />
           )}
           <div className="flex-1" />

@@ -8,9 +8,13 @@ export type AgentStatus =
   | 'idle'
   | 'completed'
   | 'completed_manual'
+  | 'in_review'
+  | 'blocked_manual'
   | 'errored'
   | 'disconnected'
   | 'stopping'
+
+export type StatusOverride = 'completed_manual' | 'in_review' | 'blocked_manual'
 
 export type InterruptKind =
   | 'needs_input'
@@ -37,6 +41,7 @@ export interface AgentRuntime {
   workspaceName: string
   taskSummary: string
   status: AgentStatus
+  statusOverride: StatusOverride | null
   model: string
   lastActivityAt: string
   lastActivityAtMs: number
@@ -77,11 +82,11 @@ export function isBlocked(status: AgentStatus): boolean {
 }
 
 export function isUrgent(agent: AgentRuntime): boolean {
-  return isBlocked(agent.status) || agent.status === 'errored'
+  return isBlocked(agent.status) || agent.status === 'errored' || agent.status === 'blocked_manual'
 }
 
-export function canToggleManualComplete(status: AgentStatus): boolean {
-  return status === 'idle' || status === 'completed' || status === 'completed_manual'
+export function displayStatus(agent: { status: AgentStatus; statusOverride?: StatusOverride | null }): AgentStatus {
+  return agent.statusOverride ?? agent.status
 }
 
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
@@ -97,9 +102,21 @@ export function statusLabel(status: AgentStatus): string {
     idle: 'Idle',
     completed: 'Completed',
     completed_manual: 'Completed',
+    in_review: 'In Review',
+    blocked_manual: 'Blocked',
     errored: 'Errored',
     disconnected: 'Disconnected',
     stopping: 'Stopping'
   }
   return labels[status]
+}
+
+export function statusOverrideLabel(override: StatusOverride | null): string {
+  if (!override) return 'Auto'
+  const labels: Record<StatusOverride, string> = {
+    completed_manual: 'Completed',
+    in_review: 'In Review',
+    blocked_manual: 'Blocked'
+  }
+  return labels[override]
 }
