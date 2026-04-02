@@ -1,5 +1,5 @@
 import { ipcMain, dialog, shell } from 'electron'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import { agentController } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager } from './services/workspace-manager'
@@ -643,6 +643,15 @@ export function registerIpcHandlers(): void {
 
   // ── Shell Integration ──
 
+  /** Promisified execFile — avoids shell interpretation of arguments */
+  const run = (cmd: string, args: string[]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      execFile(cmd, args, (error) => {
+        if (error) reject(error)
+        else resolve()
+      })
+    })
+
   ipcMain.handle('shell:open-in-editor', async (_event, options: {
     path: string
     editor: 'vscode' | 'cursor' | 'windsurf'
@@ -653,13 +662,8 @@ export function registerIpcHandlers(): void {
         cursor: 'cursor',
         windsurf: 'windsurf'
       }
-      const command = editorCommands[options.editor] ?? 'code'
-      await new Promise<void>((resolve, reject) => {
-        exec(`${command} "${options.path}"`, (error) => {
-          if (error) reject(error)
-          else resolve()
-        })
-      })
+      const cmd = editorCommands[options.editor] ?? 'code'
+      await run(cmd, [options.path])
       return { ok: true }
     } catch (error) {
       console.error('[IPC] shell:open-in-editor failed:', error)
@@ -670,31 +674,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('shell:open-terminal', async (_event, options: { path: string; terminal?: string }) => {
     try {
       const terminal = options.terminal || 'default'
-      let command: string
 
       if (process.platform === 'darwin') {
-        // Escape single quotes in path for AppleScript strings
-        const escapedPath = options.path.replace(/'/g, "'\\''")
-
-        if (terminal === 'default') {
-          // Terminal.app ignores directory arguments via `open -a`, so use AppleScript
-          command = `osascript -e 'tell application "Terminal" to do script "cd '\\''${escapedPath}'\\'' && clear"' -e 'tell application "Terminal" to activate'`
-        } else if (terminal === 'iTerm') {
-          command = `osascript -e 'tell application "iTerm" to create window with default profile command "cd '\\''${escapedPath}'\\'' && clear"' -e 'tell application "iTerm" to activate'`
-        } else {
-          // Warp, Alacritty, Kitty, Ghostty, and others handle directory args via `open`
-          command = `open -a "${terminal}" "${options.path}"`
-        }
+        const app = terminal === 'default' ? 'Terminal' : terminal
+        await run('open', ['-a', app, options.path])
       } else {
-        command = `xdg-open "${options.path}"`
+        await run('xdg-open', [options.path])
       }
 
-      await new Promise<void>((resolve, reject) => {
-        exec(command, (error) => {
-          if (error) reject(error)
-          else resolve()
-        })
-      })
       return { ok: true }
     } catch (error) {
       console.error('[IPC] shell:open-terminal failed:', error)
