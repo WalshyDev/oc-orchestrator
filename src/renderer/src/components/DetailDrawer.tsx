@@ -122,7 +122,6 @@ export function DetailDrawer({
   const [attachments, setAttachments] = useState<Array<{ mime: string; dataUrl: string; filename?: string }>>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -263,48 +262,82 @@ export function DetailDrawer({
   const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
 
   // Slide-in animation on mount
+  const initialScrollDoneRef = useRef(false)
   useEffect(() => {
     const frame = requestAnimationFrame(() => setIsVisible(true))
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive.
-  // Uses 'instant' scroll to avoid smooth animations fighting with user scrolling.
-  // Once the user manually scrolls up, auto-scroll is disabled until they scroll
-  // back to the bottom (within threshold) on their own.
+  // Tracks the last scrollHeight we pinned to, so we only auto-scroll when
+  // content actually grows — not on every render/message reference change.
+  const lastScrollHeightRef = useRef(0)
+  // True while we're programmatically setting scrollTop, so the onScroll
+  // handler can ignore the resulting event.
+  const isProgrammaticRef = useRef(false)
+
+  // Reset scroll state when switching to transcript tab
   useEffect(() => {
-    if (activeTab === 'transcript' && messagesEndRef.current && shouldAutoScrollRef.current && !userScrolledRef.current) {
+    if (activeTab === 'transcript') {
+      shouldAutoScrollRef.current = true
+      userScrolledRef.current = false
+      initialScrollDoneRef.current = false
+      lastScrollHeightRef.current = 0
       setShowJumpToLatest(false)
-      messagesEndRef.current.scrollIntoView({ behavior: 'instant' })
-    } else if (activeTab === 'transcript' && messages.length > 0 && !shouldAutoScrollRef.current) {
+    }
+  }, [activeTab])
+
+  // Auto-scroll: pin to bottom when content grows, but only if the user
+  // hasn't scrolled away. Compares scrollHeight to detect actual new content
+  // rather than re-scrolling on every messages array reference change.
+  useEffect(() => {
+    if (activeTab !== 'transcript') return
+    const container = transcriptScrollRef.current
+    if (!container) return
+
+    const { scrollHeight } = container
+    const contentGrew = scrollHeight > lastScrollHeightRef.current
+    lastScrollHeightRef.current = scrollHeight
+
+    // On initial render, always go to bottom
+    if (!initialScrollDoneRef.current && messages.length > 0) {
+      initialScrollDoneRef.current = true
+      isProgrammaticRef.current = true
+      container.scrollTop = scrollHeight
+      return
+    }
+
+    if (!contentGrew) return
+
+    if (shouldAutoScrollRef.current && !userScrolledRef.current) {
+      isProgrammaticRef.current = true
+      container.scrollTop = scrollHeight
+      setShowJumpToLatest(false)
+    } else if (userScrolledRef.current) {
       setShowJumpToLatest(true)
     }
   }, [messages, activeTab])
 
-  // Reset user-scrolled lock when switching to transcript tab
-  useEffect(() => {
-    if (activeTab === 'transcript') {
-      userScrolledRef.current = false
-      shouldAutoScrollRef.current = true
-    }
-  }, [activeTab])
-
   const handleTranscriptScroll = () => {
+    // Skip scroll events caused by our own scrollTop assignments
+    if (isProgrammaticRef.current) {
+      isProgrammaticRef.current = false
+      return
+    }
+
     const container = transcriptScrollRef.current
     if (!container) return
 
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    const isNearBottom = distanceFromBottom < 48
+    const nearBottom = distanceFromBottom < 80
 
-    if (isNearBottom) {
-      // User scrolled back to bottom — re-enable auto-scroll
+    if (nearBottom) {
       shouldAutoScrollRef.current = true
       userScrolledRef.current = false
       setShowJumpToLatest(false)
     } else {
-      // User scrolled away from bottom — disable auto-scroll
       shouldAutoScrollRef.current = false
       userScrolledRef.current = true
+      setShowJumpToLatest(true)
     }
   }
 
@@ -312,7 +345,12 @@ export function DetailDrawer({
     shouldAutoScrollRef.current = true
     userScrolledRef.current = false
     setShowJumpToLatest(false)
-    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
+    const container = transcriptScrollRef.current
+    if (container) {
+      isProgrammaticRef.current = true
+      container.scrollTop = container.scrollHeight
+      lastScrollHeightRef.current = container.scrollHeight
+    }
   }
 
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -482,122 +520,128 @@ export function DetailDrawer({
           ))}
         </div>
 
-        {/* Tab Content */}
-        <div
-          ref={transcriptScrollRef}
-          onScroll={activeTab === 'transcript' ? handleTranscriptScroll : undefined}
-          className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2"
-        >
-          {activeTab === 'transcript' && (
-            <>
-              {messages.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle text-sm">
-                  {sessionNotice && (
-                    <div className="rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
-                      {sessionNotice}
-                    </div>
-                  )}
-                  <div>Waiting for messages...</div>
-                </div>
-              ) : (
-                <>
-                  {sessionNotice && (
-                    <div className="self-center rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
-                      {sessionNotice}
-                    </div>
-                  )}
-                  {messages.map((message) => (
-                    <MessageBubble key={message.id} message={message} />
-                  ))}
-                </>
-              )}
-
-              {/* Loading indicator when agent is running */}
-              {agent.status === 'running' && (
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <span className="text-[11px] text-kumo-subtle">Agent is thinking</span>
-                  <span className="flex gap-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:0ms]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:150ms]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:300ms]" />
-                  </span>
-                </div>
-              )}
-
-              {/* Permission request inline card */}
-              {permission && (
-                <div className="bg-kumo-brand/[0.06] border border-kumo-brand/20 rounded-lg p-3 flex flex-col gap-2">
-                  <div className="text-xs font-semibold text-kumo-brand flex items-center gap-1.5">
-                    &#128274; Permission Request
-                  </div>
-                  <div className="text-xs text-kumo-default">{permission.title}</div>
-                  {permission.pattern && (
-                    <div className="font-mono text-[11px] px-2 py-1 bg-kumo-overlay rounded text-kumo-subtle">
-                      {Array.isArray(permission.pattern) ? permission.pattern.join(', ') : permission.pattern}
-                    </div>
-                  )}
-                  <div className="flex gap-1.5">
-                    {onApprove && (
-                      <button
-                        onClick={onApprove}
-                        className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
-                      >
-                        <Check size={12} weight="bold" /> Approve
-                      </button>
+        {/* Tab Content — relative wrapper so the jump-to-latest button
+            can be absolutely positioned over the scroll area without being
+            inside it (avoids layout shifts that fight with scroll position) */}
+        <div className="flex-1 relative overflow-hidden">
+          <div
+            ref={transcriptScrollRef}
+            onScroll={activeTab === 'transcript' ? handleTranscriptScroll : undefined}
+            className="absolute inset-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
+          >
+            {activeTab === 'transcript' && (
+              <>
+                {messages.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle text-sm">
+                    {sessionNotice && (
+                      <div className="rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
+                        {sessionNotice}
+                      </div>
                     )}
-                    {onDeny && (
-                      <button
-                        onClick={onDeny}
-                        className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
-                      >
-                        <XCircle size={12} /> Deny
-                      </button>
+                    <div>Waiting for messages...</div>
+                  </div>
+                ) : (
+                  <>
+                    {sessionNotice && (
+                      <div className="self-center rounded-full border border-kumo-brand/25 bg-kumo-brand/[0.08] px-3 py-1 text-[11px] font-medium text-kumo-brand">
+                        {sessionNotice}
+                      </div>
                     )}
+                    {messages.map((message) => (
+                      <MessageBubble key={message.id} message={message} />
+                    ))}
+                  </>
+                )}
+
+                {/* Loading indicator when agent is running */}
+                {agent.status === 'running' && (
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-[11px] text-kumo-subtle">Agent is thinking</span>
+                    <span className="flex gap-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:0ms]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:150ms]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:300ms]" />
+                    </span>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Question card */}
-              {!permission && question && agent.status === 'needs_input' && (
-                <QuestionCard
-                  question={question}
-                  onReply={onReplyQuestion}
-                  onReject={onRejectQuestion}
-                />
-              )}
-
-              {/* Waiting for input (no structured question) */}
-              {!permission && !question && agent.status === 'needs_input' && (
-                <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
-                  <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
-                    <ChatCircleDots size={14} weight="fill" /> Waiting for your response
+                {/* Permission request inline card */}
+                {permission && (
+                  <div className="bg-kumo-brand/[0.06] border border-kumo-brand/20 rounded-lg p-3 flex flex-col gap-2">
+                    <div className="text-xs font-semibold text-kumo-brand flex items-center gap-1.5">
+                      &#128274; Permission Request
+                    </div>
+                    <div className="text-xs text-kumo-default">{permission.title}</div>
+                    {permission.pattern && (
+                      <div className="font-mono text-[11px] px-2 py-1 bg-kumo-overlay rounded text-kumo-subtle">
+                        {Array.isArray(permission.pattern) ? permission.pattern.join(', ') : permission.pattern}
+                      </div>
+                    )}
+                    <div className="flex gap-1.5">
+                      {onApprove && (
+                        <button
+                          onClick={onApprove}
+                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
+                        >
+                          <Check size={12} weight="bold" /> Approve
+                        </button>
+                      )}
+                      {onDeny && (
+                        <button
+                          onClick={onDeny}
+                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+                        >
+                          <XCircle size={12} /> Deny
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-xs text-kumo-default">
-                    This agent has asked a question and is waiting for your reply. Use the input below to respond.
+                )}
+
+                {/* Question card */}
+                {!permission && question && agent.status === 'needs_input' && (
+                  <QuestionCard
+                    question={question}
+                    onReply={onReplyQuestion}
+                    onReject={onRejectQuestion}
+                  />
+                )}
+
+                {/* Waiting for input (no structured question) */}
+                {!permission && !question && agent.status === 'needs_input' && (
+                  <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+                    <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+                      <ChatCircleDots size={14} weight="fill" /> Waiting for your response
+                    </div>
+                    <div className="text-xs text-kumo-default">
+                      This agent has asked a question and is waiting for your reply. Use the input below to respond.
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {showJumpToLatest && activeTab === 'transcript' && (
-                <div className="sticky bottom-2 z-10 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={handleJumpToLatest}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-kumo-interact/30 bg-kumo-interact/12 px-3 py-1.5 text-[11px] font-medium text-kumo-link shadow-lg backdrop-blur hover:bg-kumo-interact/18 transition-colors"
-                  >
-                    <CaretDown size={12} />
-                    Jump to latest
-                  </button>
-                </div>
-              )}
+                {/* End of transcript content */}
+              </>
+            )}
 
-              <div ref={messagesEndRef} />
-            </>
+            {activeTab === 'files' && <FilesChanged files={files} />}
+            {activeTab === 'tools' && <ToolsUsage tools={tools} />}
+            {activeTab === 'events' && <EventLog events={events} />}
+          </div>
+
+          {/* Jump to latest — absolutely positioned over the scroll area
+              but outside its DOM flow, so toggling doesn't affect scrollHeight */}
+          {showJumpToLatest && activeTab === 'transcript' && (
+            <div className="absolute bottom-3 left-0 right-0 z-10 flex justify-center pointer-events-none">
+              <button
+                type="button"
+                onClick={handleJumpToLatest}
+                className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-kumo-interact/30 bg-kumo-interact/12 px-3 py-1.5 text-[11px] font-medium text-kumo-link shadow-lg backdrop-blur hover:bg-kumo-interact/18 transition-colors"
+              >
+                <CaretDown size={12} />
+                Jump to latest
+              </button>
+            </div>
           )}
-
-          {activeTab === 'files' && <FilesChanged files={files} />}
-          {activeTab === 'tools' && <ToolsUsage tools={tools} />}
-          {activeTab === 'events' && <EventLog events={events} />}
         </div>
 
         {/* Action Rail */}
