@@ -651,6 +651,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
+
+        persistAgentMeta(agent.id, { persistedStatus: 'idle' })
         emit({ agents: true })
       }
       break
@@ -666,6 +668,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
 
+        persistAgentMeta(agent.id, { persistedStatus: 'errored' })
         emit({ agents: true })
       }
       break
@@ -1510,13 +1513,23 @@ export function useAgentStore() {
       let shouldEmit = false
 
       if (agentsResult.ok && agentsResult.data) {
+        const PERSISTED_TO_LABEL: Record<string, AgentLabel> = {
+          in_review: 'in_review', blocked: 'blocked', done: 'done', draft: 'draft',
+          completed_manual: 'done', blocked_manual: 'blocked'
+        }
+        // Don't trust 'running' across restarts — the session was interrupted,
+        // so default to idle until the server confirms otherwise.
+        const PERSISTED_TO_STATUS: Record<string, AgentStatus> = {
+          idle: 'idle',
+          running: 'idle',
+          completed: 'completed',
+          errored: 'errored'
+        }
+
         for (const agent of agentsResult.data) {
-          const PERSISTED_TO_LABEL: Record<string, AgentLabel> = {
-            in_review: 'in_review', blocked: 'blocked', done: 'done', draft: 'draft',
-            completed_manual: 'done', blocked_manual: 'blocked'
-          }
           const restoredLabel = (agent.persistedStatus && PERSISTED_TO_LABEL[agent.persistedStatus]) ?? null
-          upsertAgent(agent, restoredLabel ? undefined : 'idle')
+          const restoredStatus: AgentStatus = (agent.persistedStatus && PERSISTED_TO_STATUS[agent.persistedStatus]) || 'idle'
+          upsertAgent(agent, restoredStatus)
           const liveAgent = state.agents.get(agent.id)
           if (liveAgent && restoredLabel) {
             liveAgent.label = restoredLabel
