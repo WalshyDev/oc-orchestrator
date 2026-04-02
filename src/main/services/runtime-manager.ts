@@ -304,7 +304,9 @@ class RuntimeManager {
 
   private broadcastToRenderer(channel: string, data: unknown): void {
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(channel, data)
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send(channel, data)
+      }
     }
   }
 }
