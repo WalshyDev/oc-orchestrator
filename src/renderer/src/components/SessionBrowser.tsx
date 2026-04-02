@@ -242,7 +242,7 @@ export function SessionBrowser({
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="w-[560px] max-h-[85vh] bg-kumo-elevated border border-kumo-line rounded-xl shadow-2xl flex flex-col"
+        className="w-[700px] max-w-[calc(100vw-2rem)] max-h-[85vh] bg-kumo-elevated border border-kumo-line rounded-xl shadow-2xl flex flex-col"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Header */}
@@ -260,7 +260,7 @@ export function SessionBrowser({
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
+        <div className="px-5 py-4 flex flex-col gap-4 min-h-0 flex-1">
           {/* Directory Selector */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
@@ -355,8 +355,8 @@ export function SessionBrowser({
 
           {/* Sessions List */}
           {hasDirectory && !dirError && !validating && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+            <div className="flex flex-col gap-1.5 min-h-0 flex-1">
+              <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide shrink-0">
                 Available Sessions
               </label>
 
@@ -375,26 +375,26 @@ export function SessionBrowser({
               )}
 
               {!loading && !error && sessions.length > 0 && (
-                <div className="border border-kumo-line rounded-md overflow-hidden max-h-[300px] overflow-y-auto">
+                <div className="border border-kumo-line rounded-md overflow-y-auto min-h-0 flex-1">
                   {sessions.map((session) => (
                     <div
                       key={session.id}
-                      className="flex items-center gap-3 px-3 py-2.5 border-b border-kumo-line last:border-b-0 hover:bg-kumo-fill transition-colors group"
+                      className="flex items-center gap-3 px-4 py-3 border-b border-kumo-line last:border-b-0 hover:bg-kumo-fill transition-colors group"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-kumo-default font-medium truncate">
                           {session.title}
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-kumo-subtle">
+                        <div className="flex items-center gap-2 text-[11px] text-kumo-subtle mt-0.5">
                           <span>Updated {formatTimestamp(session.updatedAt)}</span>
                           <span className="text-kumo-line">|</span>
-                          <span className="font-mono truncate">{session.id.slice(0, 12)}...</span>
+                          <span className="font-mono truncate">{session.id.slice(0, 20)}</span>
                         </div>
                       </div>
                       <button
                         onClick={() => void handleResume(session)}
                         disabled={resuming !== null}
-                        className="shrink-0 px-3 py-1.5 text-xs font-medium text-kumo-brand border border-kumo-brand/30 rounded-md hover:bg-kumo-brand/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        className="shrink-0 px-3 py-1.5 text-xs font-medium text-kumo-brand border border-kumo-brand/30 rounded-md hover:bg-kumo-brand/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {resuming === session.id ? (
                           <CircleNotch size={12} className="animate-spin" />
