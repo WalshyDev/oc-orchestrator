@@ -9,7 +9,8 @@ import {
   Robot,
   SquaresFour,
   Warning,
-  CircleNotch
+  CircleNotch,
+  ClockCounterClockwise
 } from '@phosphor-icons/react'
 import { EMPTY_FILTER, type FilterState, type StatusFilter } from './FilterBar'
 
@@ -18,6 +19,7 @@ interface CommandPaletteProps {
   onClose: () => void
   onSelectAgent: (id: string) => void
   onLaunchAgent: () => void
+  onResumeSession: () => void
   onOpenSettings: () => void
   onFilterChange: (filter: FilterState) => void
   onStopAll: () => void
@@ -60,6 +62,7 @@ export function CommandPalette({
   onClose,
   onSelectAgent,
   onLaunchAgent,
+  onResumeSession,
   onOpenSettings,
   onFilterChange,
   onStopAll,
@@ -98,6 +101,18 @@ export function CommandPalette({
         action: () => {
           onClose()
           onLaunchAgent()
+        }
+      },
+      {
+        id: 'action-resume',
+        label: 'Resume Session',
+        description: 'Import an existing session from a project',
+        icon: <ClockCounterClockwise size={16} weight="bold" className="text-kumo-link" />,
+        category: 'actions',
+        shortcut: 'R',
+        action: () => {
+          onClose()
+          onResumeSession()
         }
       },
       {
@@ -185,7 +200,7 @@ export function CommandPalette({
     }))
 
     return [...actionCommands, ...navigationCommands, ...agentCommands]
-  }, [agents, onClose, onSelectAgent, onLaunchAgent, onOpenSettings, onFilterChange, onStopAll, onApproveAll])
+  }, [agents, onClose, onSelectAgent, onLaunchAgent, onResumeSession, onOpenSettings, onFilterChange, onStopAll, onApproveAll])
 
   // Filter commands based on debounced query
   const filteredCommands = useMemo(() => {

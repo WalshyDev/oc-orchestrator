@@ -68,6 +68,12 @@ const api = {
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
+  listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>
+    ipcRenderer.invoke('session:list', directory),
+
+  resumeAgent: (options: { directory: string; sessionId: string; title?: string }): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:resume', options),
+
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),
 

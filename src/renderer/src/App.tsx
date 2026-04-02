@@ -6,6 +6,7 @@ import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
 import { LaunchModal } from './components/LaunchModal'
+import { SessionBrowser } from './components/SessionBrowser'
 import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
@@ -48,6 +49,7 @@ export function App() {
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showCommandPalette, setShowCommandPalette] = useState(false)
+  const [showSessionBrowser, setShowSessionBrowser] = useState(false)
 
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -82,7 +84,8 @@ export function App() {
         { command: '/model', description: 'Open model picker or set model — /model [provider/model-id]' },
         { command: '/compact', description: 'Compact conversation to reduce context usage' },
         { command: '/share', description: 'Share this session' },
-        { command: '/mcp', description: 'Open MCP server manager' }
+        { command: '/mcp', description: 'Open MCP server manager' },
+        { command: '/sessions', description: 'Browse and resume existing sessions from a project' }
       ]
 
       if (commands && Array.isArray(commands)) {
@@ -592,6 +595,11 @@ export function App() {
         return true
       }
 
+      case 'sessions': {
+        setShowSessionBrowser(true)
+        return true
+      }
+
       default: {
         // Check if it's a custom command from the API (skills, /init, /review, etc.)
         const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
@@ -756,6 +764,17 @@ export function App() {
     }
   }, [store])
 
+  const handleResumeSession = useCallback(async (directory: string, sessionId: string, title: string) => {
+    const result = await window.api.resumeAgent({ directory, sessionId, title })
+    if (!result?.ok) {
+      throw new Error('Failed to resume session')
+    }
+    if (result.data) {
+      const data = result.data as { id: string }
+      setSelectedAgentId(data.id)
+    }
+  }, [])
+
   const handleValidateDirectory = useCallback(async (dir: string): Promise<boolean> => {
     if (!dir.trim() || dir.trim().length < 2) return false
     try {
@@ -786,6 +805,10 @@ export function App() {
           setShowCommandPalette(false)
           return
         }
+        if (showSessionBrowser) {
+          setShowSessionBrowser(false)
+          return
+        }
         if (showSettings) {
           setShowSettings(false)
           return
@@ -810,8 +833,16 @@ export function App() {
 
       // L -> open launch modal
       if (event.key === 'l' || event.key === 'L') {
-        if (!showLaunchModal && !showSettings) {
+        if (!showLaunchModal && !showSettings && !showSessionBrowser) {
           setShowLaunchModal(true)
+        }
+        return
+      }
+
+      // R -> open session browser (resume)
+      if (event.key === 'r' || event.key === 'R') {
+        if (!showLaunchModal && !showSettings && !showSessionBrowser) {
+          setShowSessionBrowser(true)
         }
         return
       }
@@ -877,7 +908,7 @@ export function App() {
         return
       }
     },
-    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, findPermissionForAgent, store]
+    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, findPermissionForAgent, store]
   )
 
   useEffect(() => {
@@ -1014,6 +1045,20 @@ export function App() {
         />
       )}
 
+      {showSessionBrowser && (
+        <SessionBrowser
+          onClose={() => setShowSessionBrowser(false)}
+          onResume={handleResumeSession}
+          onSelectDirectory={store.selectDirectory}
+          onValidateDirectory={handleValidateDirectory}
+          knownDirectories={store.agents.map((a) => ({
+            name: a.projectName,
+            directory: a.directory,
+            isWorktree: a.isWorktree
+          }))}
+        />
+      )}
+
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
@@ -1061,6 +1106,10 @@ export function App() {
           onLaunchAgent={() => {
             setShowCommandPalette(false)
             setShowLaunchModal(true)
+          }}
+          onResumeSession={() => {
+            setShowCommandPalette(false)
+            setShowSessionBrowser(true)
           }}
           onOpenSettings={() => {
             setShowCommandPalette(false)

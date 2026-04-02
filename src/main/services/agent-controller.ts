@@ -755,6 +755,102 @@ class AgentController {
     return result.data
   }
 
+  /**
+   * List existing OpenCode sessions for a directory.
+   * Spins up a temporary runtime if needed, then queries the SDK.
+   */
+  async listSessions(directory: string): Promise<Array<{
+    id: string
+    title: string
+    createdAt: number
+    updatedAt: number
+  }>> {
+    const runtime = await this.ensureBridgeForDirectory(directory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.list({
+      directory
+    })
+
+    if (!result.data) return []
+
+    const sessions = result.data as Array<{
+      id: string
+      title?: string
+      time?: { created?: number; updated?: number }
+    }>
+
+    // Filter out sessions that are already managed by an active agent
+    const activeSessionIds = new Set(
+      Array.from(this.agents.values()).map((agent) => agent.sessionId)
+    )
+
+    return sessions
+      .filter((session) => !activeSessionIds.has(session.id))
+      .map((session) => ({
+        id: session.id,
+        title: session.title ?? session.id,
+        createdAt: session.time?.created ?? 0,
+        updatedAt: session.time?.updated ?? 0
+      }))
+  }
+
+  /**
+   * Resume an existing OpenCode session by importing it into orchestration.
+   * Unlike launchAgent, this does NOT call session.create — it attaches
+   * to an existing sessionId.
+   */
+  async resumeAgent(options: {
+    directory: string
+    sessionId: string
+    title?: string
+  }): Promise<AgentHandle> {
+    const { directory, sessionId, title } = options
+
+    const runtime = await this.ensureBridgeForDirectory(directory)
+    const directoryContext = workspaceManager.getDirectoryContext(directory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const sessionTitle = title ?? `resumed-${this.nextId}`
+
+    const agentId = `agent-${this.nextId++}`
+    const handle: AgentHandle = {
+      id: agentId,
+      runtimeId: runtime.id,
+      sessionId,
+      directory,
+      projectName: directoryContext.repoName,
+      branchName: directoryContext.branchName,
+      isWorktree: directoryContext.isWorktree,
+      workspaceName: directoryContext.workspaceName,
+      prompt: '',
+      title: sessionTitle,
+      displayName: '',
+      taskSummary: '',
+      bridge: this.bridges.get(runtime.id)!
+    }
+
+    this.agents.set(agentId, handle)
+    this.persistAgents()
+
+    this.broadcastToRenderer('agent:launched', {
+      id: agentId,
+      runtimeId: runtime.id,
+      sessionId,
+      directory,
+      projectName: handle.projectName,
+      branchName: handle.branchName,
+      isWorktree: handle.isWorktree,
+      workspaceName: handle.workspaceName,
+      prompt: '',
+      title: sessionTitle
+    })
+
+    console.log(`[AgentController] Resumed agent ${agentId} (session ${sessionId}) in ${directory}`)
+
+    return handle
+  }
+
   getAgent(agentId: string): AgentHandle | undefined {
     return this.agents.get(agentId)
   }
