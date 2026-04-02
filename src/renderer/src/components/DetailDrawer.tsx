@@ -367,6 +367,19 @@ export const DetailDrawer = memo(function DetailDrawer({
     onSendMessage(inputText.trim(), attachments.length > 0 ? attachments : undefined)
     setInputText('')
     clearAttachments()
+
+    // Re-enable auto-follow and scroll to bottom so the user sees their
+    // new message and the upcoming assistant response.
+    followBottomRef.current = true
+    setShowJumpToLatest(false)
+    const container = transcriptScrollRef.current
+    if (container) {
+      // Use rAF to scroll after React renders the optimistic user message.
+      requestAnimationFrame(() => {
+        scrollToBottom(container)
+        lastScrollHeightRef.current = container.scrollHeight
+      })
+    }
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
