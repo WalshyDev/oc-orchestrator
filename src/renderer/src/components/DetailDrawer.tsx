@@ -1123,6 +1123,15 @@ function MessageBubble({ message, verbose = false }: { message: Message; verbose
   )
 }
 
+function parseToolCommand(input: string | undefined): string | undefined {
+  if (!input) return undefined
+  try {
+    return JSON.parse(input).command as string | undefined
+  } catch {
+    return undefined
+  }
+}
+
 function ToolGroupBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
   const [expanded, setExpanded] = useState(verbose)
   const toolCalls = message.toolCalls ?? []
@@ -1155,6 +1164,11 @@ function ToolGroupBubble({ message, verbose = false }: { message: Message; verbo
                   {tool.state}
                 </span>
               </div>
+              {verbose && parseToolCommand(tool.input) && (
+                <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
+                  $ {parseToolCommand(tool.input)}
+                </pre>
+              )}
               {tool.output && (
                 <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
                   {tool.output}
