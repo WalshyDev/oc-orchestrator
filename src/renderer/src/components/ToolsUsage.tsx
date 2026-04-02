@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 
 export interface ToolCall {
@@ -38,7 +38,7 @@ function formatRelativeTime(timestamp: number): string {
   return `${days}d ago`
 }
 
-export function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
+export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
     verbose ? new Set(tools.map((t) => t.id)) : new Set()
   )
@@ -97,7 +97,10 @@ export function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
     )
   }
 
-  const sorted = [...filteredTools].sort((toolA, toolB) => toolB.timestamp - toolA.timestamp)
+  const sorted = useMemo(
+    () => [...filteredTools].sort((toolA, toolB) => toolB.timestamp - toolA.timestamp),
+    [filteredTools]
+  )
 
   return (
     <div className="flex flex-col gap-2 py-2">
@@ -205,4 +208,4 @@ export function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
       </div>
     </div>
   )
-}
+})

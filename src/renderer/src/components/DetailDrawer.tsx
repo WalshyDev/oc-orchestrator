@@ -38,6 +38,8 @@ const DRAWER_WIDTH_KEY = 'oc-orchestrator:drawer-width'
 const DEFAULT_DRAWER_WIDTH = 600
 const MIN_DRAWER_WIDTH = 400
 const MAX_DRAWER_WIDTH = 1000
+const VISIBLE_MESSAGE_WINDOW = 50
+const LOAD_MORE_INCREMENT = 50
 
 function loadDrawerWidth(): number {
   try {
@@ -122,6 +124,21 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
   const [commandPickerIndex, setCommandPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
+  const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
+
+  // Reset the visible window when switching agents
+  const prevAgentIdRef = useRef(agent.id)
+  if (prevAgentIdRef.current !== agent.id) {
+    prevAgentIdRef.current = agent.id
+    setVisibleMessageCount(VISIBLE_MESSAGE_WINDOW)
+  }
+
+  const hiddenCount = Math.max(0, messages.length - visibleMessageCount)
+  const visibleMessages = hiddenCount > 0 ? messages.slice(hiddenCount) : messages
+
+  const handleLoadMore = useCallback(() => {
+    setVisibleMessageCount((prev) => prev + LOAD_MORE_INCREMENT)
+  }, [])
 
   // Verbose mode: global setting, reactive to changes from SettingsModal
   const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
@@ -270,7 +287,7 @@ export const DetailDrawer = memo(function DetailDrawer({
     } else if (userScrolledRef.current) {
       setShowJumpToLatest(true)
     }
-  }, [messages, activeTab])
+  }, [messages, visibleMessages, activeTab])
 
   const handleTranscriptScroll = () => {
     // Skip scroll events caused by our own scrollTop assignments
@@ -522,7 +539,15 @@ export const DetailDrawer = memo(function DetailDrawer({
                         {sessionNotice}
                       </div>
                     )}
-                    {messages.map((message) => (
+                    {hiddenCount > 0 && (
+                      <button
+                        onClick={handleLoadMore}
+                        className="self-center px-3 py-1.5 text-[11px] font-medium text-kumo-link hover:text-kumo-strong bg-kumo-fill hover:bg-kumo-fill-hover border border-kumo-line rounded-full transition-colors cursor-pointer"
+                      >
+                        Load {Math.min(LOAD_MORE_INCREMENT, hiddenCount)} earlier message{hiddenCount === 1 ? '' : 's'}
+                      </button>
+                    )}
+                    {visibleMessages.map((message) => (
                       <MessageBubble key={message.id} message={message} verbose={isVerbose} />
                     ))}
                   </>
@@ -1003,7 +1028,7 @@ function Tab({
   )
 }
 
-function MessageBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
+const MessageBubble = memo(function MessageBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
   if (message.role === 'tool-group') {
     return <ToolGroupBubble message={message} verbose={verbose} />
   }
@@ -1011,18 +1036,12 @@ function MessageBubble({ message, verbose = false }: { message: Message; verbose
   if (message.role === 'tool') {
     const toolName = message.toolName ?? extractToolName(message.content)
     const toolOutput = message.content ? extractToolOutput(message.content) : ''
-    const toolIconClass = message.toolState === 'failed'
-      ? 'text-kumo-danger'
-      : message.toolState === 'completed'
-        ? 'text-kumo-success'
-        : 'text-kumo-link animate-spin'
-
     return (
       <div className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
         <div className="flex items-center gap-1.5 mb-0.5">
           <Wrench size={11} className="shrink-0" />
           <span className="font-semibold text-kumo-default">{toolName}</span>
-          <CircleNotch size={11} className={toolIconClass} />
+          <CircleNotch size={11} className={toolIconStyle(message.toolState)} />
         </div>
         {toolOutput && (
           <div className="whitespace-pre-wrap break-all mt-1">{toolOutput}</div>
@@ -1070,6 +1089,24 @@ function MessageBubble({ message, verbose = false }: { message: Message; verbose
       )}
     </div>
   )
+}, (prev, next) =>
+  prev.message.id === next.message.id &&
+  prev.message.content === next.message.content &&
+  prev.message.role === next.message.role &&
+  prev.message.toolCalls === next.message.toolCalls &&
+  prev.verbose === next.verbose
+)
+
+const toolStateStyles: Record<string, string> = {
+  failed: 'text-kumo-danger',
+  completed: 'text-kumo-success',
+  running: 'text-kumo-link'
+}
+
+function toolIconStyle(toolState: string | undefined): string {
+  if (toolState === 'failed') return 'text-kumo-danger'
+  if (toolState === 'completed') return 'text-kumo-success'
+  return 'text-kumo-link animate-spin'
 }
 
 function parseToolCommand(input: string | undefined): string | undefined {
@@ -1081,7 +1118,7 @@ function parseToolCommand(input: string | undefined): string | undefined {
   }
 }
 
-function ToolGroupBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
+const ToolGroupBubble = memo(function ToolGroupBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
   const [expanded, setExpanded] = useState(verbose)
   const toolCalls = message.toolCalls ?? []
 
@@ -1109,7 +1146,7 @@ function ToolGroupBubble({ message, verbose = false }: { message: Message; verbo
             <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
-                <span className={`text-[10px] ${tool.state === 'failed' ? 'text-kumo-danger' : tool.state === 'completed' ? 'text-kumo-success' : 'text-kumo-link'}`}>
+                <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
                   {tool.state}
                 </span>
               </div>
@@ -1129,7 +1166,12 @@ function ToolGroupBubble({ message, verbose = false }: { message: Message; verbo
       )}
     </div>
   )
-}
+}, (prev, next) =>
+  prev.message.id === next.message.id &&
+  prev.message.content === next.message.content &&
+  prev.message.toolCalls === next.message.toolCalls &&
+  prev.verbose === next.verbose
+)
 
 function ActionButton({
   icon,

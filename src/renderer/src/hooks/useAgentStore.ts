@@ -188,16 +188,37 @@ interface EmitFlags {
 }
 
 function emit(changed?: EmitFlags): void {
-  // Bump per-collection version counters so downstream useMemo hooks can
-  // skip re-derivation when only unrelated collections changed.
   if (!changed || changed.agents) agentsVersion++
   if (!changed || changed.permissions) permissionsVersion++
   if (!changed || changed.questions) questionsVersion++
   if (!changed || changed.messages) messagesVersion++
-  // Create new state reference to trigger re-renders
   state = { ...state }
   for (const listener of listeners) {
     listener()
+  }
+}
+
+// Coalesced emit for high-frequency message updates. Mutations happen
+// synchronously (so data is never lost), but React is only notified once
+// per animation frame to avoid re-rendering the transcript dozens of
+// times per second during agent streaming.
+let pendingMessageEmit = false
+let pendingAgentEmit = false
+
+function emitMessagesThrottled(agentChanged: boolean): void {
+  if (agentChanged) pendingAgentEmit = true
+
+  if (!pendingMessageEmit) {
+    pendingMessageEmit = true
+    requestAnimationFrame(() => {
+      pendingMessageEmit = false
+      const flags: EmitFlags = { messages: true }
+      if (pendingAgentEmit) {
+        flags.agents = true
+        pendingAgentEmit = false
+      }
+      emit(flags)
+    })
   }
 }
 
@@ -307,6 +328,8 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
   }
 }
 
+const MAX_EVENT_LOG_ENTRIES = 500
+
 function logEvent(sessionId: string, type: string, props: Record<string, unknown>): void {
   const entries = state.eventLog.get(sessionId) ?? []
   eventCounter += 1
@@ -317,6 +340,10 @@ function logEvent(sessionId: string, type: string, props: Record<string, unknown
     timestamp: Date.now(),
     data: props
   })
+  // Cap the log to prevent unbounded memory growth in long sessions
+  if (entries.length > MAX_EVENT_LOG_ENTRIES) {
+    entries.splice(0, entries.length - MAX_EVENT_LOG_ENTRIES)
+  }
   state.eventLog.set(sessionId, entries)
   eventLogVersion++
 }
@@ -835,10 +862,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
         }
 
-        // This is the hottest event path — fire dozens of times per second while
-        // agents are working. Only flag the collections that actually changed to
-        // avoid invalidating unrelated useMemo hooks (e.g. agents array).
-        emit({ messages: true, agents: agentChanged })
+        emitMessagesThrottled(agentChanged)
       }
       break
     }
@@ -1050,10 +1074,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
     }
 
     case 'server.heartbeat': {
-      // Mark healthy
       if (!state.healthy) {
         state.healthy = true
-        emit()
+        emit({ agents: true })
       }
       break
     }
@@ -1069,7 +1092,7 @@ const RESUME_MESSAGE_LIMIT = 10
 
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   upsertAgent(payload)
-  emit()
+  emit({ agents: true })
 
   // Fetch historical messages so resumed sessions aren't blank.
   // Fire-and-forget — the initial upsert already emitted.
@@ -1079,7 +1102,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       const entries = result.data as HistoricalSessionMessage[]
       if (!Array.isArray(entries) || entries.length === 0) return
       hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
-      emit()
+      emit({ messages: true })
     })
   }
 }
@@ -1123,7 +1146,8 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
     agent.status = 'idle'
   }
 
-  emit()
+  // Session reset touches everything
+  emit({ agents: true, messages: true, permissions: true, questions: true })
 }
 
 function removeAgentState(agentId: string): void {
@@ -1269,7 +1293,7 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     changed = true
   }
 
-  if (changed) emit()
+  if (changed) emit({ agents: true })
 }
 
 /**
@@ -1353,7 +1377,7 @@ function reconcileQuestions(
     }
   }
 
-  if (changed) emit()
+  if (changed) emit({ agents: true, questions: true })
 }
 
 // ── Helpers ──
@@ -1521,7 +1545,7 @@ export function useAgentStore() {
         shouldEmit = true
       }
 
-      if (shouldEmit) emit()
+      if (shouldEmit) emit({ agents: true, messages: true })
 
       // Fetch pending questions for agents that are in needs_input state
       try {
@@ -1538,7 +1562,7 @@ export function useAgentStore() {
               })
             }
           }
-          emit()
+          emit({ questions: true })
         }
       } catch {
         // Questions API may not be available on older servers
@@ -1552,7 +1576,7 @@ export function useAgentStore() {
       window.api.onEventError((data) => {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
         state.healthy = false
-        emit()
+        emit({ agents: true })
       })
     ]
 
@@ -1604,15 +1628,15 @@ export function useAgentStore() {
   // storeState from the render, so the data is always fresh when the memo executes.
   const agents = useMemo(
     () => Array.from(storeState.agents.values()),
-    [agentsVersion] // eslint-disable-line
+    [agentsVersion]
   )
   const permissions = useMemo(
     () => Array.from(storeState.permissions.values()),
-    [permissionsVersion] // eslint-disable-line
+    [permissionsVersion]
   )
   const questions = useMemo(
     () => Array.from(storeState.questions.values()),
-    [questionsVersion] // eslint-disable-line
+    [questionsVersion]
   )
 
   const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, attachments?: MessageAttachment[]) => {
@@ -1683,7 +1707,7 @@ export function useAgentStore() {
       }
     }
 
-    emit()
+    emit({ agents: true, questions: true })
 
     const result = await window.api.sendMessage(agentId, text, agentConfig, attachments)
 
@@ -1700,7 +1724,7 @@ export function useAgentStore() {
       for (const [qId, q] of removedQuestions) {
         state.questions.set(qId, q)
       }
-      emit()
+      emit({ agents: true, questions: true })
     }
 
     return result
@@ -1743,7 +1767,7 @@ export function useAgentStore() {
       agent.blockedSince = undefined
       taskSummaryLocked.add(agentId)
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
-      emit()
+      emit({ agents: true })
     }
 
     const result = await window.api.executeCommand(agentId, command, args)
@@ -1755,7 +1779,7 @@ export function useAgentStore() {
         agentAfter.taskSummary = previousSummary ?? agentAfter.taskSummary
         agentAfter.lastActivityAt = Date.now()
         taskSummaryLocked.delete(agentId)
-        emit()
+        emit({ agents: true })
       }
     }
 
@@ -1783,7 +1807,7 @@ export function useAgentStore() {
     agent.lastActivityAt = Date.now()
     agent.blockedSince = undefined
     persistAgentMeta(agentId, { displayName: agent.name, taskSummary: agent.taskSummary })
-    emit()
+    emit({ agents: true })
   }, [])
 
   const respondToPermission = useCallback(async (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => {
@@ -1806,7 +1830,7 @@ export function useAgentStore() {
       agent.respondedAt = Date.now()
 
     }
-    emit()
+    emit({ agents: true, permissions: true })
 
     const result = await window.api.respondToPermission(agentId, permissionId, response)
 
@@ -1822,7 +1846,7 @@ export function useAgentStore() {
       if (removedPermission) {
         state.permissions.set(permissionId, removedPermission)
       }
-      emit()
+      emit({ agents: true, permissions: true })
     }
 
     return result
@@ -1846,7 +1870,7 @@ export function useAgentStore() {
       agent.respondedAt = Date.now()
 
     }
-    emit()
+    emit({ agents: true, questions: true })
 
     const result = await window.api.replyToQuestion(agentId, requestId, answers)
 
@@ -1862,7 +1886,7 @@ export function useAgentStore() {
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
       }
-      emit()
+      emit({ agents: true, questions: true })
     }
 
     return result
@@ -1886,7 +1910,7 @@ export function useAgentStore() {
       agent.respondedAt = Date.now()
 
     }
-    emit()
+    emit({ agents: true, questions: true })
 
     const result = await window.api.rejectQuestion(agentId, requestId)
 
@@ -1902,7 +1926,7 @@ export function useAgentStore() {
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
       }
-      emit()
+      emit({ agents: true, questions: true })
     }
 
     return result
@@ -1916,7 +1940,7 @@ export function useAgentStore() {
     if (agent) {
       agent.status = 'stopping'
       agent.lastActivityAt = Date.now()
-      emit()
+      emit({ agents: true })
     }
 
     const result = await window.api.abortAgent(agentId)
@@ -1928,7 +1952,7 @@ export function useAgentStore() {
       if (agentAfter && agentAfter.status === 'stopping') {
         agentAfter.status = 'idle'
         agentAfter.lastActivityAt = Date.now()
-        emit()
+        emit({ agents: true })
       }
     } else {
       // Safety timeout: if the server acknowledged the abort but the SSE event
@@ -1940,7 +1964,7 @@ export function useAgentStore() {
           console.warn(`[AgentStore] Agent ${agentId} stuck in 'stopping' for 10s, forcing idle`)
           agentAfter.status = 'idle'
           agentAfter.lastActivityAt = Date.now()
-          emit()
+          emit({ agents: true })
         }
       }, 10_000)
     }
@@ -1957,7 +1981,7 @@ export function useAgentStore() {
     if (!window.api) return
 
     removeAgentState(agentId)
-    emit()
+    emit({ agents: true, messages: true, permissions: true, questions: true })
 
     // Background cleanup (runtime stop, worktree removal) in main process
     window.api.removeAgent(agentId).then((result) => {
@@ -1978,26 +2002,26 @@ export function useAgentStore() {
 
   const getMessagesForSession = useCallback((sessionId: string): LiveMessage[] => {
     return storeState.messages.get(sessionId) ?? []
-  }, [messagesVersion]) // eslint-disable-line
+  }, [messagesVersion])
 
   const getFileChangesForSession = useCallback((sessionId: string): FileChangeRecord[] => {
     return storeState.fileChanges.get(sessionId) ?? []
-  }, [fileChangesVersion]) // eslint-disable-line
+  }, [fileChangesVersion])
 
   const getEventsForSession = useCallback((sessionId: string): EventLogEntry[] => {
     return storeState.eventLog.get(sessionId) ?? []
-  }, [eventLogVersion]) // eslint-disable-line
+  }, [eventLogVersion])
 
   const getToolCallsForSession = useCallback((sessionId: string): ToolCallInfo[] => {
     const messages = storeState.messages.get(sessionId) ?? []
     return extractToolCallsFromMessages(messages)
-  }, [messagesVersion]) // eslint-disable-line
+  }, [messagesVersion])
 
   const setAgentModel = useCallback((agentId: string, modelPath: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
     agent.model = formatModelName(modelPath)
-    emit()
+    emit({ agents: true })
   }, [])
 
   const renameAgent = useCallback((agentId: string, newName: string) => {
@@ -2006,7 +2030,7 @@ export function useAgentStore() {
     agent.name = newName
     agent.autoNamed = false
     persistAgentMeta(agentId, { displayName: newName })
-    emit()
+    emit({ agents: true })
   }, [])
 
   const setLabel = useCallback((agentId: string, label: AgentLabel | null) => {
@@ -2015,7 +2039,7 @@ export function useAgentStore() {
     agent.label = label
     agent.lastActivityAt = Date.now()
     persistAgentMeta(agentId, { persistedStatus: label ?? '' })
-    emit()
+    emit({ agents: true })
   }, [])
 
   return useMemo(() => ({

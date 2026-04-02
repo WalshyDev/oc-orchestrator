@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ComponentPropsWithoutRef, MouseEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -22,18 +23,22 @@ function ExternalLink({ href, children, ...props }: ComponentPropsWithoutRef<'a'
   )
 }
 
-export function Markdown({ children, className }: MarkdownProps) {
+// Hoist to module scope — stable references prevent ReactMarkdown from
+// re-parsing markdown on every render due to referential inequality.
+const REMARK_PLUGINS = [remarkGfm]
+const DISALLOWED_ELEMENTS = ['script', 'iframe', 'object', 'embed', 'form']
+const COMPONENTS = { a: ExternalLink }
+
+export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
   return (
     <div className={`markdown-body ${className ?? ''}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        disallowedElements={['script', 'iframe', 'object', 'embed', 'form']}
-        components={{
-          a: ExternalLink
-        }}
+        remarkPlugins={REMARK_PLUGINS}
+        disallowedElements={DISALLOWED_ELEMENTS}
+        components={COMPONENTS}
       >
         {children}
       </ReactMarkdown>
     </div>
   )
-}
+})

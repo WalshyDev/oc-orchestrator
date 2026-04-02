@@ -67,10 +67,27 @@ export function App() {
 
   const store = useAgentStore()
 
-  // ── Fetch available commands and agent configs when an agent is selected ──
-  // Deps use specific stable callbacks (not the whole store object) to avoid
-  // re-fetching on unrelated SSE events.
-  const { listCommands, listAgentConfigs } = store
+  // Destructure stable callbacks (all use useCallback(fn, [])) to avoid
+  // depending on the whole `store` object in downstream hooks.
+  const {
+    listCommands,
+    listAgentConfigs,
+    getMessagesForSession,
+    getFileChangesForSession,
+    getEventsForSession,
+    sendMessage: storeSendMessage,
+    replyToQuestion: storeReplyToQuestion,
+    resetSession: storeResetSession,
+    respondToPermission: storeRespondToPermission,
+    rejectQuestion: storeRejectQuestion,
+    abortAgent: storeAbortAgent,
+    removeAgent: storeRemoveAgent,
+    setAgentModel: storeSetAgentModel,
+    executeCommand: storeExecuteCommand,
+    setLabel: storeSetLabel,
+    renameAgent: storeRenameAgent
+  } = store
+
   useEffect(() => {
     if (!selectedAgentId) {
       setAgentCommands([])
@@ -382,7 +399,7 @@ export function App() {
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
 
-    const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
+    const liveMessages = getMessagesForSession(liveAgent.sessionId)
     const transcriptItems: Message[] = []
     let pendingToolCalls: ToolCall[] = []
 
@@ -401,29 +418,40 @@ export function App() {
     }
 
     for (const msg of liveMessages) {
-      const textContent = msg.parts
-        .filter((part) => part.type === 'text' && part.text)
-        .map((part) => part.text!)
-        .join('\n')
+      const textParts: string[] = []
+      const toolCalls: ToolCall[] = []
+      const images: Array<{ mime: string; url: string; filename?: string }> = []
 
-      const toolCalls = msg.parts
-        .filter((part) => part.type === 'tool')
-        .map((part) => ({
-          id: part.id,
-          name: part.toolName ?? 'unknown',
-          state: mapToolState(part.toolState),
-          input: part.toolInput,
-          output: part.text ?? undefined,
-          timestamp: msg.createdAt
-        }))
+      for (const part of msg.parts) {
+        switch (part.type) {
+          case 'text':
+            if (part.text) {
+              textParts.push(part.text)
+            }
+            break
+          case 'tool':
+            toolCalls.push({
+              id: part.id,
+              name: part.toolName ?? 'unknown',
+              state: mapToolState(part.toolState),
+              input: part.toolInput,
+              output: part.text ?? undefined,
+              timestamp: msg.createdAt
+            })
+            break
+          case 'file':
+            if (part.fileUrl && part.fileMime?.startsWith('image/')) {
+              images.push({
+                mime: part.fileMime!,
+                url: part.fileUrl!,
+                filename: part.fileName
+              })
+            }
+            break
+        }
+      }
 
-      const images = msg.parts
-        .filter((part) => part.type === 'file' && part.fileUrl && part.fileMime?.startsWith('image/'))
-        .map((part) => ({
-          mime: part.fileMime!,
-          url: part.fileUrl!,
-          filename: part.fileName
-        }))
+      const textContent = textParts.join('\n')
 
       if (textContent.trim() || images.length > 0) {
         flushPendingToolCalls(msg.id, msg.createdAt)
@@ -452,7 +480,7 @@ export function App() {
     }
 
     return transcriptItems
-  }, [selectedAgent, store])
+  }, [selectedAgent, store.agents, getMessagesForSession])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {
@@ -460,35 +488,19 @@ export function App() {
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
 
-    return store.getFileChangesForSession(liveAgent.sessionId)
-  }, [selectedAgent, store])
+    return getFileChangesForSession(liveAgent.sessionId)
+  }, [selectedAgent, store.agents, getFileChangesForSession])
 
-  // ── Extract tool calls from store messages ──
+  // ── Extract tool calls from selectedMessages (derived, avoids redundant iteration) ──
   const selectedTools: ToolCall[] = useMemo(() => {
-    if (!selectedAgent) return []
-    const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
-    if (!liveAgent) return []
-
-    const liveMessages = store.getMessagesForSession(liveAgent.sessionId)
     const tools: ToolCall[] = []
-
-    for (const msg of liveMessages) {
-      for (const part of msg.parts) {
-        if (part.type === 'tool') {
-            tools.push({
-              id: part.id,
-              name: part.toolName ?? 'unknown',
-              state: mapToolState(part.toolState),
-              input: part.toolInput,
-              output: part.text ?? undefined,
-              timestamp: msg.createdAt
-            })
-          }
-        }
+    for (const msg of selectedMessages) {
+      if (msg.role === 'tool-group' && msg.toolCalls) {
+        tools.push(...msg.toolCalls)
       }
-
+    }
     return tools
-  }, [selectedAgent, store])
+  }, [selectedMessages])
 
   // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {
@@ -496,8 +508,8 @@ export function App() {
     const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
     if (!liveAgent) return []
 
-    return store.getEventsForSession(liveAgent.sessionId)
-  }, [selectedAgent, store])
+    return getEventsForSession(liveAgent.sessionId)
+  }, [selectedAgent, store.agents, getEventsForSession])
 
   // ── Permission for selected agent ──
   const selectedPermission = useMemo(() => {
@@ -565,25 +577,25 @@ export function App() {
   const handleRowApprove = useCallback(async (agentId: string) => {
     const permission = findPermissionForAgent(agentId)
     if (permission) {
-      await store.respondToPermission(agentId, permission.id, 'once')
+      await storeRespondToPermission(agentId, permission.id, 'once')
     }
-  }, [findPermissionForAgent, store])
+  }, [findPermissionForAgent, storeRespondToPermission])
 
   const handleRowReply = useCallback((agentId: string) => {
     setSelectedAgentId(agentId)
   }, [])
 
   const handleRowStop = useCallback(async (agentId: string) => {
-    await store.abortAgent(agentId)
-  }, [store])
+    await storeAbortAgent(agentId)
+  }, [storeAbortAgent])
 
   const handleRowOpen = useCallback((agentId: string) => {
     setSelectedAgentId(agentId)
   }, [])
 
   const handleSetLabel = useCallback((agentId: string, label: AgentLabel | null) => {
-    store.setLabel(agentId, label)
-  }, [store])
+    storeSetLabel(agentId, label)
+  }, [storeSetLabel])
 
   const handleRemoveAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -595,12 +607,12 @@ export function App() {
 
     if (!window.confirm(confirmMessage)) return
 
-    store.removeAgent(agentId)
+    storeRemoveAgent(agentId)
 
     if (selectedAgentId === agentId) {
       setSelectedAgentId(null)
     }
-  }, [findLiveAgent, selectedAgentId, store])
+  }, [findLiveAgent, selectedAgentId, storeRemoveAgent])
 
   // ── Built-in command handlers ──
   const handleBuiltInCommand = useCallback(async (agentId: string, commandName: string, commandArgs: string): Promise<boolean> => {
@@ -613,7 +625,7 @@ export function App() {
         // Direct model set: /model provider/model-id
         const updateResult = await window.api.updateConfig(agentId, { model: commandArgs })
         if (updateResult.ok) {
-          store.setAgentModel(agentId, commandArgs)
+          storeSetAgentModel(agentId, commandArgs)
         } else {
           console.error('Failed to update model:', updateResult.error)
         }
@@ -650,13 +662,13 @@ export function App() {
         // Check if it's a custom command from the API (skills, /init, /review, etc.)
         const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
         if (isKnownCommand) {
-          await store.executeCommand(agentId, commandName, commandArgs)
+          await storeExecuteCommand(agentId, commandName, commandArgs)
           return true
         }
         return false
       }
     }
-  }, [agentCommands, store])
+  }, [agentCommands, storeSetAgentModel, storeExecuteCommand])
 
   // ── Detail drawer actions ──
   const handleSendMessage = useCallback(async (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
@@ -667,14 +679,14 @@ export function App() {
     if (selectedQuestion && trimmedText && selectedQuestion.questions.length === 1) {
       const q = selectedQuestion.questions[0]
       if (q.custom !== false) {
-        await store.replyToQuestion(selectedAgentId, selectedQuestion.id, [[trimmedText]])
+        await storeReplyToQuestion(selectedAgentId, selectedQuestion.id, [[trimmedText]])
         return
       }
     }
 
     if (trimmedText === NEW_AGENT_COMMAND || trimmedText.startsWith(`${NEW_AGENT_COMMAND} `)) {
       const followUpPrompt = trimmedText.slice(NEW_AGENT_COMMAND.length).trim() || undefined
-      await store.resetSession(selectedAgentId, followUpPrompt)
+      await storeResetSession(selectedAgentId, followUpPrompt)
       return
     }
 
@@ -695,38 +707,38 @@ export function App() {
       const isKnownAgent = agentConfigs.some((cfg) => cfg.name === mentionedAgent)
       if (isKnownAgent) {
         const cleanText = trimmedText.replace(AGENT_MENTION_REGEX, '').trim()
-        await store.sendMessage(selectedAgentId, cleanText || trimmedText, mentionedAgent, attachments)
+        await storeSendMessage(selectedAgentId, cleanText || trimmedText, mentionedAgent, attachments)
         return
       }
     }
 
-    await store.sendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, store])
+    await storeSendMessage(selectedAgentId, text, undefined, attachments)
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeReplyToQuestion, storeResetSession])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
-    await store.respondToPermission(selectedAgentId, permissionId, 'once')
-  }, [selectedAgentId, store])
+    await storeRespondToPermission(selectedAgentId, permissionId, 'once')
+  }, [selectedAgentId, storeRespondToPermission])
 
   const handleDeny = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
-    await store.respondToPermission(selectedAgentId, permissionId, 'reject')
-  }, [selectedAgentId, store])
+    await storeRespondToPermission(selectedAgentId, permissionId, 'reject')
+  }, [selectedAgentId, storeRespondToPermission])
 
   const handleReplyQuestion = useCallback(async (answers: string[][]) => {
     if (!selectedAgentId || !selectedQuestion) return
-    await store.replyToQuestion(selectedAgentId, selectedQuestion.id, answers)
-  }, [selectedAgentId, selectedQuestion, store])
+    await storeReplyToQuestion(selectedAgentId, selectedQuestion.id, answers)
+  }, [selectedAgentId, selectedQuestion, storeReplyToQuestion])
 
   const handleRejectQuestion = useCallback(async () => {
     if (!selectedAgentId || !selectedQuestion) return
-    await store.rejectQuestion(selectedAgentId, selectedQuestion.id)
-  }, [selectedAgentId, selectedQuestion, store])
+    await storeRejectQuestion(selectedAgentId, selectedQuestion.id)
+  }, [selectedAgentId, selectedQuestion, storeRejectQuestion])
 
   const handleAbort = useCallback(async () => {
     if (!selectedAgentId) return
-    await store.abortAgent(selectedAgentId)
-  }, [selectedAgentId, store])
+    await storeAbortAgent(selectedAgentId)
+  }, [selectedAgentId, storeAbortAgent])
 
   const handleCloseDrawer = useCallback(() => setSelectedAgentId(null), [])
 
@@ -753,11 +765,11 @@ export function App() {
 
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
-    const result = await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
+    const result = await storeSendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
     if (result?.ok) {
-      store.setLabel(selectedAgentId, 'in_review')
+      storeSetLabel(selectedAgentId, 'in_review')
     }
-  }, [selectedAgentId, store])
+  }, [selectedAgentId, storeSendMessage, storeSetLabel])
 
   const handleOpenInEditor = useCallback(() => {
     if (!selectedAgentId) return
@@ -1117,7 +1129,7 @@ export function App() {
         onStop={handleRowStop}
         onOpen={handleRowOpen}
         onRemove={handleRemoveAgent}
-        onRename={(agentId, newName) => store.renameAgent(agentId, newName)}
+        onRename={storeRenameAgent}
         onOpenTerminal={handleOpenTerminal}
         onOpenInEditor={handleOpenInEditorForAgent}
         onCreatePr={handleCreatePrForAgent}

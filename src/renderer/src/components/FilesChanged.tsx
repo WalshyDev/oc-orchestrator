@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import { File, FilePlus, FileMinus, PencilSimple } from '@phosphor-icons/react'
 
 export interface FileChange {
@@ -49,18 +50,19 @@ function extractFilename(filePath: string): string {
   return segments[segments.length - 1] || filePath
 }
 
-export function FilesChanged({ files }: FilesChangedProps) {
-  const latestByPath = new Map<string, FileChange>()
-  for (const file of files) {
-    const existingFile = latestByPath.get(file.path)
-    if (!existingFile || existingFile.timestamp < file.timestamp) {
-      latestByPath.set(file.path, file)
+export const FilesChanged = memo(function FilesChanged({ files }: FilesChangedProps) {
+  const sorted = useMemo(() => {
+    const latestByPath = new Map<string, FileChange>()
+    for (const file of files) {
+      const existingFile = latestByPath.get(file.path)
+      if (!existingFile || existingFile.timestamp < file.timestamp) {
+        latestByPath.set(file.path, file)
+      }
     }
-  }
+    return Array.from(latestByPath.values()).sort((fileA, fileB) => fileB.timestamp - fileA.timestamp)
+  }, [files])
 
-  const dedupedFiles = Array.from(latestByPath.values())
-
-  if (dedupedFiles.length === 0) {
+  if (sorted.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle py-12">
         <File size={28} weight="duotone" />
@@ -69,12 +71,10 @@ export function FilesChanged({ files }: FilesChangedProps) {
     )
   }
 
-  const sorted = dedupedFiles.sort((fileA, fileB) => fileB.timestamp - fileA.timestamp)
-
   return (
     <div className="flex flex-col gap-1 py-2">
       <div className="text-[11px] text-kumo-subtle px-1 pb-1">
-        {dedupedFiles.length} file{dedupedFiles.length !== 1 ? 's' : ''} changed
+        {sorted.length} file{sorted.length !== 1 ? 's' : ''} changed
       </div>
       {sorted.map((file, index) => (
         <div
@@ -110,4 +110,4 @@ export function FilesChanged({ files }: FilesChangedProps) {
       ))}
     </div>
   )
-}
+})
