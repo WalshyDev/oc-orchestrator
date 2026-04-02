@@ -42,7 +42,8 @@ const MIN_DRAWER_WIDTH = 400
 const MAX_DRAWER_WIDTH = 1000
 const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
-const SCROLL_SETTLE_MS = 150
+const NEAR_BOTTOM_THRESHOLD = 80
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
 
 function loadDrawerWidth(): number {
   try {
@@ -156,6 +157,7 @@ export const DetailDrawer = memo(function DetailDrawer({
     handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
   } = useImageAttachments()
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const transcriptContentRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const followBottomRef = useRef(true)
@@ -236,101 +238,88 @@ export const DetailDrawer = memo(function DetailDrawer({
   else if (canReplyViaChat) inputPlaceholder = 'Type your answer to the question above...'
 
   // Slide-in animation on mount
-  const initialScrollDoneRef = useRef(false)
   useEffect(() => {
     const frame = requestAnimationFrame(() => setIsVisible(true))
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  const lastScrollHeightRef = useRef(0)
-  // The scrollTop value we last set programmatically. Used by the scroll
-  // handler to distinguish "user scrolled up" from "content grew below the
-  // current position". Only a real decrease in scrollTop disables auto-follow.
-  const lastProgrammaticScrollTopRef = useRef(0)
-  // Deadline until which scroll events are ignored — a single scrollTop
-  // assignment can fire multiple browser events as the position settles.
-  const ignoreScrollUntilRef = useRef(0)
+  const scrollToBottom = (el: HTMLDivElement) => { el.scrollTop = el.scrollHeight }
 
-  const scrollToBottom = (container: HTMLDivElement) => {
-    ignoreScrollUntilRef.current = Date.now() + SCROLL_SETTLE_MS
-    container.scrollTop = container.scrollHeight
-    lastProgrammaticScrollTopRef.current = container.scrollTop
+  const reengageFollow = () => {
+    followBottomRef.current = true
+    setShowJumpToLatest(false)
+    const container = transcriptScrollRef.current
+    if (container) scrollToBottom(container)
   }
 
+  // Pin to bottom whenever transcript content resizes. Catches all height
+  // changes (new messages, streaming, status indicators, markdown reflow)
+  // without enumerating React deps. Tears down and re-attaches on tab
+  // switch, which also resets follow state.
   useEffect(() => {
-    if (activeTab === 'transcript') {
-      followBottomRef.current = true
-      initialScrollDoneRef.current = false
-      lastScrollHeightRef.current = 0
-      lastProgrammaticScrollTopRef.current = 0
-      setShowJumpToLatest(false)
-    }
+    if (activeTab !== 'transcript') return
+    const container = transcriptScrollRef.current
+    const content = transcriptContentRef.current
+    if (!container || !content) return
+
+    followBottomRef.current = true
+    setShowJumpToLatest(false)
+
+    const ro = new ResizeObserver(() => {
+      if (followBottomRef.current) {
+        scrollToBottom(container)
+      } else {
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+        if (distanceFromBottom > NEAR_BOTTOM_THRESHOLD) {
+          setShowJumpToLatest(true)
+        }
+      }
+    })
+    ro.observe(content)
+
+    requestAnimationFrame(() => scrollToBottom(container))
+    return () => ro.disconnect()
   }, [activeTab])
 
-  // Pin to bottom when content grows, unless the user scrolled away.
-  // Compares scrollHeight to detect actual new content rather than
-  // re-scrolling on every messages array reference change.
+  // Only wheel, scrollbar drag, and keyboard navigation can disengage
+  // auto-follow — programmatic scrolls and layout shifts cannot.
   useEffect(() => {
     if (activeTab !== 'transcript') return
     const container = transcriptScrollRef.current
     if (!container) return
 
-    const { scrollHeight } = container
-    const contentGrew = scrollHeight > lastScrollHeightRef.current
-    lastScrollHeightRef.current = scrollHeight
-
-    if (!initialScrollDoneRef.current && messages.length > 0) {
-      initialScrollDoneRef.current = true
-      scrollToBottom(container)
-      return
+    const checkDetach = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+      const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD
+      followBottomRef.current = nearBottom
+      setShowJumpToLatest(!nearBottom)
     }
 
-    if (!contentGrew) return
+    const onWheel = () => requestAnimationFrame(checkDetach)
 
-    if (followBottomRef.current) {
-      scrollToBottom(container)
-      setShowJumpToLatest(false)
-    } else {
-      setShowJumpToLatest(true)
-    }
-  }, [messages, visibleMessages, activeTab])
-
-  const handleTranscriptScroll = () => {
-    if (Date.now() < ignoreScrollUntilRef.current) return
-
-    const container = transcriptScrollRef.current
-    if (!container) return
-
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    const nearBottom = distanceFromBottom < 80
-
-    if (nearBottom) {
-      followBottomRef.current = true
-      setShowJumpToLatest(false)
-      return
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.offsetX < container.clientWidth) return
+      const onPointerUp = () => {
+        container.removeEventListener('scroll', checkDetach)
+        window.removeEventListener('pointerup', onPointerUp)
+      }
+      container.addEventListener('scroll', checkDetach)
+      window.addEventListener('pointerup', onPointerUp)
     }
 
-    // Only disable auto-follow if the user actually scrolled up.
-    // When content grows below the viewport the browser keeps scrollTop
-    // constant, so distanceFromBottom increases without user interaction.
-    // Comparing against the last programmatic scrollTop distinguishes
-    // "user dragged up" from "content pushed the bottom further away".
-    const userScrolledUp = container.scrollTop < lastProgrammaticScrollTopRef.current
-    if (userScrolledUp) {
-      followBottomRef.current = false
-      setShowJumpToLatest(true)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(e.key)) requestAnimationFrame(checkDetach)
     }
-  }
 
-  const handleJumpToLatest = () => {
-    followBottomRef.current = true
-    setShowJumpToLatest(false)
-    const container = transcriptScrollRef.current
-    if (container) {
-      scrollToBottom(container)
-      lastScrollHeightRef.current = container.scrollHeight
+    container.addEventListener('wheel', onWheel, { passive: true })
+    container.addEventListener('pointerdown', onPointerDown)
+    container.addEventListener('keydown', onKeyDown)
+    return () => {
+      container.removeEventListener('wheel', onWheel)
+      container.removeEventListener('pointerdown', onPointerDown)
+      container.removeEventListener('keydown', onKeyDown)
     }
-  }
+  }, [activeTab])
 
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputText(event.target.value)
@@ -367,19 +356,7 @@ export const DetailDrawer = memo(function DetailDrawer({
     onSendMessage(inputText.trim(), attachments.length > 0 ? attachments : undefined)
     setInputText('')
     clearAttachments()
-
-    // Re-enable auto-follow and scroll to bottom so the user sees their
-    // new message and the upcoming assistant response.
-    followBottomRef.current = true
-    setShowJumpToLatest(false)
-    const container = transcriptScrollRef.current
-    if (container) {
-      // Use rAF to scroll after React renders the optimistic user message.
-      requestAnimationFrame(() => {
-        scrollToBottom(container)
-        lastScrollHeightRef.current = container.scrollHeight
-      })
-    }
+    requestAnimationFrame(reengageFollow)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -538,11 +515,10 @@ export const DetailDrawer = memo(function DetailDrawer({
         <div className="flex-1 relative overflow-hidden">
           <div
             ref={transcriptScrollRef}
-            onScroll={activeTab === 'transcript' ? handleTranscriptScroll : undefined}
             className="absolute inset-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
           >
             {activeTab === 'transcript' && (
-              <>
+              <div ref={transcriptContentRef} className="flex flex-col gap-2">
                 {messages.length === 0 ? (
                   <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle text-sm">
                     {sessionNotice && (
@@ -640,9 +616,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                     </div>
                   </div>
                 )}
-
-                {/* End of transcript content */}
-              </>
+              </div>
             )}
 
             {activeTab === 'files' && <FilesChanged files={files} />}
@@ -656,7 +630,7 @@ export const DetailDrawer = memo(function DetailDrawer({
             <div className="absolute bottom-3 left-0 right-0 z-10 flex justify-center pointer-events-none">
               <button
                 type="button"
-                onClick={handleJumpToLatest}
+                onClick={reengageFollow}
                 className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-kumo-interact/30 bg-kumo-interact/12 px-3 py-1.5 text-[11px] font-medium text-kumo-link shadow-lg backdrop-blur hover:bg-kumo-interact/18 transition-colors"
               >
                 <CaretDown size={12} />
