@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { ListBullets, CaretDown, CaretRight, Funnel } from '@phosphor-icons/react'
 
 export interface EventEntry {
@@ -42,7 +42,7 @@ function formatJson(data: unknown): string {
   }
 }
 
-export function EventLog({ events, verbose = false }: EventLogProps) {
+export const EventLog = memo(function EventLog({ events, verbose = false }: EventLogProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
     verbose ? new Set(events.map((e) => e.id)) : new Set()
   )
@@ -101,7 +101,10 @@ export function EventLog({ events, verbose = false }: EventLogProps) {
     )
   }
 
-  const sorted = [...filteredEvents].sort((eventA, eventB) => eventB.timestamp - eventA.timestamp)
+  const sorted = useMemo(
+    () => [...filteredEvents].sort((eventA, eventB) => eventB.timestamp - eventA.timestamp),
+    [filteredEvents]
+  )
 
   return (
     <div className="flex flex-col gap-2 py-2">
@@ -209,4 +212,4 @@ export function EventLog({ events, verbose = false }: EventLogProps) {
       </div>
     </div>
   )
-}
+})
