@@ -913,9 +913,24 @@ function processEvent(payload: OpenCodeEventPayload): void {
   }
 }
 
+/** Number of recent messages to pre-load when a session is resumed. */
+const RESUME_MESSAGE_LIMIT = 10
+
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   upsertAgent(payload)
   emit()
+
+  // Fetch historical messages so resumed sessions aren't blank.
+  // Fire-and-forget — the initial upsert already emitted.
+  if (window.api) {
+    void window.api.getMessages(payload.id).then((result) => {
+      if (!result.ok || !result.data) return
+      const entries = result.data as HistoricalSessionMessage[]
+      if (!Array.isArray(entries) || entries.length === 0) return
+      hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
+      emit()
+    })
+  }
 }
 
 function handleSessionReset(payload: { id: string; sessionId: string; oldSessionId: string; branchName: string; prompt: string; title: string }): void {
