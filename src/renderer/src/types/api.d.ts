@@ -31,6 +31,8 @@ export interface OrchestratorApi {
   listAgentConfigs: (agentId: string) => Promise<IpcResult>
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
+  listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
+  resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
@@ -92,6 +94,13 @@ export interface WorktreeListEntry {
   path: string
   head: string
   branch: string
+}
+
+export interface SessionListEntry {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface WorktreeStatus {
