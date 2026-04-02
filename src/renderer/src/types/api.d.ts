@@ -5,13 +5,14 @@ export interface IpcResult<T = unknown> {
 }
 
 export interface MessageAttachment {
+  id?: string
   mime: string
   dataUrl: string
   filename?: string
 }
 
 export interface OrchestratorApi {
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }) => Promise<IpcResult>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; attachments?: MessageAttachment[] }) => Promise<IpcResult>
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>

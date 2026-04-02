@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { X, FolderOpen, CaretDown, Warning, Trash } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import { useModelOptions } from '../hooks/useModelOptions'
+import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
-import type { Project } from '../types/api'
+import type { Project, MessageAttachment } from '../types/api'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
 
@@ -43,7 +44,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[]) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -62,6 +63,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [worktreeRoot, setWorktreeRoot] = useState('')
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
+  const {
+    attachments, isDragOver, fileInputRef,
+    removeAttachment, clearAttachments,
+    handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
+  } = useImageAttachments()
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const estimatedWorktreePath = useMemo(() => {
@@ -217,8 +223,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     if (!directory.trim() || dirError || validating) return
     setLaunching(true)
     try {
-      await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy)
+      await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy, attachments.length > 0 ? attachments : undefined)
       await saveProject(directory.trim())
+      clearAttachments()
       onClose()
     } catch (error) {
       console.error('Launch failed:', error)
@@ -418,13 +425,71 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
               Initial Prompt <span className="text-kumo-subtle/60">(optional — you can prompt from the session)</span>
             </label>
-            <textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Leave empty to start an interactive session..."
-              rows={3}
-              className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle resize-none"
-            />
+            <div
+              className={`flex flex-col gap-0 rounded-md border transition-colors ${
+                isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line focus-within:border-kumo-ring'
+              }`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {attachments.length > 0 && (
+                <div className="flex gap-2 px-3 py-2 overflow-x-auto">
+                  {attachments.map((att) => (
+                    <div key={att.id} className="relative group shrink-0">
+                      <img
+                        src={att.dataUrl}
+                        alt={att.filename ?? 'attachment'}
+                        className="h-16 w-16 rounded-md border border-kumo-line object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(att.id!)}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X size={8} weight="bold" />
+                      </button>
+                      {att.filename && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
+                          {att.filename}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onPaste={handlePaste}
+                placeholder={isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session...'}
+                rows={3}
+                className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
+              />
+              <div className="flex items-center gap-2 px-3 pb-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors"
+                  title="Attach image"
+                >
+                  <Paperclip size={11} />
+                  <span>Attach image</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileInputChange}
+                />
+                <span className="text-[10px] text-kumo-subtle">
+                  Paste or drag images to attach.
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 

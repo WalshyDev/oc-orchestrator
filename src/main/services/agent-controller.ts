@@ -6,6 +6,50 @@ import { notificationService, type NotifiableEventType } from './notification-se
 import { database } from './database'
 import { workspaceManager } from './workspace-manager'
 
+interface Attachment {
+  id?: string
+  mime: string
+  dataUrl: string
+  filename?: string
+}
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+  'application/pdf'
+])
+const MAX_ATTACHMENTS = 10
+const MAX_TOTAL_PAYLOAD_BYTES = 50 * 1024 * 1024 // 50 MB
+
+function validateAttachments(attachments: Attachment[]): Attachment[] {
+  let totalSize = 0
+  const valid: Attachment[] = []
+
+  for (const att of attachments.slice(0, MAX_ATTACHMENTS)) {
+    if (!ALLOWED_MIME_TYPES.has(att.mime)) continue
+    if (!att.dataUrl.startsWith('data:')) continue
+    totalSize += att.dataUrl.length
+    if (totalSize > MAX_TOTAL_PAYLOAD_BYTES) break
+    valid.push(att)
+  }
+
+  return valid
+}
+
+function buildMessageParts(text: string, attachments?: Attachment[]): Array<TextPartInput | FilePartInput> {
+  const parts: Array<TextPartInput | FilePartInput> = [{ type: 'text', text }]
+  if (attachments?.length) {
+    for (const att of validateAttachments(attachments)) {
+      parts.push({
+        type: 'file',
+        mime: att.mime,
+        url: att.dataUrl,
+        ...(att.filename ? { filename: att.filename } : {})
+      })
+    }
+  }
+  return parts
+}
+
 function sanitizeSlug(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -106,8 +150,9 @@ class AgentController {
     prompt?: string
     title?: string
     model?: string
+    attachments?: Attachment[]
   }): Promise<AgentHandle> {
-    const { directory, prompt, title, model } = options
+    const { directory, prompt, title, model, attachments } = options
 
     // Ensure we have a runtime for this directory
     const runtime = await this.ensureBridgeForDirectory(directory)
@@ -163,7 +208,7 @@ class AgentController {
       await client.session.promptAsync({
         sessionID: session.id,
         directory,
-        parts: [{ type: 'text', text: prompt }]
+        parts: buildMessageParts(prompt, attachments)
       })
     }
 
@@ -259,24 +304,17 @@ class AgentController {
    * Optionally invoke a specific agent config by name.
    * Optionally include file attachments (images, PDFs, etc.) as additional parts.
    */
-  async sendMessage(agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<void> {
+  async sendMessage(agentId: string, text: string, agent?: string, attachments?: Attachment[]): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    const parts: Array<TextPartInput | FilePartInput> = [{ type: 'text', text }]
-    if (attachments?.length) {
-      for (const att of attachments) {
-        parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
-      }
-    }
-
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
-      parts,
+      parts: buildMessageParts(text, attachments),
       ...(agent ? { agent } : {})
     })
   }
@@ -621,24 +659,17 @@ class AgentController {
   /**
    * Send a message with a model override.
    */
-  async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<void> {
+  async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    const parts: Array<TextPartInput | FilePartInput> = [{ type: 'text', text }]
-    if (attachments?.length) {
-      for (const att of attachments) {
-        parts.push({ type: 'file', mime: att.mime, url: att.dataUrl, ...(att.filename ? { filename: att.filename } : {}) })
-      }
-    }
-
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
-      parts,
+      parts: buildMessageParts(text, attachments),
       model: { providerID, modelID }
     })
   }

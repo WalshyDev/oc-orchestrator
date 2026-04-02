@@ -716,7 +716,8 @@ export function App() {
     prompt?: string,
     title?: string,
     model?: string,
-    worktreeStrategy?: string
+    worktreeStrategy?: string,
+    attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>
   ) => {
     let launchDirectory = directory
 
@@ -743,7 +744,7 @@ export function App() {
       launchDirectory = worktreeResult.data.worktreePath
     }
 
-    const result = await store.launchAgent(launchDirectory, prompt || undefined, title, model)
+    const result = await store.launchAgent(launchDirectory, prompt || undefined, title, model, attachments)
 
     if (!result?.ok) {
       throw new Error('Failed to launch agent')
