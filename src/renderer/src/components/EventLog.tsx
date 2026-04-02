@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { ListBullets, CaretDown, CaretRight, Funnel } from '@phosphor-icons/react'
 
 export interface EventEntry {
@@ -11,6 +11,7 @@ export interface EventEntry {
 
 interface EventLogProps {
   events: EventEntry[]
+  verbose?: boolean
 }
 
 const typeColorMap: Record<string, string> = {
@@ -41,10 +42,28 @@ function formatJson(data: unknown): string {
   }
 }
 
-export function EventLog({ events }: EventLogProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+export function EventLog({ events, verbose = false }: EventLogProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
+    verbose ? new Set(events.map((e) => e.id)) : new Set()
+  )
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  // Track items the user explicitly collapsed so we don't re-expand them
+  const manuallyCollapsedRef = useRef<Set<string>>(new Set())
+
+  // When verbose is on, auto-expand only *new* items (not manually-collapsed ones)
+  useEffect(() => {
+    if (!verbose) return
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      for (const event of events) {
+        if (!manuallyCollapsedRef.current.has(event.id)) {
+          next.add(event.id)
+        }
+      }
+      return next
+    })
+  }, [verbose, events])
 
   const eventTypes = useMemo(() => {
     const types = new Set<string>()
@@ -64,8 +83,10 @@ export function EventLog({ events }: EventLogProps) {
       const next = new Set(prev)
       if (next.has(eventId)) {
         next.delete(eventId)
+        if (verbose) manuallyCollapsedRef.current.add(eventId)
       } else {
         next.add(eventId)
+        manuallyCollapsedRef.current.delete(eventId)
       }
       return next
     })

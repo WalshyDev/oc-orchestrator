@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 
 export interface ToolCall {
@@ -12,6 +12,7 @@ export interface ToolCall {
 
 interface ToolsUsageProps {
   tools: ToolCall[]
+  verbose?: boolean
 }
 
 const stateStyles: Record<ToolCall['state'], string> = {
@@ -37,9 +38,27 @@ function formatRelativeTime(timestamp: number): string {
   return `${days}d ago`
 }
 
-export function ToolsUsage({ tools }: ToolsUsageProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+export function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
+    verbose ? new Set(tools.map((t) => t.id)) : new Set()
+  )
   const [filterQuery, setFilterQuery] = useState('')
+  // Track items the user explicitly collapsed so we don't re-expand them
+  const manuallyCollapsedRef = useRef<Set<string>>(new Set())
+
+  // When verbose is on, auto-expand only *new* items (not manually-collapsed ones)
+  useEffect(() => {
+    if (!verbose) return
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      for (const tool of tools) {
+        if (!manuallyCollapsedRef.current.has(tool.id)) {
+          next.add(tool.id)
+        }
+      }
+      return next
+    })
+  }, [verbose, tools])
 
   const toolNameCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -60,8 +79,10 @@ export function ToolsUsage({ tools }: ToolsUsageProps) {
       const next = new Set(prev)
       if (next.has(toolId)) {
         next.delete(toolId)
+        if (verbose) manuallyCollapsedRef.current.add(toolId)
       } else {
         next.add(toolId)
+        manuallyCollapsedRef.current.delete(toolId)
       }
       return next
     })

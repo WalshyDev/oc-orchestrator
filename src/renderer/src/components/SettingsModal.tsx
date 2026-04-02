@@ -220,6 +220,27 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </div>
               </div>
 
+              {/* Verbose Mode */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Output Visibility
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer group pl-1">
+                  <input
+                    type="checkbox"
+                    checked={settings.verboseMode}
+                    onChange={(event) => updateSettings({ verboseMode: event.target.checked })}
+                    className="w-3.5 h-3.5 rounded border-kumo-line bg-kumo-control accent-kumo-brand"
+                  />
+                  <span className="text-sm text-kumo-default group-hover:text-kumo-strong transition-colors">
+                    Verbose Mode
+                  </span>
+                </label>
+                <p className="text-[11px] text-kumo-subtle">
+                  Auto-expand all tool calls, tool output, and events in agent detail views. Can be toggled per-agent in the drawer header.
+                </p>
+              </div>
+
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
