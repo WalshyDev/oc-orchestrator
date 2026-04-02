@@ -15,7 +15,8 @@ import {
   ChatCircleDots,
   Brain,
   PaperPlaneTilt,
-  Paperclip
+  Paperclip,
+  ArrowLineUpRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, AgentLabel } from '../types'
 import { formatBranchLabel } from '../types'
@@ -28,6 +29,7 @@ import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
+import { useDismiss } from '../hooks/useDismiss'
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
@@ -668,14 +670,22 @@ export const DetailDrawer = memo(function DetailDrawer({
           {onChangeModel && (
             <ActionButton icon={<Brain size={12} />} label="Model" onClick={onChangeModel} />
           )}
-          {agent.prUrl && (
-            <ActionButton icon={<GitPullRequest size={12} />} label="View PR" onClick={() => window.api?.openExternal(agent.prUrl!)} />
-          )}
-          {onCreatePr && (
-            <ActionButton icon={<GitPullRequest size={12} />} label="Create PR" onClick={onCreatePr} />
-          )}
-          <ActionButton icon={<Terminal size={12} />} label="Terminal" onClick={onOpenTerminal} />
-          <ActionButton icon={<ArrowSquareOut size={12} />} label="Editor" onClick={onOpenInEditor} />
+          <ActionDropdownButton
+            icon={<GitPullRequest size={12} />}
+            label="PR"
+            items={[
+              { icon: <GitPullRequest size={12} />, label: 'Create PR', onClick: onCreatePr },
+              { icon: <ArrowLineUpRight size={12} />, label: 'View PR', onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined }
+            ]}
+          />
+          <ActionDropdownButton
+            icon={<ArrowSquareOut size={12} />}
+            label="Open In"
+            items={[
+              { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
+              { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
+            ]}
+          />
         </div>
 
         {/* Input */}
@@ -1201,6 +1211,71 @@ function ActionButton({
       {icon}
       {label}
     </button>
+  )
+}
+
+interface DropdownItem {
+  icon: React.ReactNode
+  label: string
+  onClick?: () => void
+  disabled?: boolean
+}
+
+function ActionDropdownButton({
+  icon,
+  label,
+  items
+}: {
+  icon: React.ReactNode
+  label: string
+  items: DropdownItem[]
+}) {
+  const { open, toggle, close, containerRef } = useDismiss()
+
+  const visibleItems = items.filter((i) => i.onClick)
+  if (visibleItems.length === 0) return null
+
+  if (visibleItems.length === 1) {
+    const item = visibleItems[0]
+    return (
+      <ActionButton
+        icon={item.icon}
+        label={item.label}
+        onClick={item.onClick}
+        disabled={item.disabled}
+      />
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="relative inline-flex">
+      <button
+        onClick={toggle}
+        className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
+      >
+        {icon}
+        {label}
+        <CaretDown size={10} className="ml-0.5" />
+      </button>
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+          {visibleItems.map((item) => (
+            <button
+              key={item.label}
+              disabled={item.disabled}
+              onClick={() => {
+                item.onClick?.()
+                close()
+              }}
+              className={`flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] rounded transition-colors text-left text-kumo-default hover:bg-kumo-fill ${item.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
