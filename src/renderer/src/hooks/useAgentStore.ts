@@ -1037,6 +1037,51 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
   }
 }
 
+/**
+ * Periodic reconciliation: compare local agent statuses against the server's
+ * actual session statuses and correct any drift. This catches agents stuck
+ * in 'running' due to missed SSE events (reconnection gaps, dropped terminal
+ * events, runtime crashes after optimistic updates, etc.).
+ *
+ * Unlike `applyStatuses` (used at init), this is more conservative:
+ * - Only corrects agents whose local status disagrees with the server
+ * - Respects completed/completed_manual/stopping as immutable from reconciliation
+ * - Logs corrections for debugging
+ */
+function reconcileStatuses(statuses: AgentStatusesPayload): void {
+  let changed = false
+
+  for (const statusEntry of Object.values(statuses)) {
+    const agent = state.agents.get(statusEntry.agentId)
+    if (!agent) continue
+
+    const serverStatus = mapSessionStatus(statusEntry.status.type)
+
+    // Never override user-driven states
+    if (agent.status === 'completed_manual' || agent.status === 'stopping') continue
+
+    // Don't let the server override completed with idle (same as applyStatuses)
+    if (serverStatus === 'idle' && agent.status === 'completed') continue
+
+    // If statuses already match, nothing to do
+    if (agent.status === serverStatus) continue
+
+    console.warn(
+      `[AgentStore] Reconciliation: agent ${agent.id} status ${agent.status} → ${serverStatus} (server says ${statusEntry.status.type})`
+    )
+    agent.status = serverStatus
+    agent.lastActivityAt = Date.now()
+    if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
+      agent.blockedSince = agent.blockedSince ?? Date.now()
+    } else {
+      agent.blockedSince = undefined
+    }
+    changed = true
+  }
+
+  if (changed) emit()
+}
+
 // ── Helpers ──
 
 function findAgentBySession(sessionId: string): LiveAgent | undefined {
@@ -1209,8 +1254,27 @@ export function useAgentStore() {
 
     void initializeAgents()
 
+    // Periodic status reconciliation: re-poll the server every 30s to correct
+    // any status drift caused by missed SSE events (reconnection gaps, dropped
+    // terminal events, etc.). Without this, agents can appear stuck in 'running'
+    // indefinitely when the SSE stream misses a session.idle/completed/error event.
+    const RECONCILE_INTERVAL_MS = 30_000
+    const reconcileInterval = setInterval(async () => {
+      if (cancelled || !window.api) return
+      try {
+        const statusesResult = await window.api.getStatuses()
+        if (cancelled) return
+        if (statusesResult.ok && statusesResult.data) {
+          reconcileStatuses(statusesResult.data)
+        }
+      } catch {
+        // Silently ignore — next interval will retry
+      }
+    }, RECONCILE_INTERVAL_MS)
+
     return () => {
       cancelled = true
+      clearInterval(reconcileInterval)
       for (const cleanup of cleanups) cleanup()
     }
   }, [])
@@ -1254,6 +1318,8 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     if (agent?.status === 'stopping') return
 
+    const previousStatus = agent?.status
+
     // Optimistically update task summary and status
     if (agent && text.trim()) {
       agent.taskSummary = text.trim().slice(0, 120)
@@ -1271,7 +1337,19 @@ export function useAgentStore() {
 
     emit()
 
-    return window.api.sendMessage(agentId, text, agentConfig, attachments)
+    const result = await window.api.sendMessage(agentId, text, agentConfig, attachments)
+
+    // Rollback optimistic status if the send failed — prevents phantom 'running'
+    if (result && !result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'running') {
+        agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.lastActivityAt = Date.now()
+        emit()
+      }
+    }
+
+    return result
   }, [])
 
   const listCommands = useCallback(async (agentId: string) => {
@@ -1326,9 +1404,11 @@ export function useAgentStore() {
   const respondToPermission = useCallback(async (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => {
     if (!window.api) return
 
+    const agent = state.agents.get(agentId)
+    const previousStatus = agent?.status
+
     // Optimistically clear permission and set running
     state.permissions.delete(permissionId)
-    const agent = state.agents.get(agentId)
     if (agent) {
       if (agent.status !== 'stopping') {
         agent.status = 'running'
@@ -1338,15 +1418,28 @@ export function useAgentStore() {
     }
     emit()
 
-    return window.api.respondToPermission(agentId, permissionId, response)
+    const result = await window.api.respondToPermission(agentId, permissionId, response)
+
+    if (result && !result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'running') {
+        agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.lastActivityAt = Date.now()
+        emit()
+      }
+    }
+
+    return result
   }, [])
 
   const replyToQuestion = useCallback(async (agentId: string, requestId: string, answers: string[][]) => {
     if (!window.api) return
 
+    const agent = state.agents.get(agentId)
+    const previousStatus = agent?.status
+
     // Optimistically clear question and set running
     state.questions.delete(requestId)
-    const agent = state.agents.get(agentId)
     if (agent) {
       agent.status = 'running'
       agent.blockedSince = undefined
@@ -1354,15 +1447,28 @@ export function useAgentStore() {
     }
     emit()
 
-    return window.api.replyToQuestion(agentId, requestId, answers)
+    const result = await window.api.replyToQuestion(agentId, requestId, answers)
+
+    if (result && !result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'running') {
+        agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.lastActivityAt = Date.now()
+        emit()
+      }
+    }
+
+    return result
   }, [])
 
   const rejectQuestion = useCallback(async (agentId: string, requestId: string) => {
     if (!window.api) return
 
+    const agent = state.agents.get(agentId)
+    const previousStatus = agent?.status
+
     // Optimistically clear question and set running
     state.questions.delete(requestId)
-    const agent = state.agents.get(agentId)
     if (agent) {
       agent.status = 'running'
       agent.blockedSince = undefined
@@ -1370,7 +1476,18 @@ export function useAgentStore() {
     }
     emit()
 
-    return window.api.rejectQuestion(agentId, requestId)
+    const result = await window.api.rejectQuestion(agentId, requestId)
+
+    if (result && !result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'running') {
+        agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.lastActivityAt = Date.now()
+        emit()
+      }
+    }
+
+    return result
   }, [])
 
   const abortAgent = useCallback(async (agentId: string) => {
