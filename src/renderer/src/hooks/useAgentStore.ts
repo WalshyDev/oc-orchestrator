@@ -673,11 +673,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
           message.parts.push(newPart)
         }
 
-        // Update agent activity (but don't clobber blocked/stopping states)
+        // Update agent activity (but don't clobber blocked/stopping/terminal states)
         const agent = findAgentBySession(sessionId)
         if (agent) {
           agent.lastActivityAt = Date.now()
-          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed_manual') {
+          if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed_manual' && agent.status !== 'completed' && agent.status !== 'idle') {
             agent.status = 'running'
             agent.blockedSince = undefined
           }
