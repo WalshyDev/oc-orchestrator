@@ -184,6 +184,9 @@ const api = {
   getVersion: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('app:version'),
 
+  getHomeDirectory: (): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('app:home-directory'),
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),

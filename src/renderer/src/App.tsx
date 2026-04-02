@@ -64,6 +64,7 @@ export function App() {
   const [dismissedInterruptIds, setDismissedInterruptIds] = useState<Set<string> | null>(null)
   const [launchCommands, setLaunchCommands] = useState<ChatCommand[]>([])
   const [launchAgentConfigs, setLaunchAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
+  const [quickLaunching, setQuickLaunching] = useState(false)
 
   const store = useAgentStore()
 
@@ -904,6 +905,30 @@ export function App() {
     }
   }, [store])
 
+  const handleQuickLaunch = useCallback(async () => {
+    if (quickLaunching) return
+    setQuickLaunching(true)
+    try {
+      const homeResult = await window.api.getHomeDirectory()
+      if (!homeResult.ok || !homeResult.data) {
+        console.error('[App] Failed to get home directory:', homeResult.error)
+        return
+      }
+
+      const title = `QuickStart-${Math.random().toString(36).slice(2, 10)}`
+      const result = await store.launchAgent(homeResult.data, undefined, title, 'auto')
+
+      if (!result?.ok || !result.data) return
+
+      const agentId = (result.data as { id: string }).id
+      setSelectedAgentId(agentId)
+    } catch (error) {
+      console.error('[App] Quick launch failed:', error)
+    } finally {
+      setQuickLaunching(false)
+    }
+  }, [store, quickLaunching])
+
   const handleResumeSession = useCallback(async (directory: string, sessionId: string, title: string) => {
     const result = await window.api.resumeAgent({ directory, sessionId, title })
     if (!result?.ok) {
@@ -968,6 +993,14 @@ export function App() {
         event.preventDefault()
         const searchInput = document.querySelector<HTMLInputElement>('input[placeholder="Filter agents..."]')
         searchInput?.focus()
+        return
+      }
+
+      // Q -> quick launch
+      if (event.key === 'q' || event.key === 'Q') {
+        if (!showLaunchModal && !showSettings && !showSessionBrowser) {
+          void handleQuickLaunch()
+        }
         return
       }
 
@@ -1048,7 +1081,7 @@ export function App() {
         return
       }
     },
-    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, findPermissionForAgent, store]
+    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, findPermissionForAgent, store, handleQuickLaunch]
   )
 
   useEffect(() => {
@@ -1063,6 +1096,8 @@ export function App() {
         blockedCount={counts.blocked}
         idleCount={counts.idle}
         onLaunch={() => setShowLaunchModal(true)}
+        onQuickLaunch={handleQuickLaunch}
+        quickLaunching={quickLaunching}
         onOpenCommandPalette={() => setShowCommandPalette(true)}
         onSettings={() => setShowSettings(true)}
       />
