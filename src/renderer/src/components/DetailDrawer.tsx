@@ -208,7 +208,6 @@ export const DetailDrawer = memo(function DetailDrawer({
   )
   const showAgentPicker = matchingAgents.length > 0 && !showCommandAutocomplete
 
-  // Chat input can reply to a question only when it's a single question accepting custom text
   const canReplyViaChat = !!question
     && question.questions.length === 1
     && question.questions[0].custom !== false
@@ -804,24 +803,21 @@ function QuestionCard({
   const totalQuestions = question.questions.length
   const isSingleQuestion = totalQuestions === 1
 
-  // answers[qi] = selected labels for question qi
   const [answers, setAnswers] = useState<string[][]>(() =>
     question.questions.map(() => [])
   )
-  // custom text inputs per question (only used when custom=true)
   const [customTexts, setCustomTexts] = useState<string[]>(() =>
     question.questions.map(() => '')
   )
 
-  // Reset state if question changes
   useEffect(() => {
     setAnswers(question.questions.map(() => []))
     setCustomTexts(question.questions.map(() => ''))
   }, [question.id, question.questions])
 
   const allAnswered = useMemo(() =>
-    question.questions.every((_, qi) => answers[qi].length > 0),
-    [question.questions, answers]
+    question.questions.every((_, qi) => answers[qi].length > 0 || customTexts[qi]?.trim()),
+    [question.questions, answers, customTexts]
   )
 
   function toggleOption(qi: number, label: string, multiple: boolean) {
@@ -833,12 +829,11 @@ function QuestionCard({
           ? current.filter(l => l !== label)
           : [...current, label]
       } else {
-        // Single select: toggle or replace
         next[qi] = current[0] === label ? [] : [label]
       }
       return next
     })
-    // Clear custom text when a predefined option is selected (single-select)
+    // For single-select, clear custom text so stale input isn't silently appended
     if (!multiple) {
       setCustomTexts(prev => {
         const next = [...prev]
@@ -854,23 +849,12 @@ function QuestionCard({
       next[qi] = text
       return next
     })
-    // When typing custom text, clear predefined selections (single-select)
-    if (!question.questions[qi].multiple && text) {
-      setAnswers(prev => {
-        const next = [...prev]
-        next[qi] = []
-        return next
-      })
-    }
   }
 
   function buildFinalAnswers(): string[][] {
-    return question.questions.map((q, qi) => {
+    return question.questions.map((_q, qi) => {
       const custom = customTexts[qi]?.trim()
-      if (custom && answers[qi].length === 0) {
-        return [custom]
-      }
-      if (q.multiple && custom) {
+      if (custom) {
         return [...answers[qi], custom]
       }
       return answers[qi]
@@ -885,11 +869,6 @@ function QuestionCard({
     }
   }
 
-  // For single-question, single-select: submit immediately on click
-  function handleSingleQuestionSelect(label: string) {
-    onReply?.([[label]])
-  }
-
   return (
     <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
       <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
@@ -899,7 +878,6 @@ function QuestionCard({
 
       {question.questions.map((q, qi) => {
         const isMultiple = q.multiple ?? false
-        const hasCustom = q.custom ?? false
         const selected = answers[qi]
 
         return (
@@ -915,23 +893,6 @@ function QuestionCard({
               <div className="flex flex-col gap-1 mt-1">
                 {q.options.map((opt, oi) => {
                   const isSelected = selected.includes(opt.label)
-
-                  // Single question + single select + no custom = instant submit (original behavior)
-                  if (isSingleQuestion && !isMultiple && !hasCustom) {
-                    return (
-                      <button
-                        key={oi}
-                        type="button"
-                        onClick={() => handleSingleQuestionSelect(opt.label)}
-                        className="flex flex-col items-start px-2.5 py-1.5 text-left text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 hover:border-status-input/40 hover:bg-status-input-bg/20 transition-colors"
-                      >
-                        <span className="font-medium text-kumo-default">{opt.label}</span>
-                        {opt.description && (
-                          <span className="text-kumo-subtle">{opt.description}</span>
-                        )}
-                      </button>
-                    )
-                  }
 
                   return (
                     <button
@@ -962,58 +923,42 @@ function QuestionCard({
                 })}
               </div>
             )}
-            {hasCustom && (
-              <input
-                type="text"
-                value={customTexts[qi]}
-                onChange={(e) => setCustomAnswer(qi, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSubmit()
-                  }
-                }}
-                placeholder="Type your own answer..."
-                className="mt-1 px-2.5 py-1.5 text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 text-kumo-default outline-none focus:border-status-input/50 placeholder:text-kumo-subtle"
-              />
-            )}
+            <input
+              type="text"
+              value={customTexts[qi]}
+              onChange={(e) => setCustomAnswer(qi, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSubmit()
+                }
+              }}
+              placeholder="Type your own answer..."
+              className="mt-1 px-2.5 py-1.5 text-[11px] rounded-md bg-kumo-overlay border border-kumo-interact/20 text-kumo-default outline-none focus:border-status-input/50 placeholder:text-kumo-subtle"
+            />
           </div>
         )
       })}
 
-      {/* Submit + Dismiss row — shown when we need explicit submission */}
-      {!(isSingleQuestion && !question.questions[0].multiple && !question.questions[0].custom) && (
-        <div className="flex items-center gap-2 mt-1">
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!allAnswered && !customTexts.some(t => t.trim())}
-            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-status-input/15 border border-status-input/30 text-status-input hover:bg-status-input/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <PaperPlaneTilt size={12} weight="fill" /> Submit
-          </button>
-          {onReject && (
-            <button
-              type="button"
-              onClick={onReject}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
-            >
-              <XCircle size={12} /> Dismiss
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Dismiss for single-question instant-submit mode */}
-      {isSingleQuestion && !question.questions[0].multiple && !question.questions[0].custom && onReject && (
+      <div className="flex items-center gap-2 mt-1">
         <button
           type="button"
-          onClick={onReject}
-          className="self-start flex items-center gap-1 px-2.5 py-1.5 mt-1 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+          onClick={handleSubmit}
+          disabled={!allAnswered}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-status-input/15 border border-status-input/30 text-status-input hover:bg-status-input/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <XCircle size={12} /> Dismiss
+          <PaperPlaneTilt size={12} weight="fill" /> Submit
         </button>
-      )}
+        {onReject && (
+          <button
+            type="button"
+            onClick={onReject}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+          >
+            <XCircle size={12} /> Dismiss
+          </button>
+        )}
+      </div>
     </div>
   )
 }
