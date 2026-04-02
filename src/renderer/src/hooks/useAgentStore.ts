@@ -161,6 +161,11 @@ let state: AgentStoreState = {
 
 let eventCounter = 0
 
+// Tracks agents whose taskSummary was set via an explicit override (e.g. "Create PR",
+// "/review") so the SSE echo of the raw prompt text doesn't clobber the friendly label.
+// Cleared when a server-generated session title arrives (which is a better summary).
+const taskSummaryLocked = new Set<string>()
+
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -578,7 +583,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
         const time = info?.time as { updated?: number } | undefined
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
         const title = info?.title as string | undefined
-        if (title && !title.match(/^agent-\d+(-\d+)?$/)) {
+        // Only use the server-generated session title for the initial summary
+        // (when taskSummary is still a placeholder). Once the user has sent a
+        // message, their latest prompt is more relevant than the session title
+        // which tends to reflect only the first message.
+        const isPlaceholder = agent.taskSummary.endsWith('waiting for prompt...')
+        if (title && !title.match(/^agent-\d+(-\d+)?$/) && isPlaceholder && !taskSummaryLocked.has(agent.id)) {
           agent.taskSummary = title.slice(0, 120)
           persistAgentMeta(agent.id, { taskSummary: agent.taskSummary })
         }
@@ -696,11 +706,14 @@ function processEvent(payload: OpenCodeEventPayload): void {
             agent.blockedSince = undefined
           }
 
-          // Update task summary from first user text part
+          // Update task summary from first user text part, unless an override
+          // label is active (e.g. "Create PR" or a slash command).
           if (message.role === 'user' && partType === 'text' && part.text) {
             const text = part.text as string
             if (text.length > 0) {
-              agent.taskSummary = text.slice(0, 120)
+              if (!taskSummaryLocked.has(agent.id)) {
+                agent.taskSummary = text.slice(0, 120)
+              }
 
               // Auto-name the agent from the first prompt if no explicit name was given
               if (agent.autoNamed) {
@@ -979,6 +992,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   agent.cost = 0
   agent.tokens = { input: 0, output: 0 }
   agent.lastActivityAt = Date.now()
+  taskSummaryLocked.delete(payload.id)
 
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   if (hasPrompt) {
@@ -996,6 +1010,7 @@ function removeAgentState(agentId: string): void {
   const agent = state.agents.get(agentId)
   if (!agent) return
 
+  taskSummaryLocked.delete(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
@@ -1366,7 +1381,7 @@ export function useAgentStore() {
     return result
   }, [])
 
-  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: MessageAttachment[]) => {
+  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: MessageAttachment[], taskSummaryOverride?: string) => {
     if (!window.api) return
 
     // Don't allow sending while agent is stopping
@@ -1376,9 +1391,17 @@ export function useAgentStore() {
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
 
-    // Optimistically update task summary and status
+    // Optimistically update task summary and status.
+    // When a taskSummaryOverride is provided (e.g. "Create PR"), use it instead of
+    // the raw prompt text, and lock it so the SSE echo doesn't clobber it.
     if (agent && text.trim()) {
-      agent.taskSummary = text.trim().slice(0, 120)
+      if (taskSummaryOverride) {
+        agent.taskSummary = taskSummaryOverride.slice(0, 120)
+        taskSummaryLocked.add(agentId)
+      } else {
+        agent.taskSummary = text.trim().slice(0, 120)
+        taskSummaryLocked.delete(agentId)
+      }
       agent.status = 'running'
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
@@ -1440,7 +1463,38 @@ export function useAgentStore() {
 
   const executeCommand = useCallback(async (agentId: string, command: string, args: string) => {
     if (!window.api) return
-    return window.api.executeCommand(agentId, command, args)
+
+    const agent = state.agents.get(agentId)
+    if (agent?.status === 'stopping') return
+
+    // Show the slash command in the task summary so it's visible in the dashboard
+    const previousStatus = agent?.status
+    const previousSummary = agent?.taskSummary
+    if (agent) {
+      const cmdText = args ? `/${command} ${args}` : `/${command}`
+      agent.taskSummary = cmdText.slice(0, 120)
+      agent.status = 'running'
+      agent.lastActivityAt = Date.now()
+      agent.blockedSince = undefined
+      taskSummaryLocked.add(agentId)
+      persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
+      emit()
+    }
+
+    const result = await window.api.executeCommand(agentId, command, args)
+
+    if (result && !result.ok) {
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter) {
+        agentAfter.status = previousStatus ?? 'idle'
+        agentAfter.taskSummary = previousSummary ?? agentAfter.taskSummary
+        agentAfter.lastActivityAt = Date.now()
+        taskSummaryLocked.delete(agentId)
+        emit()
+      }
+    }
+
+    return result
   }, [])
 
   const prepareFreshAgent = useCallback((agentId: string, prompt?: string) => {

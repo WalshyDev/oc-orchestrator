@@ -673,7 +673,7 @@ export function App() {
 
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
-    await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt)
+    await store.sendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
   }, [selectedAgentId, store])
 
   const handleOpenInEditor = useCallback(() => {
@@ -693,7 +693,7 @@ export function App() {
   }, [selectedAgentId, findLiveAgent])
 
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
-    await store.sendMessage(agentId, loadSettings().createPrPrompt)
+    await store.sendMessage(agentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
   }, [store])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
