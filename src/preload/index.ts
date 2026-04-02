@@ -6,12 +6,19 @@ export interface IpcResult<T = unknown> {
   error?: string
 }
 
+interface Attachment {
+  id?: string
+  mime: string
+  dataUrl: string
+  filename?: string
+}
+
 const api = {
   // ── Agent Operations ──
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string }): Promise<IpcResult> =>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; attachments?: Attachment[] }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
-  sendMessage: (agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<IpcResult> =>
+  sendMessage: (agentId: string, text: string, agent?: string, attachments?: Attachment[]): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message', agentId, text, agent, attachments),
 
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject'): Promise<IpcResult> =>
@@ -65,7 +72,7 @@ const api = {
   listTools: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list-tools', agentId),
 
-  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>): Promise<IpcResult> =>
+  sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
   listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>

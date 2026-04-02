@@ -7,6 +7,13 @@ import { database } from './services/database'
 import { notificationService, type NotifiableEventType } from './services/notification-service'
 import { getAppVersion } from './version'
 
+interface Attachment {
+  id?: string
+  mime: string
+  dataUrl: string
+  filename?: string
+}
+
 /**
  * Register all IPC handlers for renderer <-> main communication.
  */
@@ -18,6 +25,7 @@ export function registerIpcHandlers(): void {
     prompt?: string
     title?: string
     model?: string
+    attachments?: Attachment[]
   }) => {
     try {
       const handle = await agentController.launchAgent(options)
@@ -42,7 +50,7 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string, agent?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
+  ipcMain.handle('agent:send-message', async (_event, agentId: string, text: string, agent?: string, attachments?: Attachment[]) => {
     try {
       await agentController.sendMessage(agentId, text, agent, attachments)
       return { ok: true }
@@ -251,7 +259,7 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('agent:send-message-with-model', async (_event, agentId: string, text: string, providerID: string, modelID: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
+  ipcMain.handle('agent:send-message-with-model', async (_event, agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]) => {
     try {
       await agentController.sendMessageWithModel(agentId, text, providerID, modelID, attachments)
       return { ok: true }

@@ -20,6 +20,7 @@ import {
 import type { AgentRuntime, Message, StatusOverride } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
+import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
 import { StatusDropdown } from './StatusDropdown'
 import { Markdown } from './Markdown'
@@ -119,93 +120,18 @@ export function DetailDrawer({
   const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
-  const [attachments, setAttachments] = useState<Array<{ mime: string; dataUrl: string; filename?: string }>>([])
-  const [isDragOver, setIsDragOver] = useState(false)
+  const {
+    attachments, isDragOver, fileInputRef,
+    removeAttachment, clearAttachments,
+    handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
+  } = useImageAttachments()
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const shouldAutoScrollRef = useRef(true)
   const userScrolledRef = useRef(false)
   const isResizingRef = useRef(false)
-
-  const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-  const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024 // 20 MB
-
-  const readFileAsDataUrl = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(file)
-    })
-  }, [])
-
-  const addImageFiles = useCallback(async (files: FileList | File[]) => {
-    const imageFiles = Array.from(files).filter(
-      (f) => ACCEPTED_IMAGE_TYPES.includes(f.type) && f.size <= MAX_ATTACHMENT_SIZE
-    )
-    if (imageFiles.length === 0) return
-
-    const newAttachments = await Promise.all(
-      imageFiles.map(async (f) => ({
-        mime: f.type,
-        dataUrl: await readFileAsDataUrl(f),
-        filename: f.name
-      }))
-    )
-    setAttachments((prev) => [...prev, ...newAttachments])
-  }, [readFileAsDataUrl])
-
-  const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index))
-  }, [])
-
-  const handlePaste = useCallback((event: React.ClipboardEvent) => {
-    const items = event.clipboardData?.items
-    if (!items) return
-
-    const imageFiles: File[] = []
-    for (const item of items) {
-      if (ACCEPTED_IMAGE_TYPES.includes(item.type)) {
-        const file = item.getAsFile()
-        if (file) imageFiles.push(file)
-      }
-    }
-    if (imageFiles.length > 0) {
-      event.preventDefault()
-      void addImageFiles(imageFiles)
-    }
-  }, [addImageFiles])
-
-  const handleDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    setIsDragOver(true)
-  }, [])
-
-  const handleDragLeave = useCallback((event: React.DragEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    setIsDragOver(false)
-  }, [])
-
-  const handleDrop = useCallback((event: React.DragEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    setIsDragOver(false)
-    if (event.dataTransfer?.files?.length) {
-      void addImageFiles(event.dataTransfer.files)
-    }
-  }, [addImageFiles])
-
-  const handleFileInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files?.length) {
-      void addImageFiles(event.target.files)
-      event.target.value = ''
-    }
-  }, [addImageFiles])
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -348,7 +274,7 @@ export function DetailDrawer({
     if ((!inputText.trim() && attachments.length === 0) || !onSendMessage) return
     onSendMessage(inputText.trim(), attachments.length > 0 ? attachments : undefined)
     setInputText('')
-    setAttachments([])
+    clearAttachments()
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -635,14 +561,14 @@ export function DetailDrawer({
             isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line'
           }`}
           onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {/* Attachment thumbnails */}
           {attachments.length > 0 && (
             <div className="flex gap-2 px-1 py-1.5 overflow-x-auto">
-              {attachments.map((att, index) => (
-                <div key={index} className="relative group shrink-0">
+              {attachments.map((att) => (
+                <div key={att.id} className="relative group shrink-0">
                   <img
                     src={att.dataUrl}
                     alt={att.filename ?? 'attachment'}
@@ -650,7 +576,7 @@ export function DetailDrawer({
                   />
                   <button
                     type="button"
-                    onClick={() => removeAttachment(index)}
+                    onClick={() => removeAttachment(att.id!)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <X size={8} weight="bold" />

@@ -3,7 +3,8 @@ import type { AgentStatus, StatusOverride } from '../types'
 import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
-  AgentStatusesPayload
+  AgentStatusesPayload,
+  MessageAttachment
 } from '../types/api'
 
 interface HistoricalMessageInfo {
@@ -1303,9 +1304,9 @@ export function useAgentStore() {
   const permissions = Array.from(storeState.permissions.values())
   const questions = Array.from(storeState.questions.values())
 
-  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string) => {
+  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, attachments?: MessageAttachment[]) => {
     if (!window.api) return
-    const result = await window.api.launchAgent({ directory, prompt, title, model })
+    const result = await window.api.launchAgent({ directory, prompt, title, model, attachments })
     if (!result.ok) {
       console.error('Failed to launch agent:', result.error)
     } else if (result.data) {
@@ -1331,7 +1332,7 @@ export function useAgentStore() {
     return result
   }, [])
 
-  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
+  const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: MessageAttachment[]) => {
     if (!window.api) return
 
     // Don't allow sending while agent is stopping
