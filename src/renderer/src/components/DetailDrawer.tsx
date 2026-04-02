@@ -42,6 +42,7 @@ const MIN_DRAWER_WIDTH = 400
 const MAX_DRAWER_WIDTH = 1000
 const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
+const SCROLL_SETTLE_MS = 150
 
 function loadDrawerWidth(): number {
   try {
@@ -157,8 +158,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const shouldAutoScrollRef = useRef(true)
-  const userScrolledRef = useRef(false)
+  const followBottomRef = useRef(true)
   const isResizingRef = useRef(false)
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
@@ -242,27 +242,28 @@ export const DetailDrawer = memo(function DetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  // Tracks the last scrollHeight we pinned to, so we only auto-scroll when
-  // content actually grows — not on every render/message reference change.
   const lastScrollHeightRef = useRef(0)
-  // True while we're programmatically setting scrollTop, so the onScroll
-  // handler can ignore the resulting event.
-  const isProgrammaticRef = useRef(false)
+  // Deadline until which scroll events are ignored — a single scrollTop
+  // assignment can fire multiple browser events as the position settles.
+  const ignoreScrollUntilRef = useRef(0)
 
-  // Reset scroll state when switching to transcript tab
+  const scrollToBottom = (container: HTMLDivElement) => {
+    ignoreScrollUntilRef.current = Date.now() + SCROLL_SETTLE_MS
+    container.scrollTop = container.scrollHeight
+  }
+
   useEffect(() => {
     if (activeTab === 'transcript') {
-      shouldAutoScrollRef.current = true
-      userScrolledRef.current = false
+      followBottomRef.current = true
       initialScrollDoneRef.current = false
       lastScrollHeightRef.current = 0
       setShowJumpToLatest(false)
     }
   }, [activeTab])
 
-  // Auto-scroll: pin to bottom when content grows, but only if the user
-  // hasn't scrolled away. Compares scrollHeight to detect actual new content
-  // rather than re-scrolling on every messages array reference change.
+  // Pin to bottom when content grows, unless the user scrolled away.
+  // Compares scrollHeight to detect actual new content rather than
+  // re-scrolling on every messages array reference change.
   useEffect(() => {
     if (activeTab !== 'transcript') return
     const container = transcriptScrollRef.current
@@ -272,31 +273,24 @@ export const DetailDrawer = memo(function DetailDrawer({
     const contentGrew = scrollHeight > lastScrollHeightRef.current
     lastScrollHeightRef.current = scrollHeight
 
-    // On initial render, always go to bottom
     if (!initialScrollDoneRef.current && messages.length > 0) {
       initialScrollDoneRef.current = true
-      isProgrammaticRef.current = true
-      container.scrollTop = scrollHeight
+      scrollToBottom(container)
       return
     }
 
     if (!contentGrew) return
 
-    if (shouldAutoScrollRef.current && !userScrolledRef.current) {
-      isProgrammaticRef.current = true
-      container.scrollTop = scrollHeight
+    if (followBottomRef.current) {
+      scrollToBottom(container)
       setShowJumpToLatest(false)
-    } else if (userScrolledRef.current) {
+    } else {
       setShowJumpToLatest(true)
     }
   }, [messages, visibleMessages, activeTab])
 
   const handleTranscriptScroll = () => {
-    // Skip scroll events caused by our own scrollTop assignments
-    if (isProgrammaticRef.current) {
-      isProgrammaticRef.current = false
-      return
-    }
+    if (Date.now() < ignoreScrollUntilRef.current) return
 
     const container = transcriptScrollRef.current
     if (!container) return
@@ -304,25 +298,16 @@ export const DetailDrawer = memo(function DetailDrawer({
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     const nearBottom = distanceFromBottom < 80
 
-    if (nearBottom) {
-      shouldAutoScrollRef.current = true
-      userScrolledRef.current = false
-      setShowJumpToLatest(false)
-    } else {
-      shouldAutoScrollRef.current = false
-      userScrolledRef.current = true
-      setShowJumpToLatest(true)
-    }
+    followBottomRef.current = nearBottom
+    setShowJumpToLatest(!nearBottom)
   }
 
   const handleJumpToLatest = () => {
-    shouldAutoScrollRef.current = true
-    userScrolledRef.current = false
+    followBottomRef.current = true
     setShowJumpToLatest(false)
     const container = transcriptScrollRef.current
     if (container) {
-      isProgrammaticRef.current = true
-      container.scrollTop = container.scrollHeight
+      scrollToBottom(container)
       lastScrollHeightRef.current = container.scrollHeight
     }
   }
