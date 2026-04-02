@@ -271,6 +271,44 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('session:list', async (_event, directory: string) => {
+    try {
+      const sessions = await agentController.listSessions(directory)
+      return { ok: true, data: sessions }
+    } catch (error) {
+      console.error('[IPC] session:list failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('agent:resume', async (_event, options: {
+    directory: string
+    sessionId: string
+    title?: string
+  }) => {
+    try {
+      const handle = await agentController.resumeAgent(options)
+      return {
+        ok: true,
+        data: {
+          id: handle.id,
+          runtimeId: handle.runtimeId,
+          sessionId: handle.sessionId,
+          directory: handle.directory,
+          projectName: handle.projectName,
+          branchName: handle.branchName,
+          isWorktree: handle.isWorktree,
+          workspaceName: handle.workspaceName,
+          prompt: handle.prompt,
+          title: handle.title
+        }
+      }
+    } catch (error) {
+      console.error('[IPC] agent:resume failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:list', async () => {
     const agents = agentController.getAllAgents()
     return {
