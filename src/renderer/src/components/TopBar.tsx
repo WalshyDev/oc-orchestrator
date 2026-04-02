@@ -1,10 +1,12 @@
-import { Command, GearSix, Plus } from '@phosphor-icons/react'
+import { CircleNotch, Command, GearSix, Lightning, Plus } from '@phosphor-icons/react'
 
 interface TopBarProps {
   runningCount: number
   blockedCount: number
   idleCount: number
   onLaunch: () => void
+  onQuickLaunch: () => void
+  quickLaunching?: boolean
   onOpenCommandPalette?: () => void
   onSettings?: () => void
 }
@@ -14,6 +16,8 @@ export function TopBar({
   blockedCount,
   idleCount,
   onLaunch,
+  onQuickLaunch,
+  quickLaunching,
   onOpenCommandPalette,
   onSettings,
 }: TopBarProps) {
@@ -56,6 +60,22 @@ export function TopBar({
             <Command size={10} className="inline" />K
           </kbd>
           <span>Command</span>
+        </button>
+        <button
+          type="button"
+          onClick={onQuickLaunch}
+          disabled={quickLaunching}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+            quickLaunching
+              ? 'border-kumo-line text-kumo-subtle cursor-not-allowed'
+              : 'border-kumo-brand text-kumo-brand hover:bg-kumo-brand/10'
+          }`}
+          title="Quick launch — starts in home directory with system model (Q)"
+        >
+          {quickLaunching
+            ? <CircleNotch size={14} className="animate-spin" />
+            : <Lightning size={14} weight="bold" />}
+          {quickLaunching ? 'Starting...' : 'Quick'}
         </button>
         <button
           type="button"

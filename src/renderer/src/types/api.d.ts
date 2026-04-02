@@ -76,6 +76,7 @@ export interface OrchestratorApi {
 
   // ── App Info ──
   getVersion: () => Promise<IpcResult<string>>
+  getHomeDirectory: () => Promise<IpcResult<string>>
 
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string) => Promise<IpcResult>

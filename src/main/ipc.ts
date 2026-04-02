@@ -1,5 +1,6 @@
 import { ipcMain, dialog, shell } from 'electron'
 import { execFile } from 'child_process'
+import os from 'os'
 import { agentController } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager } from './services/workspace-manager'
@@ -660,6 +661,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('app:version', () => {
     return { ok: true, data: getAppVersion() }
+  })
+
+  ipcMain.handle('app:home-directory', () => {
+    return { ok: true, data: os.homedir() }
   })
 
   // ── Shell Integration ──
