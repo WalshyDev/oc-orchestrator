@@ -962,8 +962,8 @@ class AgentController {
   /**
    * Check agent status and send desktop notification if appropriate.
    */
-  checkAndNotify(agentId: string, status: NotifiableEventType, agentName: string, projectName?: string): void {
-    notificationService.checkAndNotify(agentId, status, agentName, projectName)
+  checkAndNotify(agentId: string, status: NotifiableEventType, agentName: string, projectName?: string, preview?: string): void {
+    notificationService.checkAndNotify(agentId, status, agentName, projectName, preview)
 
     // Update badge count with number of blocked agents (needs_approval + needs_input)
     const blockedStatuses: NotifiableEventType[] = ['needs_approval', 'needs_input']

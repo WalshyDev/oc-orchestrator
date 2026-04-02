@@ -592,11 +592,11 @@ export function registerIpcHandlers(): void {
 
   // ── Notifications ──
 
-  ipcMain.handle('agent:notify-status', async (_event, agentId: string, status: string, agentName: string, projectName?: string) => {
+  ipcMain.handle('agent:notify-status', async (_event, agentId: string, status: string, agentName: string, projectName?: string, preview?: string) => {
     try {
       const notifiable = ['needs_approval', 'needs_input', 'errored', 'completed', 'disconnected']
       if (notifiable.includes(status)) {
-        agentController.checkAndNotify(agentId, status as NotifiableEventType, agentName, projectName)
+        agentController.checkAndNotify(agentId, status as NotifiableEventType, agentName, projectName, preview)
       }
       return { ok: true }
     } catch (error) {

@@ -179,8 +179,8 @@ const api = {
     ipcRenderer.invoke('app:version'),
 
   // ── Shell Integration ──
-  notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string): Promise<IpcResult> =>
-    ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName),
+  notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),
 
   openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
