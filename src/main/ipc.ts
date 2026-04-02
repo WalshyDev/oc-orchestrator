@@ -403,6 +403,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('workspace:common-repo-root', async (_event, directory: string) => {
+    try {
+      const repoRoot = workspaceManager.getCommonRepoRoot(directory)
+      return { ok: true, data: repoRoot }
+    } catch (error) {
+      console.error('[IPC] workspace:common-repo-root failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('workspace:create', async (_event, options: {
     repoRoot: string
     projectSlug: string
@@ -485,6 +495,19 @@ export function registerIpcHandlers(): void {
       return { ok: true, data: project }
     } catch (error) {
       console.error('[IPC] db:projects:create failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('db:projects:ensure', async (_event, options: {
+    name: string
+    repoRoot: string
+  }) => {
+    try {
+      const project = database.ensureProject(options.name, options.repoRoot)
+      return { ok: true, data: project }
+    } catch (error) {
+      console.error('[IPC] db:projects:ensure failed:', error)
       return { ok: false, error: String(error) }
     }
   })

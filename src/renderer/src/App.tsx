@@ -714,8 +714,7 @@ export function App() {
     if (worktreeStrategy === 'new-worktree') {
       const repoRootResult = await window.api.getRepoRoot(directory)
       if (!repoRootResult.ok || !repoRootResult.data) {
-        console.error('Failed to resolve repo root for launch:', repoRootResult.error)
-        return
+        throw new Error(repoRootResult.error || 'Failed to resolve repo root')
       }
 
       const directoryParts = directory.replace(/\/$/, '').split('/').filter(Boolean)
@@ -729,8 +728,7 @@ export function App() {
       })
 
       if (!worktreeResult.ok || !worktreeResult.data) {
-        console.error('Failed to create worktree for launch:', worktreeResult.error)
-        return
+        throw new Error(worktreeResult.error || 'Failed to create worktree')
       }
 
       launchDirectory = worktreeResult.data.worktreePath
@@ -738,9 +736,13 @@ export function App() {
 
     const result = await store.launchAgent(launchDirectory, prompt || undefined, title, model)
 
+    if (!result?.ok) {
+      throw new Error('Failed to launch agent')
+    }
+
     // Auto-open the detail drawer for the newly launched agent
     // (especially useful when no prompt is given so the user can interact immediately)
-    if (result?.ok && result.data) {
+    if (result.data) {
       const data = result.data as { id: string }
       setSelectedAgentId(data.id)
 
@@ -1001,6 +1003,11 @@ export function App() {
           onLaunch={handleLaunch}
           onSelectDirectory={store.selectDirectory}
           onValidateDirectory={handleValidateDirectory}
+          knownDirectories={store.agents.map((a) => ({
+            name: a.projectName,
+            directory: a.directory,
+            isWorktree: a.isWorktree
+          }))}
         />
       )}
 
