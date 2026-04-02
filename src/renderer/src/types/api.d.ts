@@ -47,6 +47,7 @@ export interface OrchestratorApi {
   validateGitRepo: (directory: string) => Promise<IpcResult<boolean>>
   getWorktreeRoot: () => Promise<IpcResult<string>>
   getRepoRoot: (directory: string) => Promise<IpcResult<string>>
+  getCommonRepoRoot: (directory: string) => Promise<IpcResult<string>>
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string }>>
   createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>>
   removeWorktree: (options: { repoRoot: string; worktreePath: string }) => Promise<IpcResult>
@@ -56,6 +57,7 @@ export interface OrchestratorApi {
   // ── Database: Projects ──
   listProjects: () => Promise<IpcResult<Project[]>>
   createProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
+  ensureProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   deleteProject: (projectId: string) => Promise<IpcResult<boolean>>
 
   // ── Database: Preferences ──

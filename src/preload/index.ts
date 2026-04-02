@@ -113,6 +113,9 @@ const api = {
   getRepoRoot: (directory: string): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('workspace:repo-root', directory),
 
+  getCommonRepoRoot: (directory: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('workspace:common-repo-root', directory),
+
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string }>> =>
     ipcRenderer.invoke('workspace:create', options),
 
@@ -134,6 +137,9 @@ const api = {
 
   createProject: (options: { name: string; repoRoot: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:create', options),
+
+  ensureProject: (options: { name: string; repoRoot: string }): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:projects:ensure', options),
 
   deleteProject: (projectId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:delete', projectId),

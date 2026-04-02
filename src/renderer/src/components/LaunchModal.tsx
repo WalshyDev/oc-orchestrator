@@ -1,32 +1,11 @@
-import { useState, useEffect, useMemo } from 'react'
-import { X, FolderOpen, Clock, Warning } from '@phosphor-icons/react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { X, FolderOpen, CaretDown, Warning, Trash } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import { useModelOptions } from '../hooks/useModelOptions'
 import { loadSettings } from '../data/settings'
+import type { Project } from '../types/api'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
-
-const RECENT_DIRS_KEY = 'oc-orchestrator:recent-directories'
-const MAX_RECENT_DIRS = 5
-
-function loadRecentDirs(): string[] {
-  try {
-    const stored = localStorage.getItem(RECENT_DIRS_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) return parsed.slice(0, MAX_RECENT_DIRS)
-    }
-  } catch {
-    // ignore parse errors
-  }
-  return []
-}
-
-function saveRecentDir(dir: string): void {
-  const recent = loadRecentDirs().filter((entry) => entry !== dir)
-  recent.unshift(dir)
-  localStorage.setItem(RECENT_DIRS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_DIRS)))
-}
 
 function sanitizePathSegment(value: string, fallback: string): string {
   const sanitized = value
@@ -51,14 +30,26 @@ function computeWorktreePath(worktreeRoot: string, directory: string, title: str
   return `${worktreeRoot}/${projectSlug}/${taskSlug}-<timestamp>`
 }
 
+function dirDisplayName(path: string): string {
+  const parts = path.replace(/\/$/, '').split('/').filter(Boolean)
+  return parts.length > 0 ? parts[parts.length - 1] : path
+}
+
+interface KnownDirectory {
+  name: string
+  directory: string
+  isWorktree?: boolean
+}
+
 interface LaunchModalProps {
   onClose: () => void
   onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
+  knownDirectories?: KnownDirectory[]
 }
 
-export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory }: LaunchModalProps) {
+export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory, knownDirectories }: LaunchModalProps) {
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
@@ -66,16 +57,90 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const { options: modelOptions } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [launching, setLaunching] = useState(false)
-  const [recentDirs] = useState<string[]>(loadRecentDirs)
-  const [showRecentDirs, setShowRecentDirs] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
   const [worktreeRoot, setWorktreeRoot] = useState('')
+  const [savedProjects, setSavedProjects] = useState<Project[]>([])
+  const [showDropdown, setShowDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const estimatedWorktreePath = useMemo(() => {
     if (worktreeStrategy !== 'new-worktree') return ''
     return computeWorktreePath(worktreeRoot, directory, title)
   }, [directory, title, worktreeRoot, worktreeStrategy])
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const result = await window.api.listProjects()
+      if (result.ok && result.data) {
+        setSavedProjects(result.data)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const saveProject = useCallback(async (dir: string) => {
+    const name = dirDisplayName(dir)
+    try {
+      await window.api.ensureProject({ name, repoRoot: dir })
+      await loadProjects()
+    } catch {
+      // ignore save failures
+    }
+  }, [loadProjects])
+
+  // Seed saved projects from existing agent directories
+  useEffect(() => {
+    if (!knownDirectories || knownDirectories.length === 0) return
+
+    const seedFromAgents = async () => {
+      const seen = new Set<string>()
+
+      for (const known of knownDirectories) {
+        try {
+          let dir = known.directory
+          // For worktree agents, resolve back to the actual repo root
+          if (known.isWorktree) {
+            const result = await window.api.getCommonRepoRoot(known.directory)
+            if (result.ok && result.data) {
+              dir = result.data
+            } else {
+              continue
+            }
+          }
+          if (seen.has(dir)) continue
+          seen.add(dir)
+          await window.api.ensureProject({ name: known.name, repoRoot: dir })
+        } catch {
+          // ignore
+        }
+      }
+      await loadProjects()
+    }
+
+    void seedFromAgents()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const removeProject = useCallback(async (projectId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    event.preventDefault()
+    try {
+      await window.api.deleteProject(projectId)
+      setSavedProjects((prev) => prev.filter((p) => p.id !== projectId))
+      // If the removed project was selected, clear the directory
+      const removed = savedProjects.find((p) => p.id === projectId)
+      if (removed && removed.repo_root === directory) {
+        setDirectory('')
+      }
+    } catch {
+      // ignore
+    }
+  }, [directory, savedProjects])
+
+  useEffect(() => {
+    void loadProjects()
+  }, [loadProjects])
 
   useEffect(() => {
     let isMounted = true
@@ -101,36 +166,59 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   useEffect(() => {
     if (!directory.trim()) {
       setDirError(null)
+      setValidating(false)
       return
     }
 
+    const currentDir = directory.trim()
+    setValidating(true)
+
     const timer = setTimeout(async () => {
       if (onValidateDirectory) {
-        setValidating(true)
         try {
-          const isValid = await onValidateDirectory(directory.trim())
-          if (!isValid) {
-            setDirError('This directory is not a valid git repository.')
-          } else {
-            setDirError(null)
-          }
+          const isValid = await onValidateDirectory(currentDir)
+          // Only update state if the directory hasn't changed since we started
+          setDirectory((latest) => {
+            if (latest.trim() === currentDir) {
+              setDirError(isValid ? null : 'This directory is not a valid git repository.')
+              setValidating(false)
+            }
+            return latest
+          })
         } catch {
-          setDirError('Could not validate directory.')
-        } finally {
-          setValidating(false)
+          setDirectory((latest) => {
+            if (latest.trim() === currentDir) {
+              setDirError('Could not validate directory.')
+              setValidating(false)
+            }
+            return latest
+          })
         }
+      } else {
+        setValidating(false)
       }
     }, 500)
 
     return () => clearTimeout(timer)
   }, [directory, onValidateDirectory])
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const handleLaunch = async () => {
-    if (!directory.trim() || dirError) return
+    if (!directory.trim() || dirError || validating) return
     setLaunching(true)
-    saveRecentDir(directory.trim())
     try {
       await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy)
+      await saveProject(directory.trim())
       onClose()
     } catch (error) {
       console.error('Launch failed:', error)
@@ -140,12 +228,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const handleBrowse = async () => {
     const selected = await onSelectDirectory()
-    if (selected) setDirectory(selected)
+    if (selected) {
+      setDirectory(selected)
+      setShowDropdown(false)
+    }
   }
 
-  const handleSelectRecentDir = (dir: string) => {
-    setDirectory(dir)
-    setShowRecentDirs(false)
+  const handleSelectProject = (repoRoot: string) => {
+    setDirectory(repoRoot)
+    setShowDropdown(false)
   }
 
   const selectButtonClasses =
@@ -153,6 +244,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const selectMenuClasses =
     'absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+
+  const selectedProject = savedProjects.find((p) => p.repo_root === directory)
+  const hasDirectory = directory.trim().length > 0
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -172,41 +266,80 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto">
-          {/* Directory */}
+        <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
+          {/* Directory Selector */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
               Project Directory
             </label>
-            <div className="relative flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={directory}
-                  onChange={(event) => setDirectory(event.target.value)}
-                  onFocus={() => recentDirs.length > 0 && setShowRecentDirs(true)}
-                  onBlur={() => setTimeout(() => setShowRecentDirs(false), 200)}
-                  placeholder="/path/to/project"
-                  className={`w-full px-3 py-2 bg-kumo-control border rounded-md text-sm text-kumo-default font-mono outline-none focus:border-kumo-ring placeholder:text-kumo-subtle ${
+            <div className="relative flex gap-2" ref={dropdownRef}>
+              <div className="flex-1 min-w-0 relative">
+                {/* Selector button */}
+                <button
+                  type="button"
+                  onClick={() => setShowDropdown(!showDropdown)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 bg-kumo-control border rounded-md text-sm outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring ${
                     dirError ? 'border-kumo-danger' : 'border-kumo-line'
                   }`}
-                />
-                {/* Recent directories dropdown */}
-                {showRecentDirs && recentDirs.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-kumo-overlay border border-kumo-line rounded-md shadow-xl z-10 overflow-hidden">
-                    <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider flex items-center gap-1.5">
-                      <Clock size={10} />
-                      Recent
-                    </div>
-                    {recentDirs.map((recentDir) => (
-                      <button
-                        key={recentDir}
-                        onMouseDown={() => handleSelectRecentDir(recentDir)}
-                        className="w-full px-3 py-1.5 text-left text-xs font-mono text-kumo-default hover:bg-kumo-fill transition-colors truncate"
-                      >
-                        {recentDir}
-                      </button>
-                    ))}
+                >
+                  <div className="min-w-0 flex-1 text-left truncate">
+                    {hasDirectory ? (
+                      <>
+                        <span className="text-kumo-default font-medium">
+                          {selectedProject?.name || dirDisplayName(directory)}
+                        </span>
+                        <span className="text-kumo-subtle font-mono text-xs ml-2">
+                          {directory}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-kumo-subtle">Select a project directory...</span>
+                    )}
+                  </div>
+                  <CaretDown size={14} className="text-kumo-subtle shrink-0" />
+                </button>
+
+                {/* Dropdown */}
+                {showDropdown && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl z-10 max-h-[240px] overflow-y-auto overflow-x-hidden">
+                    {savedProjects.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
+                          Saved Projects
+                        </div>
+                        {savedProjects.map((project) => (
+                          <div
+                            key={project.id}
+                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
+                            onMouseDown={() => handleSelectProject(project.repo_root)}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs text-kumo-default font-medium truncate">
+                                {project.name}
+                              </div>
+                              <div className="text-[11px] text-kumo-subtle font-mono truncate">
+                                {project.repo_root}
+                              </div>
+                            </div>
+                            <button
+                              onMouseDown={(e) => void removeProject(project.id, e)}
+                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
+                              title="Remove from saved projects"
+                            >
+                              <Trash size={12} />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="border-t border-kumo-fill-hover" />
+                      </>
+                    )}
+                    <button
+                      onMouseDown={() => void handleBrowse()}
+                      className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
+                    >
+                      <FolderOpen size={14} className="text-kumo-subtle" />
+                      Browse for directory...
+                    </button>
                   </div>
                 )}
               </div>
@@ -305,7 +438,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
           </button>
           <button
             onClick={handleLaunch}
-            disabled={!directory.trim() || launching || !!dirError}
+            disabled={!directory.trim() || launching || validating || !!dirError}
             className="px-4 py-2 text-xs font-medium text-white bg-kumo-brand rounded-md hover:bg-kumo-brand-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {launching ? 'Launching...' : 'Launch Agent'}

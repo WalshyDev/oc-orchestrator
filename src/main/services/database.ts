@@ -223,8 +223,25 @@ class Database {
     return this.queryOne<Project>('SELECT * FROM projects WHERE id = ?', [projectId])
   }
 
+  getProjectByRepoRoot(repoRoot: string): Project | undefined {
+    return this.queryOne<Project>('SELECT * FROM projects WHERE repo_root = ?', [repoRoot])
+  }
+
   getAllProjects(): Project[] {
     return this.queryAll<Project>('SELECT * FROM projects ORDER BY updated_at DESC')
+  }
+
+  ensureProject(name: string, repoRoot: string): Project {
+    const existing = this.getProjectByRepoRoot(repoRoot)
+    if (existing) {
+      const now = new Date().toISOString()
+      this.execute(
+        'UPDATE projects SET name = ?, updated_at = ? WHERE id = ?',
+        [name, now, existing.id]
+      )
+      return this.getProject(existing.id)!
+    }
+    return this.createProject(name, repoRoot)
   }
 
   deleteProject(projectId: string): boolean {
