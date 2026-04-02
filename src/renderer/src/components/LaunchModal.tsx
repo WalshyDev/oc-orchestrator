@@ -120,7 +120,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
 
     void seedFromAgents()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const removeProject = useCallback(async (projectId: string, event: React.MouseEvent) => {
     event.stopPropagation()
