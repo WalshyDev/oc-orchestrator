@@ -1005,14 +1005,14 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     !payload.title.match(/^.+-\d+$/) // matches pattern like "project-1" (auto-generated)
   const agentName = hasPrompt
     ? deriveNameFromPrompt(payload.prompt)
-    : payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase()
+    : payload.title.slice(0, 30)
 
   const agent: LiveAgent = {
     id: payload.id,
     runtimeId: payload.runtimeId,
     sessionId: payload.sessionId,
     directory: payload.directory,
-    name: payload.displayName || existingAgent?.name || (hasExplicitTitle ? payload.title.slice(0, 30).replace(/\s+/g, '-').toLowerCase() : agentName),
+    name: payload.displayName || existingAgent?.name || (hasExplicitTitle ? payload.title.slice(0, 30) : agentName),
     projectName: payload.projectName || existingAgent?.projectName || payload.directory.split('/').pop() || payload.directory,
     branchName: existingAgent?.branchName ?? payload.branchName ?? '',
     isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
