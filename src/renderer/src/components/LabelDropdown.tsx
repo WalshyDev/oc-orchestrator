@@ -1,4 +1,3 @@
-import { useState, useRef, useEffect } from 'react'
 import {
   CaretDown,
   CheckCircle,
@@ -10,6 +9,7 @@ import {
 } from '@phosphor-icons/react'
 import type { AgentLabel } from '../types'
 import { agentLabelDisplay } from '../types'
+import { useDismiss } from '../hooks/useDismiss'
 
 const LABEL_OPTIONS: { value: AgentLabel | null; label: string; icon: React.ReactNode }[] = [
   { value: null, label: 'None', icon: <XCircle size={12} /> },
@@ -26,35 +26,16 @@ interface LabelDropdownProps {
 }
 
 export function LabelDropdown({ current, onSelect, variant = 'row' }: LabelDropdownProps) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open])
+  const { open, toggle, close, containerRef } = useDismiss()
 
   const selectAndClose = (value: AgentLabel | null) => {
     onSelect(value)
-    setOpen(false)
+    close()
   }
 
-  const toggle = (event: React.MouseEvent) => {
+  const handleToggle = (event: React.MouseEvent) => {
     event.stopPropagation()
-    setOpen(!open)
+    toggle()
   }
 
   const currentLabel = agentLabelDisplay(current)
@@ -67,7 +48,7 @@ export function LabelDropdown({ current, onSelect, variant = 'row' }: LabelDropd
       menuPosition = 'absolute bottom-full left-0 mb-1'
       trigger = (
         <button
-          onClick={toggle}
+          onClick={handleToggle}
           className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
         >
           {LABEL_OPTIONS.find((o) => o.value === current)?.icon}
@@ -81,7 +62,7 @@ export function LabelDropdown({ current, onSelect, variant = 'row' }: LabelDropd
       menuPosition = 'absolute top-full left-0 mt-1'
       trigger = current ? (
         <button
-          onClick={toggle}
+          onClick={handleToggle}
           className="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium bg-kumo-brand/10 text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
           title="Change label"
         >
@@ -89,7 +70,7 @@ export function LabelDropdown({ current, onSelect, variant = 'row' }: LabelDropd
         </button>
       ) : (
         <button
-          onClick={toggle}
+          onClick={handleToggle}
           className="inline-flex items-center gap-0.5 px-1 py-px rounded text-[10px] text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
           title="Add label"
         >
@@ -102,7 +83,7 @@ export function LabelDropdown({ current, onSelect, variant = 'row' }: LabelDropd
       menuPosition = 'absolute top-full right-0 mt-1'
       trigger = (
         <button
-          onClick={toggle}
+          onClick={handleToggle}
           className="w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer"
           title={`Label: ${currentLabel}`}
         >
