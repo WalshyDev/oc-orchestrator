@@ -189,6 +189,15 @@ const taskSummaryLocked = new Set<string>()
 // URLs the user pastes in their own messages don't get picked up.
 const prExtractEnabled = new Set<string>()
 
+// Messages queued while the agent is stopping, dispatched once the abort completes.
+interface PendingMessage {
+  text: string
+  agentConfig?: string
+  attachments?: MessageAttachment[]
+  taskSummaryOverride?: string
+}
+const pendingMessages = new Map<string, PendingMessage>()
+
 // Tracks how many step-start parts (invoked sub-agents) are currently active
 // per session. When depth > 0, message.updated model changes come from an
 // invoked agent and should not overwrite the parent agent's displayed model.
@@ -691,6 +700,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           break
         }
         if (agent.status !== newStatus) {
+          const wasStopping = agent.status === 'stopping'
           notifyIfNeeded(agent, newStatus)
           agent.status = newStatus
           agent.lastActivityAt = Date.now()
@@ -704,6 +714,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
             persistAgentMeta(agent.id, { persistedStatus: 'completed' })
           }
           emit({ agents: true })
+
+          if (wasStopping && newStatus === 'idle') {
+            dispatchPendingMessage(agent.id)
+          }
         }
       }
       break
@@ -723,6 +737,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
         persistAgentMeta(agent.id, { persistedStatus: 'idle' })
         emit({ agents: true })
+        dispatchPendingMessage(agent.id)
       }
       break
     }
@@ -758,6 +773,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
+        dispatchPendingMessage(agent.id)
       }
       break
     }
@@ -1240,6 +1256,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
 
   // Update agent with new session
   sessionStepDepth.delete(agent.sessionId)
+  pendingMessages.delete(payload.id)
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
   agent.prUrl = null
@@ -1268,6 +1285,7 @@ function removeAgentState(agentId: string): void {
 
   taskSummaryLocked.delete(agentId)
   prExtractEnabled.delete(agentId)
+  pendingMessages.delete(agentId)
   sessionStepDepth.delete(agent.sessionId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
@@ -1535,6 +1553,70 @@ function agentHasPendingInterrupts(agentId: string): boolean {
   return false
 }
 
+/**
+ * Optimistically mark the agent as running and update its task summary.
+ * Shared by sendMessage and dispatchPendingMessage to avoid duplication.
+ */
+function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: string, taskSummaryOverride?: string): void {
+  if (!text.trim()) return
+
+  if (taskSummaryOverride) {
+    agent.taskSummary = taskSummaryOverride.slice(0, 120)
+    taskSummaryLocked.add(agentId)
+    if (taskSummaryOverride === 'Create PR') {
+      prExtractEnabled.add(agentId)
+    }
+  } else {
+    agent.taskSummary = text.trim().slice(0, 120)
+    taskSummaryLocked.delete(agentId)
+  }
+  agent.status = 'running'
+  agent.lastActivityAt = Date.now()
+  agent.blockedSince = undefined
+  agent.respondedAt = Date.now()
+
+  persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
+}
+
+/**
+ * Dispatch a message that was queued while the agent was stopping.
+ * Called when an agent transitions out of 'stopping' (idle/completed).
+ */
+function dispatchPendingMessage(agentId: string): void {
+  const pending = pendingMessages.get(agentId)
+  if (!pending) return
+  pendingMessages.delete(agentId)
+
+  const agent = state.agents.get(agentId)
+  if (!agent || !window.api) return
+
+  const { text, agentConfig, attachments, taskSummaryOverride } = pending
+
+  applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
+
+  for (const [qId, q] of state.questions) {
+    if (q.agentId === agentId) {
+      state.questions.delete(qId)
+    }
+  }
+
+  emit({ agents: true, questions: true })
+
+  void window.api.sendMessage(agentId, text, agentConfig, attachments).then((result) => {
+    if (result && !result.ok) {
+      prExtractEnabled.delete(agentId)
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter && agentAfter.status === 'running') {
+        agentAfter.status = 'idle'
+        agentAfter.blockedSince = undefined
+        agentAfter.respondedAt = undefined
+        agentAfter.lastActivityAt = Date.now()
+      }
+      emit({ agents: true })
+    }
+  })
+}
+
 function mapSessionStatus(statusType: string): AgentStatus {
   switch (statusType) {
     case 'busy': return 'running'
@@ -1795,35 +1877,20 @@ export function useAgentStore() {
   const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: MessageAttachment[], taskSummaryOverride?: string) => {
     if (!window.api) return
 
-    // Don't allow sending while agent is stopping
+    // Queue the message if the agent is still stopping — it will be dispatched
+    // automatically once the abort completes.
     const agent = state.agents.get(agentId)
-    if (agent?.status === 'stopping') return
+    if (agent?.status === 'stopping') {
+      pendingMessages.set(agentId, { text, agentConfig, attachments, taskSummaryOverride })
+      return { ok: true, queued: true }
+    }
 
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
     const previousLabel = agent?.label ?? null
 
-    // Optimistically update task summary and status.
-    // When a taskSummaryOverride is provided (e.g. "Create PR"), use it instead of
-    // the raw prompt text, and lock it so the SSE echo doesn't clobber it.
-    if (agent && text.trim()) {
-      if (taskSummaryOverride) {
-        agent.taskSummary = taskSummaryOverride.slice(0, 120)
-        taskSummaryLocked.add(agentId)
-        // Enable PR URL extraction only for the "Create PR" flow
-        if (taskSummaryOverride === 'Create PR') {
-          prExtractEnabled.add(agentId)
-        }
-      } else {
-        agent.taskSummary = text.trim().slice(0, 120)
-        taskSummaryLocked.delete(agentId)
-      }
-      agent.status = 'running'
-      agent.lastActivityAt = Date.now()
-      agent.blockedSince = undefined
-      agent.respondedAt = Date.now()
-
-      persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
+    if (agent) {
+      applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
     }
 
     // Optimistically clear any pending questions for this agent
@@ -2083,6 +2150,7 @@ export function useAgentStore() {
         agentAfter.status = 'idle'
         agentAfter.lastActivityAt = Date.now()
         emit({ agents: true })
+        dispatchPendingMessage(agentId)
       }
     } else {
       // Safety timeout: if the server acknowledged the abort but the SSE event
@@ -2095,6 +2163,7 @@ export function useAgentStore() {
           agentAfter.status = 'idle'
           agentAfter.lastActivityAt = Date.now()
           emit({ agents: true })
+          dispatchPendingMessage(agentId)
         }
       }, 10_000)
     }
