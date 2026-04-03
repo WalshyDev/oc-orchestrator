@@ -24,6 +24,68 @@ export const EMPTY_FILTER: FilterState = {
   excludeProjects: new Set()
 }
 
+const FILTER_STORAGE_KEY = 'oc-orchestrator:filter'
+const SEARCH_STORAGE_KEY = 'oc-orchestrator:search'
+
+interface SerializedFilterState {
+  statuses: StatusFilter[]
+  labels: LabelFilter[]
+  projects: string[]
+  excludeStatuses: StatusFilter[]
+  excludeLabels: LabelFilter[]
+  excludeProjects: string[]
+}
+
+function serializeFilter(filter: FilterState): string {
+  const obj: SerializedFilterState = {
+    statuses: [...filter.statuses],
+    labels: [...filter.labels],
+    projects: [...filter.projects],
+    excludeStatuses: [...filter.excludeStatuses],
+    excludeLabels: [...filter.excludeLabels],
+    excludeProjects: [...filter.excludeProjects]
+  }
+  return JSON.stringify(obj)
+}
+
+function deserializeFilter(json: string): FilterState {
+  const obj = JSON.parse(json) as SerializedFilterState
+  return {
+    statuses: new Set(obj.statuses ?? []),
+    labels: new Set(obj.labels ?? []),
+    projects: new Set(obj.projects ?? []),
+    excludeStatuses: new Set(obj.excludeStatuses ?? []),
+    excludeLabels: new Set(obj.excludeLabels ?? []),
+    excludeProjects: new Set(obj.excludeProjects ?? [])
+  }
+}
+
+export function loadPersistedFilter(): FilterState {
+  try {
+    const stored = localStorage.getItem(FILTER_STORAGE_KEY)
+    if (!stored) return EMPTY_FILTER
+    return deserializeFilter(stored)
+  } catch {
+    return EMPTY_FILTER
+  }
+}
+
+export function persistFilter(filter: FilterState): void {
+  localStorage.setItem(FILTER_STORAGE_KEY, serializeFilter(filter))
+}
+
+export function loadPersistedSearch(): string {
+  try {
+    return localStorage.getItem(SEARCH_STORAGE_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function persistSearch(query: string): void {
+  localStorage.setItem(SEARCH_STORAGE_KEY, query)
+}
+
 export function isFilterEmpty(filter: FilterState): boolean {
   return (
     filter.statuses.size === 0 &&
