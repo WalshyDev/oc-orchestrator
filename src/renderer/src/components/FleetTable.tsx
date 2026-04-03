@@ -567,7 +567,7 @@ function AgentRow({
         ) : (
           <div
             onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
-            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent group-hover:outline-kumo-subtle/40 transition-[outline-color]"
+            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color]"
             title="Click to rename"
           >
             {agent.name}
