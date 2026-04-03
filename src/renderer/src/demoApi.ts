@@ -43,7 +43,7 @@ const DEMO_AGENTS = [
     displayName: 'Auth Fix',
     taskSummary: 'Fix token refresh race condition in auth middleware',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-3',
@@ -75,7 +75,7 @@ const DEMO_AGENTS = [
     displayName: 'Perf Audit',
     taskSummary: 'Audit and fix React re-render performance on analytics page',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-5',
@@ -91,7 +91,7 @@ const DEMO_AGENTS = [
     displayName: 'Stripe Migration',
     taskSummary: 'Migrate from Stripe Charges API to Payment Intents',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-6',
@@ -123,7 +123,7 @@ const DEMO_AGENTS = [
     displayName: 'Push Notifications',
     taskSummary: 'Add push notification support with FCM',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-8',
@@ -155,7 +155,7 @@ const DEMO_AGENTS = [
     displayName: 'ETL Tests',
     taskSummary: 'Add integration tests for the ETL transform stage',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-10',
@@ -171,7 +171,7 @@ const DEMO_AGENTS = [
     displayName: 'Terraform Modules',
     taskSummary: 'Refactor Terraform configs into reusable modules',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-11',
@@ -187,7 +187,7 @@ const DEMO_AGENTS = [
     displayName: 'Offline Sync',
     taskSummary: 'Implement offline-first data sync with conflict resolution',
     persistedStatus: undefined,
-    prUrl: null
+    prUrl: undefined
   },
   {
     id: 'agent-12',
