@@ -23,11 +23,19 @@ function ExternalLink({ href, children, ...props }: ComponentPropsWithoutRef<'a'
   )
 }
 
+function ScrollableTable({ children, ...props }: ComponentPropsWithoutRef<'table'>) {
+  return (
+    <div className="overflow-x-auto">
+      <table {...props}>{children}</table>
+    </div>
+  )
+}
+
 // Hoist to module scope — stable references prevent ReactMarkdown from
 // re-parsing markdown on every render due to referential inequality.
 const REMARK_PLUGINS = [remarkGfm]
 const DISALLOWED_ELEMENTS = ['script', 'iframe', 'object', 'embed', 'form']
-const COMPONENTS = { a: ExternalLink }
+const COMPONENTS = { a: ExternalLink, table: ScrollableTable }
 
 export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
   return (
