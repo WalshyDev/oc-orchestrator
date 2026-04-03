@@ -26,22 +26,36 @@ Run a single test file: `npx vitest run src/__tests__/database.test.ts`
 
 ### Process Model
 
-**Main process** (`src/main/`) — Electron backend with five service singletons:
+**Main process** (`src/main/`) — Electron backend with seven service singletons:
 
 - **RuntimeManager** — spawns one `opencode serve` process per project directory, maintains SDK client connections, health checks every 30s with exponential backoff reconnection
-- **AgentController** — manages agent sessions (launch, send message, respond to permission, abort)
+- **AgentController** — manages agent sessions (launch, send message, respond to permission, reply to questions, abort)
 - **EventBridge** — bridges SSE events from OpenCode servers to the renderer via `opencode:event` IPC
 - **Database** — SQLite with prepared statements; tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in constructor
 - **WorkspaceManager** — creates git worktrees (`oco-{hash}`) stored in `~/.oc-orchestrator/worktrees` by default
+- **NotificationService** — desktop notifications for configurable agent status changes (blocked, errored, completed)
+- **UpdateChecker** — checks npm registry for new versions, notifies renderer via IPC
 
 **Preload** (`src/preload/`) — context bridge exposing `window.api` to renderer.
 
 **Renderer** (`src/renderer/`) — React 19 frontend with TailwindCSS 4:
 
 - **useAgentStore** — central state via `useSyncExternalStore`, processes OpenCode events, derives agent statuses
-- **FleetTable** — main agent grid with sorting/filtering
+- **useModelOptions** — fetches and caches provider/model lists from runtimes
+- **FleetTable** — main agent grid with sorting/filtering, context menus, inline rename
 - **DetailDrawer** — side panel showing messages, tool calls, file changes, events for selected agent
-- **LaunchModal / CommandPalette / SettingsModal** — overlay dialogs
+- **FilterBar** — status/label/project filter tabs with persistent state
+- **InterruptBanner** — surfaces blocked/errored agents at the top for quick triage
+- **StatusBar** — bottom bar with runtime health, agent count, version info
+- **TopBar** — header with global status summary, command palette trigger, launch button
+- **LaunchModal** — agent launch with project selection, worktree creation, model choice
+- **SessionBrowser** — browse and resume previous sessions per project
+- **CommandPalette** — quick access to all actions via `Cmd+K`
+- **ModelPickerModal** — per-agent model switching with provider selection
+- **McpModal** — view, connect, and disconnect MCP servers per agent
+- **SettingsModal** — app settings and notification preferences
+- **LabelDropdown** — workflow label picker (In Review, Blocked, Done, Draft)
+- **PrBadge** — editable PR link display with external open
 
 ### IPC Communication
 
@@ -72,3 +86,5 @@ Run a single test file: `npx vitest run src/__tests__/database.test.ts`
 - `OC_ORCHESTRATOR_DB_PATH` — SQLite location (defaults to `~/.oc-orchestrator/data.db`)
 - `OC_ORCHESTRATOR_WORKTREE_ROOT` — worktree root (defaults to `~/.oc-orchestrator/worktrees`)
 - `OC_ORCHESTRATOR_LOG_LEVEL` — debug, info, warn, error (default: info)
+- `OC_ORCHESTRATOR_DEMO_MODE` — enable demo mode with mock data for screenshots
+- `OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS` — idle timeout before stopping unused runtimes (default: 300000)

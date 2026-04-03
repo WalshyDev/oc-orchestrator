@@ -9,11 +9,20 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 - **Fleet table** — see all agents at a glance with status, task, branch, model, and activity
 - **Detail drawer** — messages, tool calls, file changes, and event log for each agent
 - **Permission handling** — approve or deny tool calls across all agents from one place
+- **Question handling** — respond to agent questions and input requests inline
 - **Worktree isolation** — each agent gets its own git worktree so work runs in parallel without branch conflicts
+- **Labels & workflow tags** — mark agents as In Review, Blocked, Done, or Draft to track progress
+- **Filter & search** — filter by status, label, or project; search by name or task; state persists across restarts
+- **Interrupt banner** — blocked and errored agents surface at the top for quick triage
+- **Session browser** — browse and resume previous sessions per project
+- **Model picker** — switch models on the fly per agent with provider selection
+- **MCP management** — view, connect, and disconnect MCP servers per agent
 - **`/new`** — reset an agent's conversation and branch without leaving the fleet table
 - **`/model`** — switch models on the fly per agent
-- **Auto PR** — one-click PR creation with smart branch renaming
+- **Auto PR** — one-click PR creation with editable PR links
+- **Image attachments** — attach images to agent messages
 - **Command palette** — quick access to all actions via `Cmd+K`
+- **Desktop notifications** — configurable alerts for blocked, errored, and completed agents
 - **Auto-update** — notifies when a new version is available on npm
 
 ## Install
@@ -57,6 +66,8 @@ npm run dev
 | `OC_ORCHESTRATOR_DB_PATH` | `~/.oc-orchestrator/data.db` | SQLite database location |
 | `OC_ORCHESTRATOR_WORKTREE_ROOT` | `~/.oc-orchestrator/worktrees` | Worktree root directory |
 | `OC_ORCHESTRATOR_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `OC_ORCHESTRATOR_DEMO_MODE` | — | Enable demo mode with mock data (for screenshots) |
+| `OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS` | `300000` | Idle timeout before stopping unused runtimes |
 
 ## Architecture
 

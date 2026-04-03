@@ -11,6 +11,9 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
+    define: {
+      __DEMO_MODE__: JSON.stringify(!!process.env.OC_ORCHESTRATOR_DEMO_MODE)
+    },
     resolve: {
       alias: {
         '@': resolve('src/renderer/src')
