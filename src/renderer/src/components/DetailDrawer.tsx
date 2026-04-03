@@ -40,6 +40,10 @@ const DRAWER_WIDTH_KEY = 'oc-orchestrator:drawer-width'
 const DEFAULT_DRAWER_WIDTH = 600
 const MIN_DRAWER_WIDTH = 400
 const MAX_DRAWER_WIDTH = 1000
+const INPUT_HEIGHT_KEY = 'oc-orchestrator:input-height'
+const DEFAULT_INPUT_HEIGHT = 120
+const MIN_INPUT_HEIGHT = 80
+const MAX_INPUT_HEIGHT = 500
 const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
 const NEAR_BOTTOM_THRESHOLD = 80
@@ -54,6 +58,17 @@ function loadDrawerWidth(): number {
     }
   } catch { /* ignore */ }
   return DEFAULT_DRAWER_WIDTH
+}
+
+function loadInputHeight(): number {
+  try {
+    const stored = localStorage.getItem(INPUT_HEIGHT_KEY)
+    if (stored) {
+      const height = Number(stored)
+      if (height >= MIN_INPUT_HEIGHT && height <= MAX_INPUT_HEIGHT) return height
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_INPUT_HEIGHT
 }
 
 type TabKey = 'transcript' | 'files' | 'tools' | 'events'
@@ -124,6 +139,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [isVisible, setIsVisible] = useState(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [drawerWidth, setDrawerWidth] = useState(loadDrawerWidth)
+  const [inputHeight, setInputHeight] = useState(loadInputHeight)
   const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
   const [agentPickerIndex, setAgentPickerIndex] = useState(0)
   const [commandPickerIndex, setCommandPickerIndex] = useState(0)
@@ -162,6 +178,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const followBottomRef = useRef(true)
   const isResizingRef = useRef(false)
+  const isResizingVerticalRef = useRef(false)
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -192,6 +209,36 @@ export const DetailDrawer = memo(function DetailDrawer({
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
   }, [drawerWidth])
+
+  const handleVerticalResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    isResizingVerticalRef.current = true
+    const startY = event.clientY
+    const startHeight = inputHeight
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startY - moveEvent.clientY
+      const newHeight = Math.min(MAX_INPUT_HEIGHT, Math.max(MIN_INPUT_HEIGHT, startHeight + delta))
+      setInputHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      isResizingVerticalRef.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setInputHeight((final: number) => {
+        localStorage.setItem(INPUT_HEIGHT_KEY, String(final))
+        return final
+      })
+    }
+
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [inputHeight])
 
   const trimmedInput = inputText.trim().toLowerCase()
 
@@ -640,6 +687,16 @@ export const DetailDrawer = memo(function DetailDrawer({
           )}
         </div>
 
+        {/* Vertical resize handle */}
+        <div
+          onMouseDown={handleVerticalResizeStart}
+          className="h-1.5 shrink-0 cursor-row-resize group flex items-center justify-center border-t border-kumo-line"
+        >
+          <div className="h-px w-8 rounded-full bg-kumo-subtle/30 group-hover:bg-kumo-brand/50 transition-colors" />
+        </div>
+
+        {/* Bottom pane — action rail + input, resizable height */}
+        <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
         {/* Action Rail */}
         <div className="flex gap-1 px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
@@ -682,7 +739,7 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Input */}
         <div
-          className={`flex flex-col gap-0 px-3 py-2 border-t shrink-0 transition-colors ${
+          className={`flex flex-col gap-0 px-3 py-2 border-t flex-1 min-h-0 transition-colors ${
             isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line'
           }`}
           onDragOver={handleDragOver}
@@ -716,8 +773,8 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           )}
 
-          <div className="flex gap-2">
-            <div className="relative flex-1 flex flex-col gap-1">
+          <div className="flex gap-2 flex-1 min-h-0">
+            <div className="relative flex-1 flex flex-col gap-1 min-h-0">
               {showCommandAutocomplete && (
                 <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
                   {matchingCommands.map((item, index) => (
@@ -778,8 +835,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
                 onPaste={handlePaste}
                 placeholder={inputPlaceholder}
-                rows={3}
-                className={`w-full px-3 py-2 bg-kumo-control border rounded-md text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none transition-colors ${
+                className={`w-full flex-1 min-h-0 px-3 py-2 bg-kumo-control border rounded-md text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none transition-colors ${
                   isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus:border-kumo-ring'
                 }`}
               />
@@ -809,14 +865,15 @@ export const DetailDrawer = memo(function DetailDrawer({
             <button
               onClick={handleSend}
               disabled={!inputText.trim() && attachments.length === 0}
-              className={`self-start px-3 py-2 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 ${
+              className={`self-end px-3 py-2 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 ${
                 canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
               }`}
             >
               {canReplyViaChat ? 'Reply' : 'Send'}
             </button>
-          </div>
+           </div>
         </div>
+        </div>{/* end bottom pane */}
       </div>
     </div>
   )
