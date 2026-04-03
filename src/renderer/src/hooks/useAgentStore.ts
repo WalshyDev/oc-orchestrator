@@ -11,6 +11,8 @@ interface HistoricalMessageInfo {
   id: string
   sessionID: string
   role: 'user' | 'assistant'
+  /** Present on AssistantMessage — the ID of the user message that triggered this response */
+  parentID?: string
   time?: {
     created?: number
   }
@@ -61,6 +63,10 @@ export interface LiveAgent {
   status: AgentStatus
   label: AgentLabel | null
   model: string
+  /** The model set by the user or first top-level assistant message.
+   *  Used to restore the displayed model after an invoked agent
+   *  (which may use a different model) finishes. */
+  configuredModel?: string
   lastActivityAt: number
   blockedSince?: number
   prUrl: string | null
@@ -182,6 +188,22 @@ const taskSummaryLocked = new Set<string>()
 // PR URLs when the user explicitly triggered the "Create PR" flow so that
 // URLs the user pastes in their own messages don't get picked up.
 const prExtractEnabled = new Set<string>()
+
+// Tracks how many step-start parts (invoked sub-agents) are currently active
+// per session. When depth > 0, message.updated model changes come from an
+// invoked agent and should not overwrite the parent agent's displayed model.
+const sessionStepDepth = new Map<string, number>()
+
+/** Clear step depth for a session and restore the parent model if it was
+ *  overwritten by a sub-agent. Returns true if the model was restored. */
+function resetStepDepthAndRestoreModel(sessionId: string, agent: LiveAgent): boolean {
+  if (!sessionStepDepth.delete(sessionId)) return false
+  if (agent.configuredModel && agent.model !== agent.configuredModel) {
+    agent.model = agent.configuredModel
+    return true
+  }
+  return false
+}
 
 const listeners = new Set<() => void>()
 
@@ -483,10 +505,49 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
   return nextPart
 }
 
+/** Identify assistant messages that belong to invoked sub-agents so their
+ *  modelIDs can be excluded when determining the parent agent's displayed model.
+ *
+ *  A top-level assistant message contains step-start/step-finish parts, and its
+ *  parentID points to a top-level user message. Any assistant whose parentID
+ *  references a user message NOT in the top-level set is a sub-agent response. */
+function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<string> {
+  const topLevelParentUserIds = new Set<string>()
+  const allUserMessageIds = new Set<string>()
+  const assistantParentIds = new Map<string, string>() // assistantId → parentID
+
+  for (const entry of entries) {
+    if (!entry?.info?.id) continue
+    if (entry.info.role === 'user') {
+      allUserMessageIds.add(entry.info.id)
+    } else if (entry.info.role === 'assistant' && entry.info.parentID) {
+      assistantParentIds.set(entry.info.id, entry.info.parentID)
+      const hasStepPart = Array.isArray(entry.parts) &&
+        entry.parts.some(p => p.type === 'step-start' || p.type === 'step-finish')
+      if (hasStepPart) {
+        topLevelParentUserIds.add(entry.info.parentID)
+      }
+    }
+  }
+
+  const subAgentIds = new Set<string>()
+  if (topLevelParentUserIds.size > 0) {
+    for (const [assistantId, parentId] of assistantParentIds) {
+      if (allUserMessageIds.has(parentId) && !topLevelParentUserIds.has(parentId)) {
+        subAgentIds.add(assistantId)
+      }
+    }
+  }
+  return subAgentIds
+}
+
 function hydrateHistoricalMessages(entries: unknown): void {
   if (!Array.isArray(entries)) return
 
-  for (const entry of entries as HistoricalSessionMessage[]) {
+  const typed = entries as HistoricalSessionMessage[]
+  const subAgentAssistantIds = identifySubAgentMessages(typed)
+
+  for (const entry of typed) {
     if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
 
     const createdAt = getMessageCreatedAt(entry.info)
@@ -520,8 +581,15 @@ function hydrateHistoricalMessages(entries: unknown): void {
         }
       }
 
-      if (entry.info.modelID) {
-        agent.model = formatModelName(entry.info.modelID)
+      // Skip model updates from sub-agent messages (see identifySubAgentMessages)
+      if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
+        const formatted = formatModelName(entry.info.modelID)
+        agent.model = formatted
+        // Only seed configuredModel if not already set by a config fetch or
+        // prior setAgentModel call, so the authoritative config value wins.
+        if (!agent.configuredModel) {
+          agent.configuredModel = formatted
+        }
       }
 
       // PR URLs are only extracted during the live "Create PR" flow and
@@ -651,6 +719,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
+        resetStepDepthAndRestoreModel(sessionId, agent)
 
         persistAgentMeta(agent.id, { persistedStatus: 'idle' })
         emit({ agents: true })
@@ -667,6 +736,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
+        resetStepDepthAndRestoreModel(sessionId, agent)
 
         persistAgentMeta(agent.id, { persistedStatus: 'errored' })
         emit({ agents: true })
@@ -684,6 +754,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
+        resetStepDepthAndRestoreModel(sessionId, agent)
 
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
@@ -737,10 +808,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
           if (cost !== undefined) { agent.cost = cost; agentChanged = true }
           if (tokens) { agent.tokens = { input: tokens.input, output: tokens.output }; agentChanged = true }
 
-          // Extract model info
+          // Only update model from top-level (non-invoked) assistant messages
           const modelId = info.modelID as string | undefined
-          if (modelId) {
-            agent.model = formatModelName(modelId)
+          const depth = sessionStepDepth.get(sessionId) ?? 0
+          if (modelId && depth === 0) {
+            const formatted = formatModelName(modelId)
+            agent.model = formatted
+            agent.configuredModel = formatted
             agentChanged = true
           }
         }
@@ -773,6 +847,22 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const messageId = part.messageID as string
       const partId = part.id as string
       const partType = part.type as string
+
+      // Track invoked-agent nesting depth so model updates from sub-agents
+      // don't overwrite the parent agent's displayed model.
+      let modelRestored = false
+      if (partType === 'step-start') {
+        sessionStepDepth.set(sessionId, (sessionStepDepth.get(sessionId) ?? 0) + 1)
+      } else if (partType === 'step-finish') {
+        const current = sessionStepDepth.get(sessionId) ?? 0
+        if (current > 1) {
+          sessionStepDepth.set(sessionId, current - 1)
+        } else if (current === 1) {
+          const agent = findAgentBySession(sessionId)
+          if (agent) modelRestored = resetStepDepthAndRestoreModel(sessionId, agent)
+        }
+        // current === 0: no matching step-start, ignore
+      }
 
       const messages = state.messages.get(sessionId) ?? []
       const message = messages.find((msg) => msg.id === messageId)
@@ -862,7 +952,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
         }
 
-        emitMessagesThrottled(agentChanged)
+        emitMessagesThrottled(agentChanged || modelRestored)
+      } else if (modelRestored) {
+        // step-finish arrived before the parent message exists locally —
+        // still need to emit so the restored model is picked up by the UI.
+        emit({ agents: true })
       }
       break
     }
@@ -1094,15 +1188,31 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   upsertAgent(payload)
   emit({ agents: true })
 
-  // Fetch historical messages so resumed sessions aren't blank.
-  // Fire-and-forget — the initial upsert already emitted.
   if (window.api) {
+    // Fetch historical messages so resumed sessions aren't blank.
+    // Fire-and-forget — the initial upsert already emitted.
     void window.api.getMessages(payload.id).then((result) => {
       if (!result.ok || !result.data) return
       const entries = result.data as HistoricalSessionMessage[]
       if (!Array.isArray(entries) || entries.length === 0) return
       hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
       emit({ messages: true })
+    })
+
+    // Seed configuredModel from runtime config as an authoritative fallback
+    // in case step-depth tracking misses events or the resume window is too small.
+    void window.api.getConfig(payload.id).then((result) => {
+      if (!result.ok || !result.data) return
+      const config = result.data as { model?: string }
+      if (!config.model) return
+      const agent = state.agents.get(payload.id)
+      if (!agent || agent.configuredModel) return
+      const formatted = formatModelName(config.model)
+      agent.configuredModel = formatted
+      if (agent.model === 'starting...') {
+        agent.model = formatted
+        emit({ agents: true })
+      }
     })
   }
 }
@@ -1129,6 +1239,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   }
 
   // Update agent with new session
+  sessionStepDepth.delete(agent.sessionId)
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
   agent.prUrl = null
@@ -1157,6 +1268,7 @@ function removeAgentState(agentId: string): void {
 
   taskSummaryLocked.delete(agentId)
   prExtractEnabled.delete(agentId)
+  sessionStepDepth.delete(agent.sessionId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
@@ -1201,6 +1313,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     label: existingAgent?.label ?? null,
     model: existingAgent?.model ?? 'starting...',
+    configuredModel: existingAgent?.configuredModel,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
@@ -2037,7 +2150,9 @@ export function useAgentStore() {
   const setAgentModel = useCallback((agentId: string, modelPath: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
-    agent.model = formatModelName(modelPath)
+    const formatted = formatModelName(modelPath)
+    agent.model = formatted
+    agent.configuredModel = formatted
     emit({ agents: true })
   }, [])
 
