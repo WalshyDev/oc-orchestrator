@@ -129,6 +129,7 @@ class AgentController {
           displayName: persistedAgent.displayName ?? '',
           taskSummary: persistedAgent.taskSummary ?? '',
           persistedStatus: persistedAgent.persistedStatus,
+          prUrl: persistedAgent.prUrl,
           bridge: this.bridges.get(runtime.id)!
         }
 

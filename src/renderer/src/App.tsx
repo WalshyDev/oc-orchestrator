@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { TopBar } from './components/TopBar'
 import { InterruptBanner } from './components/InterruptBanner'
-import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, type FilterState, type StatusFilter } from './components/FilterBar'
+import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, loadPersistedFilter, persistFilter, loadPersistedSearch, persistSearch, type FilterState, type StatusFilter } from './components/FilterBar'
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
@@ -43,8 +43,22 @@ function mapToolState(toolState?: string): ToolCall['state'] {
 }
 
 export function App() {
-  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [filter, setFilterRaw] = useState<FilterState>(loadPersistedFilter)
+  const [searchQuery, setSearchQueryRaw] = useState(loadPersistedSearch)
+
+  const setFilter = useCallback((value: FilterState | ((prev: FilterState) => FilterState)) => {
+    setFilterRaw((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      persistFilter(next)
+      return next
+    })
+  }, [])
+
+  const setSearchQuery = useCallback((value: string) => {
+    setSearchQueryRaw(value)
+    persistSearch(value)
+  }, [])
+
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
