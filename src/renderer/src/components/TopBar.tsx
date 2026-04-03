@@ -1,4 +1,5 @@
 import { CircleNotch, Command, GearSix, Lightning, Plus } from '@phosphor-icons/react'
+import favicon from '../../public/favicon.svg'
 
 interface TopBarProps {
   runningCount: number
@@ -26,7 +27,7 @@ export function TopBar({
       {/* Left: Logo + Settings */}
       <div className="no-drag flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <img src="/favicon.svg" alt="" className="w-5 h-5" />
+          <img src={favicon} alt="" className="w-5 h-5" />
           <span className="font-bold text-sm text-kumo-strong">OC Orchestrator</span>
         </div>
         {onSettings && (
