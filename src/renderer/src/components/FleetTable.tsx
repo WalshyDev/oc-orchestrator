@@ -12,13 +12,15 @@ import {
   Trash,
   Terminal,
   GitPullRequest,
-  ArrowSquareOut
+  ArrowSquareOut,
+  Link,
+  ArrowLineUpRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, AgentLabel } from '../types'
 import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
-import { PrBadge } from './PrBadge'
 import { LabelDropdown } from './LabelDropdown'
+import { TextInputModal } from './TextInputModal'
 import { useDismiss } from '../hooks/useDismiss'
 
 interface FleetTableProps {
@@ -35,6 +37,7 @@ interface FleetTableProps {
   onOpenTerminal?: (agentId: string) => void
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
+  onSetPrUrl?: (agentId: string, prUrl: string | null) => void
   onChangeModel?: (agentId: string) => void
   onSetLabel?: (agentId: string, label: AgentLabel | null) => void
 }
@@ -61,6 +64,11 @@ interface RenameState {
   currentName: string
 }
 
+interface PrLinkState {
+  agentId: string
+  currentUrl: string
+}
+
 export function FleetTable({
   agents,
   selectedId,
@@ -75,6 +83,7 @@ export function FleetTable({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
+  onSetPrUrl,
   onChangeModel,
   onSetLabel
 }: FleetTableProps) {
@@ -82,6 +91,7 @@ export function FleetTable({
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renameState, setRenameState] = useState<RenameState | null>(null)
+  const [prLinkState, setPrLinkState] = useState<PrLinkState | null>(null)
   const [inlineEditId, setInlineEditId] = useState<string | null>(null)
 
   const handleSort = useCallback((column: SortColumn) => {
@@ -196,6 +206,7 @@ export function FleetTable({
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
               onSetLabel={onSetLabel ? (label: AgentLabel | null) => onSetLabel(agent.id, label) : undefined}
+              onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
               onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
               onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
               isInlineEditing={inlineEditId === agent.id}
@@ -249,6 +260,15 @@ export function FleetTable({
             onCreatePr?.(contextMenu.agentId)
             closeContextMenu()
           }}
+          onRemovePrLink={() => {
+            onSetPrUrl?.(contextMenu.agentId, null)
+            closeContextMenu()
+          }}
+          onEditPrLink={() => {
+            const agent = agents.find((agnt) => agnt.id === contextMenu.agentId)
+            setPrLinkState({ agentId: contextMenu.agentId, currentUrl: agent?.prUrl ?? '' })
+            closeContextMenu()
+          }}
           onSetLabel={(label: AgentLabel | null) => {
             onSetLabel?.(contextMenu.agentId, label)
             closeContextMenu()
@@ -257,8 +277,10 @@ export function FleetTable({
       )}
 
       {renameState && (
-        <RenameModal
-          currentName={renameState.currentName}
+        <TextInputModal
+          title="Rename Agent"
+          initialValue={renameState.currentName}
+          submitLabel="Rename"
           onSubmit={(newName) => {
             onRename?.(renameState.agentId, newName)
             setRenameState(null)
@@ -266,77 +288,21 @@ export function FleetTable({
           onClose={() => setRenameState(null)}
         />
       )}
-    </div>
-  )
-}
 
-function RenameModal({
-  currentName,
-  onSubmit,
-  onClose
-}: {
-  currentName: string
-  onSubmit: (newName: string) => void
-  onClose: () => void
-}) {
-  const [value, setValue] = useState(currentName)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-    inputRef.current?.select()
-  }, [])
-
-  const handleSubmit = () => {
-    const trimmed = value.trim()
-    if (trimmed) {
-      onSubmit(trimmed)
-    }
-  }
-
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      handleSubmit()
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose()
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
-      onClick={onClose}
-    >
-      <div
-        className="w-80 rounded-lg border border-kumo-line bg-kumo-elevated p-4 shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="text-sm font-semibold text-kumo-strong mb-3">Rename Agent</div>
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={handleKeyDown}
-          className="w-full px-2.5 py-1.5 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring"
+      {prLinkState && (
+        <TextInputModal
+          title={prLinkState.currentUrl ? 'Edit PR Link' : 'Add PR Link'}
+          initialValue={prLinkState.currentUrl}
+          submitLabel="Save"
+          placeholder="https://github.com/org/repo/pull/123"
+          allowEmpty
+          onSubmit={(url) => {
+            onSetPrUrl?.(prLinkState.agentId, url || null)
+            setPrLinkState(null)
+          }}
+          onClose={() => setPrLinkState(null)}
         />
-        <div className="flex justify-end gap-2 mt-3">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!value.trim()}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-kumo-brand text-white hover:bg-kumo-brand-hover transition-colors disabled:opacity-40"
-          >
-            Rename
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -354,6 +320,8 @@ function ContextMenu({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
+  onRemovePrLink,
+  onEditPrLink,
   onSetLabel
 }: {
   agent: AgentRuntime
@@ -368,6 +336,8 @@ function ContextMenu({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
   onCreatePr: () => void
+  onRemovePrLink: () => void
+  onEditPrLink: () => void
   onSetLabel: (label: AgentLabel | null) => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -433,7 +403,15 @@ function ContextMenu({
       )}
       {agent.prUrl && (
         <button className={itemClass} onClick={() => window.api?.openExternal(agent.prUrl!)}>
-          <GitPullRequest size={13} /> View PR
+          <ArrowLineUpRight size={13} /> View PR
+        </button>
+      )}
+      <button className={itemClass} onClick={onEditPrLink}>
+        <Link size={13} /> {agent.prUrl ? 'Edit' : 'Add'} PR Link
+      </button>
+      {agent.prUrl && (
+        <button className={itemClass} onClick={onRemovePrLink}>
+          <Trash size={13} /> Remove PR Link
         </button>
       )}
       <button className={itemClass} onClick={onCreatePr}>
@@ -478,6 +456,7 @@ function AgentRow({
   onRemove,
   onChangeModel,
   onSetLabel,
+  onEditPrLink,
   onOpenTerminal,
   onOpenInEditor,
   isInlineEditing,
@@ -496,6 +475,7 @@ function AgentRow({
   onRemove?: () => void
   onChangeModel?: () => void
   onSetLabel?: (label: AgentLabel | null) => void
+  onEditPrLink?: () => void
   onOpenTerminal?: () => void
   onOpenInEditor?: () => void
   isInlineEditing: boolean
@@ -603,10 +583,7 @@ function AgentRow({
         {agent.taskSummary}
       </td>
       <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate">{formatBranchLabel(agent)}</span>
-          {agent.prUrl && <PrBadge url={agent.prUrl} stopPropagation />}
-        </div>
+        <span className="truncate">{formatBranchLabel(agent)}</span>
       </td>
       <td className="px-3 py-2 min-w-[7rem] max-w-[10rem]">
         {agent.model && agent.model !== 'starting...' && (
@@ -628,6 +605,23 @@ function AgentRow({
             onStop={onStop}
             onRemove={onRemove}
           />
+          {agent.prUrl ? (
+            <button
+              onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
+              className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
+              title={agent.prUrl}
+            >
+              <GitPullRequest size={13} weight="bold" />
+            </button>
+          ) : (
+            <button
+              onClick={(event) => { event.stopPropagation(); onEditPrLink?.() }}
+              className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle/40 hover:text-kumo-subtle hover:bg-kumo-fill transition-colors cursor-pointer"
+              title="Add PR link"
+            >
+              <GitPullRequest size={13} />
+            </button>
+          )}
           <button
             onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
             className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"

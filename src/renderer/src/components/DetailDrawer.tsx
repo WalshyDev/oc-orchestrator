@@ -16,7 +16,8 @@ import {
   Brain,
   PaperPlaneTilt,
   Paperclip,
-  ArrowLineUpRight
+  ArrowLineUpRight,
+  Link
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, AgentLabel } from '../types'
 import { formatBranchLabel } from '../types'
@@ -25,6 +26,7 @@ import { loadSettings, SETTINGS_CHANGED_EVENT } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
+import { TextInputModal } from './TextInputModal'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
@@ -103,6 +105,7 @@ interface DetailDrawerProps {
   onAbort?: () => void
   onRemove?: () => void
   onCreatePr?: () => void
+  onSetPrUrl?: (prUrl: string | null) => void
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
@@ -129,6 +132,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   onAbort,
   onRemove,
   onCreatePr,
+  onSetPrUrl,
   onOpenInEditor,
   onChangeModel,
   onOpenTerminal,
@@ -145,6 +149,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [commandPickerIndex, setCommandPickerIndex] = useState(0)
   const [cursorPos, setCursorPos] = useState(0)
   const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
+  const [showPrLinkModal, setShowPrLinkModal] = useState(false)
 
   // Reset the visible window when switching agents
   const prevAgentIdRef = useRef(agent.id)
@@ -723,8 +728,26 @@ export const DetailDrawer = memo(function DetailDrawer({
             icon={<GitPullRequest size={12} />}
             label="PR"
             items={[
-              { icon: <GitPullRequest size={12} />, label: 'Create PR', onClick: onCreatePr },
-              { icon: <ArrowLineUpRight size={12} />, label: 'View PR', onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined }
+              {
+                icon: <ArrowLineUpRight size={12} />,
+                label: 'View PR',
+                onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined
+              },
+              {
+                icon: <Link size={12} />,
+                label: agent.prUrl ? 'Edit PR Link' : 'Add PR Link',
+                onClick: onSetPrUrl ? () => setShowPrLinkModal(true) : undefined
+              },
+              {
+                icon: <Trash size={12} />,
+                label: 'Remove PR Link',
+                onClick: agent.prUrl && onSetPrUrl ? () => onSetPrUrl(null) : undefined
+              },
+              {
+                icon: <GitPullRequest size={12} />,
+                label: 'Create PR',
+                onClick: onCreatePr
+              }
             ]}
           />
           <ActionDropdownButton
@@ -875,6 +898,21 @@ export const DetailDrawer = memo(function DetailDrawer({
         </div>
         </div>{/* end bottom pane */}
       </div>
+
+      {showPrLinkModal && onSetPrUrl && (
+        <TextInputModal
+          title={agent.prUrl ? 'Edit PR Link' : 'Add PR Link'}
+          initialValue={agent.prUrl ?? ''}
+          submitLabel="Save"
+          placeholder="https://github.com/org/repo/pull/123"
+          allowEmpty
+          onSubmit={(url) => {
+            onSetPrUrl(url || null)
+            setShowPrLinkModal(false)
+          }}
+          onClose={() => setShowPrLinkModal(false)}
+        />
+      )}
     </div>
   )
 })
