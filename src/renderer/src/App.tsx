@@ -86,7 +86,8 @@ export function App() {
     setAgentModel: storeSetAgentModel,
     executeCommand: storeExecuteCommand,
     setLabel: storeSetLabel,
-    renameAgent: storeRenameAgent
+    renameAgent: storeRenameAgent,
+    setPrUrl: storeSetPrUrl
   } = store
 
   useEffect(() => {
@@ -764,6 +765,10 @@ export function App() {
     if (selectedAgentId) handleSetLabel(selectedAgentId, label)
   }, [selectedAgentId, handleSetLabel])
 
+  const handleDrawerSetPrUrl = useCallback((prUrl: string | null) => {
+    if (selectedAgentId) storeSetPrUrl(selectedAgentId, prUrl)
+  }, [selectedAgentId, storeSetPrUrl])
+
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
     const result = await storeSendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
@@ -1168,6 +1173,7 @@ export function App() {
         onOpenTerminal={handleOpenTerminal}
         onOpenInEditor={handleOpenInEditorForAgent}
         onCreatePr={handleCreatePrForAgent}
+        onSetPrUrl={storeSetPrUrl}
         onChangeModel={(agentId) => {
           setModelPickerAgentId(agentId)
           setShowModelPicker(true)
@@ -1201,8 +1207,9 @@ export function App() {
           onRejectQuestion={selectedQuestion ? handleRejectQuestion : undefined}
           onAbort={handleAbort}
           onRemove={handleDrawerRemove}
-          onCreatePr={handleCreatePr}
-          onOpenInEditor={handleOpenInEditor}
+           onCreatePr={handleCreatePr}
+           onSetPrUrl={handleDrawerSetPrUrl}
+           onOpenInEditor={handleOpenInEditor}
           onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
           onSetLabel={handleDrawerSetLabel}

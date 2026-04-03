@@ -2059,6 +2059,14 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
+  const setPrUrl = useCallback((agentId: string, prUrl: string | null) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    agent.prUrl = prUrl
+    persistAgentMeta(agentId, { prUrl: prUrl ?? '' })
+    emit({ agents: true })
+  }, [])
+
   return useMemo(() => ({
     agents,
     permissions,
@@ -2079,6 +2087,7 @@ export function useAgentStore() {
     renameAgent,
     setAgentModel,
     setLabel,
+    setPrUrl,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,
@@ -2090,7 +2099,7 @@ export function useAgentStore() {
     executeCommand, prepareFreshAgent, resetSession,
     respondToPermission, replyToQuestion, rejectQuestion,
     abortAgent, removeAgent, renameAgent, setAgentModel,
-    setLabel, selectDirectory,
+    setLabel, setPrUrl, selectDirectory,
     getMessagesForSession, getFileChangesForSession,
     getEventsForSession, getToolCallsForSession
   ])
