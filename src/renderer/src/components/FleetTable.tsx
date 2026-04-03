@@ -19,6 +19,7 @@ import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { PrBadge } from './PrBadge'
 import { LabelDropdown } from './LabelDropdown'
+import { useDismiss } from '../hooks/useDismiss'
 
 interface FleetTableProps {
   agents: AgentRuntime[]
@@ -81,6 +82,7 @@ export function FleetTable({
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renameState, setRenameState] = useState<RenameState | null>(null)
+  const [inlineEditId, setInlineEditId] = useState<string | null>(null)
 
   const handleSort = useCallback((column: SortColumn) => {
     let nextDirection: SortDirection = 'asc'
@@ -194,6 +196,15 @@ export function FleetTable({
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
               onSetLabel={onSetLabel ? (label: AgentLabel | null) => onSetLabel(agent.id, label) : undefined}
+              onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
+              onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
+              isInlineEditing={inlineEditId === agent.id}
+              onStartInlineEdit={() => setInlineEditId(agent.id)}
+              onInlineRename={(newName) => {
+                onRename?.(agent.id, newName)
+                setInlineEditId(null)
+              }}
+              onCancelInlineEdit={() => setInlineEditId(null)}
             />
           ))}
         </tbody>
@@ -466,7 +477,13 @@ function AgentRow({
   onOpen,
   onRemove,
   onChangeModel,
-  onSetLabel
+  onSetLabel,
+  onOpenTerminal,
+  onOpenInEditor,
+  isInlineEditing,
+  onStartInlineEdit,
+  onInlineRename,
+  onCancelInlineEdit
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -479,9 +496,50 @@ function AgentRow({
   onRemove?: () => void
   onChangeModel?: () => void
   onSetLabel?: (label: AgentLabel | null) => void
+  onOpenTerminal?: () => void
+  onOpenInEditor?: () => void
+  isInlineEditing: boolean
+  onStartInlineEdit: () => void
+  onInlineRename: (newName: string) => void
+  onCancelInlineEdit: () => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
+  const [inlineValue, setInlineValue] = useState(agent.name)
+  const inlineInputRef = useRef<HTMLInputElement>(null)
+  const inlineSubmittedRef = useRef(false)
+  const arrowMenu = useDismiss<HTMLTableCellElement>()
+
+  useEffect(() => {
+    if (!isInlineEditing) return
+    inlineSubmittedRef.current = false
+    setInlineValue(agent.name)
+    requestAnimationFrame(() => {
+      inlineInputRef.current?.focus()
+      inlineInputRef.current?.select()
+    })
+  }, [isInlineEditing, agent.name])
+
+  const handleInlineSubmit = () => {
+    if (inlineSubmittedRef.current) return
+    inlineSubmittedRef.current = true
+    const trimmed = inlineValue.trim()
+    if (trimmed && trimmed !== agent.name) {
+      onInlineRename(trimmed)
+    } else {
+      onCancelInlineEdit()
+    }
+  }
+
+  const handleInlineKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      handleInlineSubmit()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      onCancelInlineEdit()
+    }
+  }
 
   return (
     <tr
@@ -496,7 +554,25 @@ function AgentRow({
       }`}
     >
       <td className="px-3 py-2">
-        <div className="font-semibold text-kumo-strong">{agent.name}</div>
+        {isInlineEditing ? (
+          <input
+            ref={inlineInputRef}
+            value={inlineValue}
+            onChange={(event) => setInlineValue(event.target.value)}
+            onKeyDown={handleInlineKeyDown}
+            onBlur={handleInlineSubmit}
+            onClick={(event) => event.stopPropagation()}
+            className="font-semibold text-kumo-strong bg-kumo-control border border-kumo-ring rounded px-1.5 py-0.5 text-xs outline-none w-full max-w-[200px]"
+          />
+        ) : (
+          <div
+            onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
+            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent group-hover:outline-kumo-subtle/40 transition-[outline-color]"
+            title="Click to rename"
+          >
+            {agent.name}
+          </div>
+        )}
         <div className="flex items-center gap-1 text-[11px] text-kumo-subtle">
           {agent.isWorktree && (
             <span className="shrink-0 px-1 py-px rounded bg-kumo-brand/10 text-kumo-brand text-[9px] font-medium leading-tight">
@@ -561,14 +637,21 @@ function AgentRow({
           </button>
         </div>
       </td>
-      <td className="w-10 p-0 border-l border-kumo-line bg-kumo-fill/50">
-        <button
-          onClick={(event) => { event.stopPropagation(); onOpen?.() }}
-          className="w-full h-full flex items-center justify-center text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"
-          title="Open"
-        >
+      <td
+        ref={arrowMenu.containerRef}
+        className="w-10 p-0 border-l border-kumo-line bg-kumo-fill/50 cursor-pointer hover:bg-kumo-fill transition-colors relative"
+        onClick={(event) => { event.stopPropagation(); arrowMenu.toggle() }}
+      >
+        <div className="w-full flex items-center justify-center py-2 text-kumo-subtle group-hover:text-kumo-default">
           <ArrowRight size={14} weight="bold" />
-        </button>
+        </div>
+        {arrowMenu.open && (
+          <ArrowMenuPopover
+            onOpen={() => { arrowMenu.close(); onOpen?.() }}
+            onOpenTerminal={() => { arrowMenu.close(); onOpenTerminal?.() }}
+            onOpenInEditor={() => { arrowMenu.close(); onOpenInEditor?.() }}
+          />
+        )}
       </td>
     </tr>
   )
@@ -637,6 +720,41 @@ function RowActions({
         onClick={(event) => { event.stopPropagation(); onRemove?.() }}
       >
         <Trash size={12} />
+      </button>
+    </div>
+  )
+}
+
+const arrowMenuItemClass = 'flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left'
+
+function ArrowMenuPopover({
+  onOpen,
+  onOpenTerminal,
+  onOpenInEditor
+}: {
+  onOpen: () => void
+  onOpenTerminal: () => void
+  onOpenInEditor: () => void
+}) {
+  return (
+    <div className="absolute right-0 top-full mt-1 z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+      <button
+        className={arrowMenuItemClass}
+        onClick={(event) => { event.stopPropagation(); onOpen() }}
+      >
+        <ArrowRight size={13} /> Open Drawer
+      </button>
+      <button
+        className={arrowMenuItemClass}
+        onClick={(event) => { event.stopPropagation(); onOpenTerminal() }}
+      >
+        <Terminal size={13} /> Terminal
+      </button>
+      <button
+        className={arrowMenuItemClass}
+        onClick={(event) => { event.stopPropagation(); onOpenInEditor() }}
+      >
+        <ArrowSquareOut size={13} /> Editor
       </button>
     </div>
   )
