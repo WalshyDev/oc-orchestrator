@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import {
   ArrowRight,
+  CaretLeft,
+  CaretRight,
   CaretUp,
   CaretDown,
   Check,
@@ -47,6 +49,8 @@ interface FleetTableProps {
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
+
+const SCROLL_STEP = 200
 
 const SORTABLE_COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'agent', label: 'Agent' },
@@ -99,6 +103,9 @@ export function FleetTable({
   const [renameState, setRenameState] = useState<RenameState | null>(null)
   const [prLinkState, setPrLinkState] = useState<PrLinkState | null>(null)
   const [inlineEditId, setInlineEditId] = useState<string | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
 
   const handleSort = useCallback((column: SortColumn) => {
     let nextDirection: SortDirection = 'asc'
@@ -117,6 +124,30 @@ export function FleetTable({
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
+  }, [])
+
+  const updateScrollIndicators = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    setCanScrollLeft(el.scrollLeft > 0)
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+  }, [])
+
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    updateScrollIndicators()
+    el.addEventListener('scroll', updateScrollIndicators, { passive: true })
+    const observer = new ResizeObserver(updateScrollIndicators)
+    observer.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScrollIndicators)
+      observer.disconnect()
+    }
+  }, [updateScrollIndicators])
+
+  const scrollBy = useCallback((delta: number) => {
+    scrollContainerRef.current?.scrollBy({ left: delta, behavior: 'smooth' })
   }, [])
 
   const sortedAgents = useMemo(() => {
@@ -179,56 +210,74 @@ export function FleetTable({
   }
 
   return (
-    <div className="flex-1 overflow-auto" onClick={closeContextMenu}>
-      <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 z-10">
-          <tr>
-            {SORTABLE_COLUMNS.map((col) => (
-              <th
-                key={col.key}
-                className={headerCellClass}
-                onClick={() => handleSort(col.key)}
-              >
-                {col.label}
-                {renderSortIndicator(col.key)}
-              </th>
+    <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto">
+        <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', minWidth: 700 }}>
+          <colgroup>
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '28%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: 96 }} />
+            <col style={{ width: 40 }} />
+          </colgroup>
+          <thead className="sticky top-0 z-10">
+            <tr>
+              {SORTABLE_COLUMNS.map((col) => (
+                <th
+                  key={col.key}
+                  className={headerCellClass}
+                  onClick={() => handleSort(col.key)}
+                >
+                  {col.label}
+                  {renderSortIndicator(col.key)}
+                </th>
+              ))}
+              <th className="px-3 py-2 bg-kumo-overlay border-b border-kumo-line" />
+              <th className="p-0 bg-kumo-overlay border-b border-kumo-line border-l" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedAgents.map((agent) => (
+              <AgentRow
+                key={agent.id}
+                agent={agent}
+                selected={agent.id === selectedId}
+                onSelect={() => onSelect(agent.id)}
+                onContextMenu={(event) => handleContextMenu(event, agent.id)}
+                onApprove={onApprove ? () => onApprove(agent.id) : undefined}
+                onReply={onReply ? () => onReply(agent.id) : undefined}
+                onStop={onStop ? () => onStop(agent.id) : undefined}
+                onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
+                onRemove={onRemove ? () => onRemove(agent.id) : undefined}
+                onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
+                onSetLabel={onSetLabel ? (labelId: string | null) => onSetLabel(agent.id, labelId) : undefined}
+                allLabels={allLabels}
+                onCreateLabel={onCreateLabel}
+                onDeleteLabel={onDeleteLabel}
+                onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
+                onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
+                onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
+                isInlineEditing={inlineEditId === agent.id}
+                onStartInlineEdit={() => setInlineEditId(agent.id)}
+                onInlineRename={(newName) => {
+                  onRename?.(agent.id, newName)
+                  setInlineEditId(null)
+                }}
+                onCancelInlineEdit={() => setInlineEditId(null)}
+              />
             ))}
-            <th className="w-24 px-3 py-2 bg-kumo-overlay border-b border-kumo-line" />
-            <th className="w-10 p-0 bg-kumo-overlay border-b border-kumo-line border-l" />
-          </tr>
-        </thead>
-        <tbody>
-          {sortedAgents.map((agent) => (
-            <AgentRow
-              key={agent.id}
-              agent={agent}
-              selected={agent.id === selectedId}
-              onSelect={() => onSelect(agent.id)}
-              onContextMenu={(event) => handleContextMenu(event, agent.id)}
-              onApprove={onApprove ? () => onApprove(agent.id) : undefined}
-              onReply={onReply ? () => onReply(agent.id) : undefined}
-              onStop={onStop ? () => onStop(agent.id) : undefined}
-              onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
-              onRemove={onRemove ? () => onRemove(agent.id) : undefined}
-              onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-              onSetLabel={onSetLabel ? (labelId: string | null) => onSetLabel(agent.id, labelId) : undefined}
-              allLabels={allLabels}
-              onCreateLabel={onCreateLabel}
-              onDeleteLabel={onDeleteLabel}
-              onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
-              onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
-              onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
-              isInlineEditing={inlineEditId === agent.id}
-              onStartInlineEdit={() => setInlineEditId(agent.id)}
-              onInlineRename={(newName) => {
-                onRename?.(agent.id, newName)
-                setInlineEditId(null)
-              }}
-              onCancelInlineEdit={() => setInlineEditId(null)}
-            />
-          ))}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
+
+      {canScrollLeft && (
+        <ScrollArrow direction="left" onClick={() => scrollBy(-SCROLL_STEP)} />
+      )}
+      {canScrollRight && (
+        <ScrollArrow direction="right" onClick={() => scrollBy(SCROLL_STEP)} />
+      )}
 
       {contextMenu && (
         <ContextMenu
@@ -560,7 +609,7 @@ function AgentRow({
             : 'hover:bg-kumo-control'
       }`}
     >
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 overflow-hidden">
         {isInlineEditing ? (
           <input
             ref={inlineInputRef}
@@ -574,8 +623,8 @@ function AgentRow({
         ) : (
           <div
             onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
-            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color]"
-            title="Click to rename"
+            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color] truncate"
+            title={agent.name}
           >
             {agent.name}
           </div>
@@ -589,9 +638,9 @@ function AgentRow({
           <span className="truncate">{agent.projectName}</span>
         </div>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 overflow-hidden">
         <div className="flex flex-col gap-0.5">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <StatusBadge status={agent.status} />
             {onSetLabel && (
               <LabelDropdown
@@ -609,13 +658,13 @@ function AgentRow({
           </span>
         </div>
       </td>
-      <td className="px-3 py-2 max-w-80 truncate text-kumo-default">
+      <td className="px-3 py-2 truncate text-kumo-default" title={agent.taskSummary || undefined}>
         {agent.taskSummary}
       </td>
-      <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle">
-        <span className="truncate">{formatBranchLabel(agent)}</span>
+      <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle truncate" title={formatBranchLabel(agent)}>
+        {formatBranchLabel(agent)}
       </td>
-      <td className="px-3 py-2 min-w-[7rem] max-w-[10rem]">
+      <td className="px-3 py-2 overflow-hidden">
         {agent.model && agent.model !== 'starting...' && (
           <button
             onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
@@ -626,7 +675,7 @@ function AgentRow({
           </button>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 overflow-hidden">
         <div className="flex items-center justify-end gap-1">
           <RowActions
             agent={agent}
@@ -663,7 +712,7 @@ function AgentRow({
       </td>
       <td
         ref={arrowMenu.containerRef}
-        className="w-10 p-0 border-l border-kumo-line bg-kumo-fill/50 cursor-pointer hover:bg-kumo-fill transition-colors relative"
+        className="p-0 border-l border-kumo-line bg-kumo-fill/50 cursor-pointer hover:bg-kumo-fill transition-colors relative"
         onClick={(event) => { event.stopPropagation(); arrowMenu.toggle() }}
       >
         <div className="w-full flex items-center justify-center py-2 text-kumo-subtle group-hover:text-kumo-default">
@@ -746,6 +795,20 @@ function RowActions({
         <Trash size={12} />
       </button>
     </div>
+  )
+}
+
+function ScrollArrow({ direction, onClick }: { direction: 'left' | 'right'; onClick: () => void }) {
+  const isLeft = direction === 'left'
+  const Icon = isLeft ? CaretLeft : CaretRight
+  return (
+    <button
+      onClick={onClick}
+      className={`absolute ${isLeft ? 'left-0 rounded-r-lg' : 'right-0 rounded-l-lg'} top-1/2 -translate-y-1/2 z-20 w-7 h-12 flex items-center justify-center bg-kumo-overlay/90 border border-kumo-line shadow-lg text-kumo-subtle hover:text-kumo-default hover:bg-kumo-elevated transition-colors cursor-pointer`}
+      aria-label={`Scroll ${direction}`}
+    >
+      <Icon size={14} weight="bold" />
+    </button>
   )
 }
 
