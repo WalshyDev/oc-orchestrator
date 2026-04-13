@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   CaretDown,
+  Check,
   CheckCircle,
   Eye,
   Warning,
@@ -10,7 +11,7 @@ import {
   Plus,
   X
 } from '@phosphor-icons/react'
-import { agentLabelDisplay, getLabelDefinition, LABEL_COLORS, type LabelDefinition, type LabelColorKey } from '../types'
+import { getLabelDefinition, LABEL_COLORS, type LabelDefinition, type LabelColorKey } from '../types'
 import { useDismiss } from '../hooks/useDismiss'
 
 const BUILTIN_ICONS: Record<string, React.ReactNode> = {
@@ -26,25 +27,22 @@ const COLOR_KEYS: LabelColorKey[] = [
 ]
 
 interface LabelDropdownProps {
-  current: string | null
-  onSelect: (labelId: string | null) => void
+  current: string[]
+  onToggle: (labelId: string) => void
+  onClear: () => void
   allLabels: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
   variant?: 'row' | 'action' | 'inline'
 }
 
-export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onDeleteLabel, variant = 'row' }: LabelDropdownProps) {
+export function LabelDropdown({ current, onToggle, onClear, allLabels, onCreateLabel, onDeleteLabel, variant = 'row' }: LabelDropdownProps) {
   const { open, toggle, close, containerRef } = useDismiss()
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState<LabelColorKey>('blue')
 
-  const selectAndClose = (value: string | null) => {
-    onSelect(value)
-    setCreating(false)
-    close()
-  }
+  const currentSet = new Set(current)
 
   const handleToggle = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -56,26 +54,32 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
     if (!onCreateLabel || !newName.trim()) return
     const label = await onCreateLabel(newName.trim(), newColor)
     if (label) {
-      onSelect(label.id)
+      onToggle(label.id)
       setNewName('')
       setNewColor('blue')
       setCreating(false)
-      close()
     }
   }
 
   const handleDelete = async (event: React.MouseEvent, labelId: string) => {
     event.stopPropagation()
     if (!onDeleteLabel) return
-    const deleted = await onDeleteLabel(labelId)
-    if (deleted && current === labelId) {
-      onSelect(null)
-    }
+    await onDeleteLabel(labelId)
   }
 
-  const currentLabel = agentLabelDisplay(current, allLabels)
-  const currentDef = getLabelDefinition(current, allLabels)
-  const currentColors = currentDef ? LABEL_COLORS[currentDef.colorKey] : null
+  const sortedCurrent = current
+    .map((id) => getLabelDefinition(id, allLabels))
+    .filter((def): def is LabelDefinition => def !== null)
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  let displayLabel: string
+  if (sortedCurrent.length === 0) {
+    displayLabel = 'Label'
+  } else if (sortedCurrent.length === 1) {
+    displayLabel = sortedCurrent[0].name
+  } else {
+    displayLabel = `${sortedCurrent.length} labels`
+  }
 
   let menuPosition: string
   let trigger: React.ReactNode
@@ -88,8 +92,8 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
           onClick={handleToggle}
           className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
         >
-          {(current && BUILTIN_ICONS[current]) ?? <Tag size={12} />}
-          {currentLabel}
+          {(current.length === 1 && BUILTIN_ICONS[current[0]]) || <Tag size={12} />}
+          {displayLabel}
           <CaretDown size={10} className="ml-0.5" />
         </button>
       )
@@ -97,18 +101,21 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
 
     case 'inline':
       menuPosition = 'absolute top-full left-0 mt-1'
-      trigger = current ? (
-        <button
-          onClick={handleToggle}
-          className={`inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium transition-colors cursor-pointer ${
-            currentColors
-              ? `${currentColors.bg} ${currentColors.text}`
-              : 'bg-kumo-brand/10 text-kumo-brand'
-          }`}
-          title="Change label"
-        >
-          {currentLabel}
-        </button>
+      trigger = current.length > 0 ? (
+        <div className="inline-flex items-center gap-0.5" onClick={handleToggle}>
+          {sortedCurrent.map((def) => {
+            const colors = LABEL_COLORS[def.colorKey]
+            return (
+              <span
+                key={def.id}
+                className={`inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium cursor-pointer ${colors.bg} ${colors.text}`}
+                title={def.name}
+              >
+                {def.name}
+              </span>
+            )
+          })}
+        </div>
       ) : (
         <button
           onClick={handleToggle}
@@ -126,7 +133,7 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
         <button
           onClick={handleToggle}
           className="w-6 h-6 flex items-center justify-center bg-kumo-fill border border-kumo-line rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors cursor-pointer"
-          title={`Label: ${currentLabel}`}
+          title={`Labels: ${displayLabel}`}
         >
           <CaretDown size={10} />
         </button>
@@ -139,11 +146,11 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
       {trigger}
       {open && (
         <div className={`${menuPosition} z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl`}>
-          {/* None option */}
+          {/* Clear all option */}
           <button
-            onClick={(event) => { event.stopPropagation(); selectAndClose(null) }}
+            onClick={(event) => { event.stopPropagation(); onClear(); close() }}
             className={`flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] rounded transition-colors text-left ${
-              current === null
+              current.length === 0
                 ? 'bg-kumo-interact/12 text-kumo-link'
                 : 'text-kumo-default hover:bg-kumo-fill'
             }`}
@@ -152,21 +159,24 @@ export function LabelDropdown({ current, onSelect, allLabels, onCreateLabel, onD
             None
           </button>
 
-          {/* All labels (built-in + custom) */}
+          {/* All labels (built-in + custom) — multi-select with checkmarks */}
           {allLabels.map((label) => {
             const colors = LABEL_COLORS[label.colorKey]
-            const isSelected = label.id === current
+            const isSelected = currentSet.has(label.id)
             const isCustom = !label.builtIn
             return (
               <div key={label.id} className="group/label flex items-center">
                 <button
-                  onClick={(event) => { event.stopPropagation(); selectAndClose(label.id) }}
+                  onClick={(event) => { event.stopPropagation(); onToggle(label.id) }}
                   className={`flex items-center gap-2 flex-1 min-w-0 px-2.5 py-1.5 text-[11px] rounded transition-colors text-left ${
                     isSelected
                       ? 'bg-kumo-interact/12 text-kumo-link'
                       : 'text-kumo-default hover:bg-kumo-fill'
                   }`}
                 >
+                  <span className="w-3 shrink-0 flex items-center justify-center">
+                    {isSelected ? <Check size={10} weight="bold" /> : null}
+                  </span>
                   {BUILTIN_ICONS[label.id] ?? (
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${colors.swatch}`} />
                   )}

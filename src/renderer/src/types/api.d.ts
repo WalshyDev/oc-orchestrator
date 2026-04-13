@@ -35,7 +35,7 @@ export interface OrchestratorApi {
   listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
-  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }) => Promise<IpcResult>
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[]; prUrl?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
   rejectQuestion: (agentId: string, requestId: string) => Promise<IpcResult>
@@ -171,6 +171,8 @@ export interface AgentLaunchedPayload {
   displayName?: string
   taskSummary?: string
   persistedStatus?: string
+  labelIds?: string[]
+  /** @deprecated Use labelIds. Kept for reading legacy persisted data. */
   labelId?: string
   prUrl?: string
 }
