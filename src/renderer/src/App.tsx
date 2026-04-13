@@ -223,22 +223,18 @@ export function App() {
     return window.api.onUpdateAvailable((data) => setUpdateInfo(data))
   }, [])
 
-  // ── Navigate to agent when desktop notification is clicked ──
-  const navigateToAgent = useCallback((agentId: string) => {
-    console.log('[App] Navigating to agent:', agentId)
-    setFilter(EMPTY_FILTER)
-    setSearchQuery('')
-    setSelectedAgentId(agentId)
-  }, [])
+  // ── Select agent when desktop notification is clicked ──
+  // The detail drawer looks up agents from the unfiltered list, so we
+  // only need to set the selection — no need to clear filters/search.
 
   // Push path: main process sends agentId directly via IPC
   useEffect(() => {
     if (!window.api?.onNotificationSelectAgent) return
     return window.api.onNotificationSelectAgent((data) => {
       console.log('[App] Notification select-agent received (push):', data.agentId)
-      navigateToAgent(data.agentId)
+      setSelectedAgentId(data.agentId)
     })
-  }, [navigateToAgent])
+  }, [])
 
   // Pull path: when the window gains focus, check if there's a pending
   // notification click that the push path may have missed (e.g. the
@@ -250,13 +246,13 @@ export function App() {
       const result = await window.api.getPendingNotificationAgent()
       if (result.ok && result.data) {
         console.log('[App] Notification select-agent received (pull on focus):', result.data)
-        navigateToAgent(result.data)
+        setSelectedAgentId(result.data)
       }
     }
 
     window.addEventListener('focus', checkPending)
     return () => window.removeEventListener('focus', checkPending)
-  }, [navigateToAgent])
+  }, [])
 
   // ── Convert live agents to AgentRuntime shape ──
   const liveAgentsAsRuntimes: AgentRuntime[] = useMemo(() => {
