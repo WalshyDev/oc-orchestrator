@@ -76,7 +76,7 @@ export interface AgentRuntime {
   workspaceName: string
   taskSummary: string
   status: AgentStatus
-  labelId: string | null
+  labelIds: string[]
   model: string
   prUrl: string | null
   lastActivityAt: string
@@ -117,8 +117,8 @@ export function isBlocked(status: AgentStatus): boolean {
   return status === 'needs_input' || status === 'needs_approval'
 }
 
-export function isUrgent(agent: { status: AgentStatus; labelId: string | null }): boolean {
-  return isBlocked(agent.status) || agent.status === 'errored' || agent.labelId === 'blocked'
+export function isUrgent(agent: { status: AgentStatus; labelIds: string[] }): boolean {
+  return isBlocked(agent.status) || agent.status === 'errored' || agent.labelIds.includes('blocked')
 }
 
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
@@ -151,4 +151,20 @@ export function agentLabelDisplay(labelId: string | null, customLabels: LabelDef
   if (!labelId) return 'None'
   const def = getLabelDefinition(labelId, customLabels)
   return def?.name ?? labelId
+}
+
+function resolveNames(labelIds: string[], allLabels: LabelDefinition[]): string[] {
+  return labelIds
+    .map((id) => getLabelDefinition(id, allLabels)?.name ?? id)
+    .sort((a, b) => a.localeCompare(b))
+}
+
+export function agentLabelsDisplay(labelIds: string[], customLabels: LabelDefinition[] = []): string {
+  if (labelIds.length === 0) return 'None'
+  return resolveNames(labelIds, customLabels).join(', ')
+}
+
+export function labelSortKey(labelIds: string[], allLabels: LabelDefinition[] = []): string {
+  if (labelIds.length === 0) return '\uffff'
+  return resolveNames(labelIds, allLabels).join(',').toLowerCase()
 }

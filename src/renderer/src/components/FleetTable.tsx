@@ -19,7 +19,7 @@ import {
   ArrowLineUpRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, LabelDefinition, LabelColorKey } from '../types'
-import { formatBranchLabel, isUrgent } from '../types'
+import { formatBranchLabel, isUrgent, labelSortKey } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
@@ -41,13 +41,14 @@ interface FleetTableProps {
   onCreatePr?: (agentId: string) => void
   onSetPrUrl?: (agentId: string, prUrl: string | null) => void
   onChangeModel?: (agentId: string) => void
-  onSetLabel?: (agentId: string, labelId: string | null) => void
+  onToggleLabel?: (agentId: string, labelId: string) => void
+  onClearLabels?: (agentId: string) => void
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
 }
 
-type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
+type SortColumn = 'agent' | 'status' | 'label' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
 
 const SCROLL_STEP = 200
@@ -55,6 +56,7 @@ const SCROLL_STEP = 200
 const SORTABLE_COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'agent', label: 'Agent' },
   { key: 'status', label: 'Status' },
+  { key: 'label', label: 'Label' },
   { key: 'task', label: 'Task' },
   { key: 'branch', label: 'Branch' },
   { key: 'model', label: 'Model' }
@@ -92,7 +94,8 @@ export function FleetTable({
   onCreatePr,
   onSetPrUrl,
   onChangeModel,
-  onSetLabel,
+  onToggleLabel,
+  onClearLabels,
   allLabels = [],
   onCreateLabel,
   onDeleteLabel
@@ -166,6 +169,10 @@ export function FleetTable({
           leftVal = left.status
           rightVal = right.status
           break
+        case 'label':
+          leftVal = labelSortKey(left.labelIds, allLabels)
+          rightVal = labelSortKey(right.labelIds, allLabels)
+          break
         case 'task':
           leftVal = (left.taskSummary || '').toLowerCase()
           rightVal = (right.taskSummary || '').toLowerCase()
@@ -188,7 +195,7 @@ export function FleetTable({
     })
 
     return sorted
-  }, [agents, sortColumn, sortDirection])
+  }, [agents, sortColumn, sortDirection, allLabels])
 
   const headerCellClass = 'px-3 py-2 text-left font-medium text-[11px] uppercase tracking-wide text-kumo-subtle bg-kumo-overlay border-b border-kumo-line cursor-pointer hover:text-kumo-default select-none'
 
@@ -212,13 +219,14 @@ export function FleetTable({
   return (
     <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
       <div ref={scrollContainerRef} className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', minWidth: 700 }}>
+        <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', minWidth: 800 }}>
           <colgroup>
-            <col style={{ width: '18%' }} />
             <col style={{ width: '16%' }} />
-            <col style={{ width: '28%' }} />
-            <col style={{ width: '14%' }} />
             <col style={{ width: '12%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '26%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '10%' }} />
             <col style={{ width: 96 }} />
             <col style={{ width: 40 }} />
           </colgroup>
@@ -252,7 +260,8 @@ export function FleetTable({
                 onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
                 onRemove={onRemove ? () => onRemove(agent.id) : undefined}
                 onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-                onSetLabel={onSetLabel ? (labelId: string | null) => onSetLabel(agent.id, labelId) : undefined}
+                onToggleLabel={onToggleLabel ? (labelId: string) => onToggleLabel(agent.id, labelId) : undefined}
+                onClearLabels={onClearLabels ? () => onClearLabels(agent.id) : undefined}
                 allLabels={allLabels}
                 onCreateLabel={onCreateLabel}
                 onDeleteLabel={onDeleteLabel}
@@ -327,8 +336,11 @@ export function FleetTable({
             setPrLinkState({ agentId: contextMenu.agentId, currentUrl: agent?.prUrl ?? '' })
             closeContextMenu()
           }}
-          onSetLabel={(labelId: string | null) => {
-            onSetLabel?.(contextMenu.agentId, labelId)
+          onToggleLabel={(labelId: string) => {
+            onToggleLabel?.(contextMenu.agentId, labelId)
+          }}
+          onClearLabels={() => {
+            onClearLabels?.(contextMenu.agentId)
             closeContextMenu()
           }}
           allLabels={allLabels}
@@ -383,7 +395,8 @@ function ContextMenu({
   onCreatePr,
   onRemovePrLink,
   onEditPrLink,
-  onSetLabel,
+  onToggleLabel,
+  onClearLabels,
   allLabels,
   onCreateLabel,
   onDeleteLabel
@@ -402,7 +415,8 @@ function ContextMenu({
   onCreatePr: () => void
   onRemovePrLink: () => void
   onEditPrLink: () => void
-  onSetLabel: (labelId: string | null) => void
+  onToggleLabel: (labelId: string) => void
+  onClearLabels: () => void
   allLabels: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
@@ -487,8 +501,9 @@ function ContextMenu({
       <div className="px-2.5 py-1.5">
         <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Label</div>
         <LabelDropdown
-          current={agent.labelId}
-          onSelect={onSetLabel}
+          current={agent.labelIds}
+          onToggle={onToggleLabel}
+          onClear={onClearLabels}
           allLabels={allLabels}
           onCreateLabel={onCreateLabel}
           onDeleteLabel={onDeleteLabel}
@@ -525,7 +540,8 @@ function AgentRow({
   onOpen,
   onRemove,
   onChangeModel,
-  onSetLabel,
+  onToggleLabel,
+  onClearLabels,
   allLabels = [],
   onCreateLabel,
   onDeleteLabel,
@@ -547,7 +563,8 @@ function AgentRow({
   onOpen?: () => void
   onRemove?: () => void
   onChangeModel?: () => void
-  onSetLabel?: (labelId: string | null) => void
+  onToggleLabel?: (labelId: string) => void
+  onClearLabels?: () => void
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
@@ -640,23 +657,24 @@ function AgentRow({
       </td>
       <td className="px-3 py-2 overflow-hidden">
         <div className="flex flex-col gap-0.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <StatusBadge status={agent.status} />
-            {onSetLabel && (
-              <LabelDropdown
-                current={agent.labelId}
-                onSelect={onSetLabel}
-                allLabels={allLabels}
-                onCreateLabel={onCreateLabel}
-                onDeleteLabel={onDeleteLabel}
-                variant="inline"
-              />
-            )}
-          </div>
+          <StatusBadge status={agent.status} />
           <span className={`font-mono text-[10px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>
             {agent.lastActivityAt}
           </span>
         </div>
+      </td>
+      <td className="px-3 py-2">
+        {onToggleLabel && onClearLabels && (
+          <LabelDropdown
+            current={agent.labelIds}
+            onToggle={onToggleLabel}
+            onClear={onClearLabels}
+            allLabels={allLabels}
+            onCreateLabel={onCreateLabel}
+            onDeleteLabel={onDeleteLabel}
+            variant="inline"
+          />
+        )}
       </td>
       <td className="px-3 py-2 truncate text-kumo-default" title={agent.taskSummary || undefined}>
         {agent.taskSummary}

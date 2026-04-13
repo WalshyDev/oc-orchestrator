@@ -109,7 +109,8 @@ interface DetailDrawerProps {
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
-  onSetLabel?: (labelId: string | null) => void
+  onToggleLabel?: (labelId: string) => void
+  onClearLabels?: () => void
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
@@ -139,7 +140,8 @@ export const DetailDrawer = memo(function DetailDrawer({
   onOpenInEditor,
   onChangeModel,
   onOpenTerminal,
-  onSetLabel,
+  onToggleLabel,
+  onClearLabels,
   allLabels = [],
   onCreateLabel,
   onDeleteLabel
@@ -719,10 +721,11 @@ export const DetailDrawer = memo(function DetailDrawer({
           {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
             <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
           )}
-          {onSetLabel && (
+          {onToggleLabel && onClearLabels && (
             <LabelDropdown
-              current={agent.labelId}
-              onSelect={onSetLabel}
+              current={agent.labelIds}
+              onToggle={onToggleLabel}
+              onClear={onClearLabels}
               allLabels={allLabels}
               onCreateLabel={onCreateLabel}
               onDeleteLabel={onDeleteLabel}

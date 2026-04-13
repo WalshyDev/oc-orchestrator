@@ -336,13 +336,13 @@ export function registerIpcHandlers(): void {
         displayName: agent.displayName,
         taskSummary: agent.taskSummary,
         persistedStatus: agent.persistedStatus,
-        labelId: agent.labelId,
+        labelIds: agent.labelIds ?? [],
         prUrl: agent.prUrl
       }))
     }
   })
 
-  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }) => {
+  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[]; prUrl?: string }) => {
     try {
       agentController.updateAgentMeta(agentId, meta)
       return { ok: true }

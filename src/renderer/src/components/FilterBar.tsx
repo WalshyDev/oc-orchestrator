@@ -282,19 +282,19 @@ function expandStatuses(filters: Set<StatusFilter>): Set<AgentStatus> {
 }
 
 export function matchesFilter(
-  agent: { status: AgentStatus; labelId: string | null; projectName: string },
+  agent: { status: AgentStatus; labelIds: string[]; projectName: string },
   filter: FilterState
 ): boolean {
   if (isFilterEmpty(filter)) return true
 
   // Exclude filters: reject if agent matches any excluded value
   if (filter.excludeStatuses.size > 0 && expandStatuses(filter.excludeStatuses).has(agent.status)) return false
-  if (filter.excludeLabels.size > 0 && agent.labelId && filter.excludeLabels.has(agent.labelId)) return false
+  if (filter.excludeLabels.size > 0 && agent.labelIds.some((id) => filter.excludeLabels.has(id))) return false
   if (filter.excludeProjects.size > 0 && filter.excludeProjects.has(agent.projectName)) return false
 
   // Include filters: agent must match at least one value in each active include dimension
   if (filter.statuses.size > 0 && !expandStatuses(filter.statuses).has(agent.status)) return false
-  if (filter.labels.size > 0 && (!agent.labelId || !filter.labels.has(agent.labelId))) return false
+  if (filter.labels.size > 0 && !agent.labelIds.some((id) => filter.labels.has(id))) return false
   if (filter.projects.size > 0 && !filter.projects.has(agent.projectName)) return false
 
   return true

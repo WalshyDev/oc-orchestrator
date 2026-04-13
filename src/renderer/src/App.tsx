@@ -101,7 +101,8 @@ export function App() {
     removeAgent: storeRemoveAgent,
     setAgentModel: storeSetAgentModel,
     executeCommand: storeExecuteCommand,
-    setLabel: storeSetLabel,
+    toggleLabel: storeToggleLabel,
+    clearLabels: storeClearLabels,
     renameAgent: storeRenameAgent,
     setPrUrl: storeSetPrUrl
   } = store
@@ -266,7 +267,7 @@ export function App() {
       workspaceName: agent.workspaceName,
       taskSummary: agent.taskSummary,
       status: agent.status,
-      labelId: agent.labelId,
+      labelIds: agent.labelIds,
       model: agent.model,
       prUrl: agent.prUrl,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
@@ -553,8 +554,8 @@ export function App() {
   const labelCounts = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const agent of displayAgents) {
-      if (agent.labelId) {
-        counts[agent.labelId] = (counts[agent.labelId] ?? 0) + 1
+      for (const id of agent.labelIds) {
+        counts[id] = (counts[id] ?? 0) + 1
       }
     }
     return counts
@@ -607,18 +608,22 @@ export function App() {
     setSelectedAgentId(agentId)
   }, [])
 
-  const handleSetLabel = useCallback((agentId: string, labelId: string | null) => {
-    storeSetLabel(agentId, labelId)
-  }, [storeSetLabel])
+  const handleToggleLabel = useCallback((agentId: string, labelId: string) => {
+    storeToggleLabel(agentId, labelId)
+  }, [storeToggleLabel])
+
+  const handleClearLabels = useCallback((agentId: string) => {
+    storeClearLabels(agentId)
+  }, [storeClearLabels])
 
   const handleDeleteLabel = useCallback(async (labelId: string): Promise<boolean> => {
     for (const agent of store.agents) {
-      if (agent.labelId === labelId) {
-        storeSetLabel(agent.id, null)
+      if (agent.labelIds.includes(labelId)) {
+        storeToggleLabel(agent.id, labelId)
       }
     }
     return deleteLabel(labelId)
-  }, [store.agents, storeSetLabel, deleteLabel])
+  }, [store.agents, storeToggleLabel, deleteLabel])
 
   const handleRemoveAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -782,9 +787,13 @@ export function App() {
     setShowModelPicker(true)
   }, [selectedAgentId])
 
-  const handleDrawerSetLabel = useCallback((labelId: string | null) => {
-    if (selectedAgentId) handleSetLabel(selectedAgentId, labelId)
-  }, [selectedAgentId, handleSetLabel])
+  const handleDrawerToggleLabel = useCallback((labelId: string) => {
+    if (selectedAgentId) handleToggleLabel(selectedAgentId, labelId)
+  }, [selectedAgentId, handleToggleLabel])
+
+  const handleDrawerClearLabels = useCallback(() => {
+    if (selectedAgentId) handleClearLabels(selectedAgentId)
+  }, [selectedAgentId, handleClearLabels])
 
   const handleDrawerSetPrUrl = useCallback((prUrl: string | null) => {
     if (selectedAgentId) storeSetPrUrl(selectedAgentId, prUrl)
@@ -794,9 +803,9 @@ export function App() {
     if (!selectedAgentId) return
     const result = await storeSendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
     if (result?.ok) {
-      storeSetLabel(selectedAgentId, 'in_review')
+      storeToggleLabel(selectedAgentId, 'in_review')
     }
-  }, [selectedAgentId, storeSendMessage, storeSetLabel])
+  }, [selectedAgentId, storeSendMessage, storeToggleLabel])
 
   const handleOpenInEditor = useCallback(() => {
     if (!selectedAgentId) return
@@ -817,7 +826,7 @@ export function App() {
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
     const result = await store.sendMessage(agentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
     if (result?.ok) {
-      store.setLabel(agentId, 'in_review')
+      store.toggleLabel(agentId, 'in_review')
     }
   }, [store])
 
@@ -1200,7 +1209,8 @@ export function App() {
           setModelPickerAgentId(agentId)
           setShowModelPicker(true)
         }}
-        onSetLabel={handleSetLabel}
+        onToggleLabel={handleToggleLabel}
+        onClearLabels={handleClearLabels}
         allLabels={allLabels}
         onCreateLabel={createLabel}
         onDeleteLabel={handleDeleteLabel}
@@ -1237,7 +1247,8 @@ export function App() {
            onOpenInEditor={handleOpenInEditor}
           onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
-          onSetLabel={handleDrawerSetLabel}
+          onToggleLabel={handleDrawerToggleLabel}
+          onClearLabels={handleDrawerClearLabels}
           allLabels={allLabels}
           onCreateLabel={createLabel}
           onDeleteLabel={handleDeleteLabel}
