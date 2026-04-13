@@ -43,6 +43,7 @@ interface FleetTableProps {
   onChangeModel?: (agentId: string) => void
   onToggleLabel?: (agentId: string, labelId: string) => void
   onClearLabels?: (agentId: string) => void
+  onReplaceLabel?: (agentId: string, oldLabelId: string, newLabelId: string) => void
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
@@ -96,6 +97,7 @@ export function FleetTable({
   onChangeModel,
   onToggleLabel,
   onClearLabels,
+  onReplaceLabel,
   allLabels = [],
   onCreateLabel,
   onDeleteLabel
@@ -262,6 +264,7 @@ export function FleetTable({
                 onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
                 onToggleLabel={onToggleLabel ? (labelId: string) => onToggleLabel(agent.id, labelId) : undefined}
                 onClearLabels={onClearLabels ? () => onClearLabels(agent.id) : undefined}
+                onReplaceLabel={onReplaceLabel ? (oldId: string, newId: string) => onReplaceLabel(agent.id, oldId, newId) : undefined}
                 allLabels={allLabels}
                 onCreateLabel={onCreateLabel}
                 onDeleteLabel={onDeleteLabel}
@@ -542,6 +545,7 @@ function AgentRow({
   onChangeModel,
   onToggleLabel,
   onClearLabels,
+  onReplaceLabel,
   allLabels = [],
   onCreateLabel,
   onDeleteLabel,
@@ -565,6 +569,7 @@ function AgentRow({
   onChangeModel?: () => void
   onToggleLabel?: (labelId: string) => void
   onClearLabels?: () => void
+  onReplaceLabel?: (oldLabelId: string, newLabelId: string) => void
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
@@ -669,6 +674,7 @@ function AgentRow({
             current={agent.labelIds}
             onToggle={onToggleLabel}
             onClear={onClearLabels}
+            onReplace={onReplaceLabel}
             allLabels={allLabels}
             onCreateLabel={onCreateLabel}
             onDeleteLabel={onDeleteLabel}
