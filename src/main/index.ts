@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, nativeImage, Menu } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc'
 import { agentController } from './services/agent-controller'
@@ -96,6 +96,13 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  // Explicit menu suppresses macOS representedObject warnings from Electron's default
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ]))
+
   // Set dock icon (macOS dev mode)
   const appIcon = getAppIcon()
   if (appIcon && process.platform === 'darwin' && app.dock) {
