@@ -206,15 +206,9 @@ class AgentController {
       })
     }
 
-    // Only send the initial prompt if one was provided
-    if (prompt && prompt.trim()) {
-      await client.session.promptAsync({
-        sessionID: session.id,
-        directory,
-        parts: buildMessageParts(prompt, attachments)
-      })
-    }
-
+    // Notify the renderer before sending the prompt so the agent exists in
+    // the store before SSE events arrive — otherwise processEvent() silently
+    // drops them because findAgentBySession() returns undefined.
     this.broadcastToRenderer('agent:launched', {
       id: agentId,
       runtimeId: runtime.id,
@@ -227,6 +221,15 @@ class AgentController {
       prompt: prompt ?? '',
       title: sessionTitle
     })
+
+    // Only send the initial prompt if one was provided
+    if (prompt && prompt.trim()) {
+      await client.session.promptAsync({
+        sessionID: session.id,
+        directory,
+        parts: buildMessageParts(prompt, attachments)
+      })
+    }
 
     console.log(`[AgentController] Launched agent ${agentId} (session ${session.id}) in ${directory}`)
 
@@ -268,14 +271,8 @@ class AgentController {
     handle.taskSummary = ''
     this.persistAgents()
 
-    if (prompt && prompt.trim()) {
-      await runtime.client.session.promptAsync({
-        sessionID: session.id,
-        directory: handle.directory,
-        parts: [{ type: 'text', text: prompt }]
-      })
-    }
-
+    // Notify the renderer before sending the prompt so the new sessionId is
+    // in the store before SSE events arrive (same race as launchAgent).
     this.broadcastToRenderer('agent:session-reset', {
       id: agentId,
       sessionId: session.id,
@@ -284,6 +281,14 @@ class AgentController {
       prompt: prompt ?? '',
       title: sessionTitle
     })
+
+    if (prompt && prompt.trim()) {
+      await runtime.client.session.promptAsync({
+        sessionID: session.id,
+        directory: handle.directory,
+        parts: [{ type: 'text', text: prompt }]
+      })
+    }
 
     console.log(`[AgentController] Reset agent ${agentId} session ${oldSessionId} → ${session.id}`)
     return handle
