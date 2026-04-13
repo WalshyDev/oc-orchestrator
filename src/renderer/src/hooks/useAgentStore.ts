@@ -2264,6 +2264,15 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
+  const replaceLabel = useCallback((agentId: string, oldLabelId: string, newLabelId: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    agent.labelIds = agent.labelIds.map((id) => id === oldLabelId ? newLabelId : id)
+    agent.lastActivityAt = Date.now()
+    persistAgentMeta(agentId, { labelIds: agent.labelIds })
+    emit({ agents: true })
+  }, [])
+
   const setPrUrl = useCallback((agentId: string, prUrl: string | null) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
@@ -2293,6 +2302,7 @@ export function useAgentStore() {
     setAgentModel,
     toggleLabel,
     clearLabels,
+    replaceLabel,
     setPrUrl,
     selectDirectory,
     getMessagesForSession,

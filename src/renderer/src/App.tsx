@@ -103,6 +103,7 @@ export function App() {
     executeCommand: storeExecuteCommand,
     toggleLabel: storeToggleLabel,
     clearLabels: storeClearLabels,
+    replaceLabel: storeReplaceLabel,
     renameAgent: storeRenameAgent,
     setPrUrl: storeSetPrUrl
   } = store
@@ -615,6 +616,10 @@ export function App() {
   const handleClearLabels = useCallback((agentId: string) => {
     storeClearLabels(agentId)
   }, [storeClearLabels])
+
+  const handleReplaceLabel = useCallback((agentId: string, oldLabelId: string, newLabelId: string) => {
+    storeReplaceLabel(agentId, oldLabelId, newLabelId)
+  }, [storeReplaceLabel])
 
   const handleDeleteLabel = useCallback(async (labelId: string): Promise<boolean> => {
     for (const agent of store.agents) {
@@ -1211,6 +1216,7 @@ export function App() {
         }}
         onToggleLabel={handleToggleLabel}
         onClearLabels={handleClearLabels}
+        onReplaceLabel={handleReplaceLabel}
         allLabels={allLabels}
         onCreateLabel={createLabel}
         onDeleteLabel={handleDeleteLabel}
