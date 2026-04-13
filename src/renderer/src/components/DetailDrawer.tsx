@@ -19,7 +19,7 @@ import {
   ArrowLineUpRight,
   Link
 } from '@phosphor-icons/react'
-import type { AgentRuntime, Message, AgentLabel } from '../types'
+import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { loadSettings, SETTINGS_CHANGED_EVENT } from '../data/settings'
@@ -109,7 +109,10 @@ interface DetailDrawerProps {
   onOpenInEditor?: () => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
-  onSetLabel?: (label: AgentLabel | null) => void
+  onSetLabel?: (labelId: string | null) => void
+  allLabels?: LabelDefinition[]
+  onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
+  onDeleteLabel?: (id: string) => Promise<boolean>
 }
 
 export const DetailDrawer = memo(function DetailDrawer({
@@ -136,7 +139,10 @@ export const DetailDrawer = memo(function DetailDrawer({
   onOpenInEditor,
   onChangeModel,
   onOpenTerminal,
-  onSetLabel
+  onSetLabel,
+  allLabels = [],
+  onCreateLabel,
+  onDeleteLabel
 }: DetailDrawerProps) {
   const [inputText, setInputText] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
@@ -715,8 +721,11 @@ export const DetailDrawer = memo(function DetailDrawer({
           )}
           {onSetLabel && (
             <LabelDropdown
-              current={agent.label}
+              current={agent.labelId}
               onSelect={onSetLabel}
+              allLabels={allLabels}
+              onCreateLabel={onCreateLabel}
+              onDeleteLabel={onDeleteLabel}
               variant="action"
             />
           )}

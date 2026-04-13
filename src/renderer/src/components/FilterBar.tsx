@@ -1,8 +1,9 @@
 import { MagnifyingGlass } from '@phosphor-icons/react'
-import type { AgentStatus, AgentLabel } from '../types'
+import type { AgentStatus, LabelDefinition } from '../types'
+import { LABEL_COLORS } from '../types'
 
 export type StatusFilter = 'blocked' | 'running' | 'idle' | 'errored' | 'completed'
-export type LabelFilter = AgentLabel
+export type LabelFilter = string
 
 export type FilterMode = 'include' | 'exclude'
 
@@ -139,12 +140,8 @@ interface FilterBarProps {
     errored: number
     completed: number
   }
-  labelCounts: {
-    in_review: number
-    blocked: number
-    done: number
-    draft: number
-  }
+  labelCounts: Record<string, number>
+  allLabels: LabelDefinition[]
   projects: string[]
 }
 
@@ -158,6 +155,7 @@ export function FilterBar({
   onSearchChange,
   counts,
   labelCounts,
+  allLabels,
   projects
 }: FilterBarProps) {
   const noFilters = isFilterEmpty(filter)
@@ -191,18 +189,19 @@ export function FilterBar({
       {Object.values(labelCounts).some((count) => count > 0) && (
         <>
           <div className="w-px h-5 bg-kumo-line" />
-          {labelCounts.draft > 0 && (
-            <FilterPill label={`Draft (${labelCounts.draft})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'draft')} onClick={() => onCycleLabel('draft')} variant="label" />
-          )}
-          {labelCounts.in_review > 0 && (
-            <FilterPill label={`Review (${labelCounts.in_review})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'in_review')} onClick={() => onCycleLabel('in_review')} variant="label" />
-          )}
-          {labelCounts.blocked > 0 && (
-            <FilterPill label={`Blocked (${labelCounts.blocked})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'blocked')} onClick={() => onCycleLabel('blocked')} variant="label" />
-          )}
-          {labelCounts.done > 0 && (
-            <FilterPill label={`Done (${labelCounts.done})`} mode={getFilterMode(filter.labels, filter.excludeLabels, 'done')} onClick={() => onCycleLabel('done')} variant="label" />
-          )}
+          {allLabels.map((labelDef) => {
+            const count = labelCounts[labelDef.id]
+            if (!count) return null
+            return (
+              <FilterPill
+                key={labelDef.id}
+                label={`${labelDef.name} (${count})`}
+                mode={getFilterMode(filter.labels, filter.excludeLabels, labelDef.id)}
+                onClick={() => onCycleLabel(labelDef.id)}
+                labelDef={labelDef}
+              />
+            )
+          })}
         </>
       )}
 
@@ -231,18 +230,21 @@ function FilterPill({
   label,
   mode,
   onClick,
-  variant = 'status'
+  labelDef
 }: {
   label: string
   mode: FilterMode | null
   onClick: () => void
-  variant?: 'status' | 'label'
+  labelDef?: LabelDefinition
 }) {
   let modeClass: string
   if (mode === 'include') {
-    modeClass = variant === 'label'
-      ? 'bg-kumo-brand/12 border-kumo-brand/30 text-kumo-brand'
-      : 'bg-kumo-interact/12 border-kumo-interact/30 text-kumo-link'
+    if (labelDef) {
+      const colors = LABEL_COLORS[labelDef.colorKey]
+      modeClass = `${colors.bg} ${colors.border} ${colors.text}`
+    } else {
+      modeClass = 'bg-kumo-interact/12 border-kumo-interact/30 text-kumo-link'
+    }
   } else if (mode === 'exclude') {
     modeClass = 'bg-red-500/12 border-red-500/30 text-red-400'
   } else {
@@ -280,19 +282,19 @@ function expandStatuses(filters: Set<StatusFilter>): Set<AgentStatus> {
 }
 
 export function matchesFilter(
-  agent: { status: AgentStatus; label: AgentLabel | null; projectName: string },
+  agent: { status: AgentStatus; labelId: string | null; projectName: string },
   filter: FilterState
 ): boolean {
   if (isFilterEmpty(filter)) return true
 
   // Exclude filters: reject if agent matches any excluded value
   if (filter.excludeStatuses.size > 0 && expandStatuses(filter.excludeStatuses).has(agent.status)) return false
-  if (filter.excludeLabels.size > 0 && agent.label && filter.excludeLabels.has(agent.label)) return false
+  if (filter.excludeLabels.size > 0 && agent.labelId && filter.excludeLabels.has(agent.labelId)) return false
   if (filter.excludeProjects.size > 0 && filter.excludeProjects.has(agent.projectName)) return false
 
   // Include filters: agent must match at least one value in each active include dimension
   if (filter.statuses.size > 0 && !expandStatuses(filter.statuses).has(agent.status)) return false
-  if (filter.labels.size > 0 && (!agent.label || !filter.labels.has(agent.label))) return false
+  if (filter.labels.size > 0 && (!agent.labelId || !filter.labels.has(agent.labelId))) return false
   if (filter.projects.size > 0 && !filter.projects.has(agent.projectName)) return false
 
   return true

@@ -35,7 +35,7 @@ export interface OrchestratorApi {
   listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
-  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }) => Promise<IpcResult>
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
   rejectQuestion: (agentId: string, requestId: string) => Promise<IpcResult>
@@ -64,6 +64,12 @@ export interface OrchestratorApi {
   createProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   ensureProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   deleteProject: (projectId: string) => Promise<IpcResult<boolean>>
+
+  // ── Database: Custom Labels ──
+  listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
+  createCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
+  updateCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
+  deleteCustomLabel: (labelId: string) => Promise<IpcResult<boolean>>
 
   // ── Database: Preferences ──
   getPreference: (key: string) => Promise<IpcResult<string | undefined>>
@@ -144,6 +150,13 @@ export interface OpenCodeEventPayload {
   }
 }
 
+export interface CustomLabelPayload {
+  id: string
+  name: string
+  color_key: string
+  created_at: string
+}
+
 export interface AgentLaunchedPayload {
   id: string
   runtimeId: string
@@ -158,6 +171,7 @@ export interface AgentLaunchedPayload {
   displayName?: string
   taskSummary?: string
   persistedStatus?: string
+  labelId?: string
   prUrl?: string
 }
 

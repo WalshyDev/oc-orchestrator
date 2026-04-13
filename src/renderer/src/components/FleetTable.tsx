@@ -16,7 +16,7 @@ import {
   Link,
   ArrowLineUpRight
 } from '@phosphor-icons/react'
-import type { AgentRuntime, AgentLabel } from '../types'
+import type { AgentRuntime, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel, isUrgent } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
@@ -39,7 +39,10 @@ interface FleetTableProps {
   onCreatePr?: (agentId: string) => void
   onSetPrUrl?: (agentId: string, prUrl: string | null) => void
   onChangeModel?: (agentId: string) => void
-  onSetLabel?: (agentId: string, label: AgentLabel | null) => void
+  onSetLabel?: (agentId: string, labelId: string | null) => void
+  allLabels?: LabelDefinition[]
+  onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
+  onDeleteLabel?: (id: string) => Promise<boolean>
 }
 
 type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
@@ -85,7 +88,10 @@ export function FleetTable({
   onCreatePr,
   onSetPrUrl,
   onChangeModel,
-  onSetLabel
+  onSetLabel,
+  allLabels = [],
+  onCreateLabel,
+  onDeleteLabel
 }: FleetTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -205,7 +211,10 @@ export function FleetTable({
               onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
               onRemove={onRemove ? () => onRemove(agent.id) : undefined}
               onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-              onSetLabel={onSetLabel ? (label: AgentLabel | null) => onSetLabel(agent.id, label) : undefined}
+              onSetLabel={onSetLabel ? (labelId: string | null) => onSetLabel(agent.id, labelId) : undefined}
+              allLabels={allLabels}
+              onCreateLabel={onCreateLabel}
+              onDeleteLabel={onDeleteLabel}
               onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
               onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
               onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
@@ -269,10 +278,13 @@ export function FleetTable({
             setPrLinkState({ agentId: contextMenu.agentId, currentUrl: agent?.prUrl ?? '' })
             closeContextMenu()
           }}
-          onSetLabel={(label: AgentLabel | null) => {
-            onSetLabel?.(contextMenu.agentId, label)
+          onSetLabel={(labelId: string | null) => {
+            onSetLabel?.(contextMenu.agentId, labelId)
             closeContextMenu()
           }}
+          allLabels={allLabels}
+          onCreateLabel={onCreateLabel}
+          onDeleteLabel={onDeleteLabel}
         />
       )}
 
@@ -322,7 +334,10 @@ function ContextMenu({
   onCreatePr,
   onRemovePrLink,
   onEditPrLink,
-  onSetLabel
+  onSetLabel,
+  allLabels,
+  onCreateLabel,
+  onDeleteLabel
 }: {
   agent: AgentRuntime
   posX: number
@@ -338,7 +353,10 @@ function ContextMenu({
   onCreatePr: () => void
   onRemovePrLink: () => void
   onEditPrLink: () => void
-  onSetLabel: (label: AgentLabel | null) => void
+  onSetLabel: (labelId: string | null) => void
+  allLabels: LabelDefinition[]
+  onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
+  onDeleteLabel?: (id: string) => Promise<boolean>
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -420,8 +438,11 @@ function ContextMenu({
       <div className="px-2.5 py-1.5">
         <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Label</div>
         <LabelDropdown
-          current={agent.label}
+          current={agent.labelId}
           onSelect={onSetLabel}
+          allLabels={allLabels}
+          onCreateLabel={onCreateLabel}
+          onDeleteLabel={onDeleteLabel}
           variant="action"
         />
       </div>
@@ -456,6 +477,9 @@ function AgentRow({
   onRemove,
   onChangeModel,
   onSetLabel,
+  allLabels = [],
+  onCreateLabel,
+  onDeleteLabel,
   onEditPrLink,
   onOpenTerminal,
   onOpenInEditor,
@@ -474,7 +498,10 @@ function AgentRow({
   onOpen?: () => void
   onRemove?: () => void
   onChangeModel?: () => void
-  onSetLabel?: (label: AgentLabel | null) => void
+  onSetLabel?: (labelId: string | null) => void
+  allLabels?: LabelDefinition[]
+  onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
+  onDeleteLabel?: (id: string) => Promise<boolean>
   onEditPrLink?: () => void
   onOpenTerminal?: () => void
   onOpenInEditor?: () => void
@@ -568,8 +595,11 @@ function AgentRow({
             <StatusBadge status={agent.status} />
             {onSetLabel && (
               <LabelDropdown
-                current={agent.label}
+                current={agent.labelId}
                 onSelect={onSetLabel}
+                allLabels={allLabels}
+                onCreateLabel={onCreateLabel}
+                onDeleteLabel={onDeleteLabel}
                 variant="inline"
               />
             )}

@@ -76,6 +76,7 @@ export interface AgentHandle {
   displayName: string
   taskSummary: string
   persistedStatus?: string
+  labelId?: string
   prUrl?: string
   bridge: EventBridge
 }
@@ -89,6 +90,7 @@ interface PersistedAgentHandle {
   displayName?: string
   taskSummary?: string
   persistedStatus?: string
+  labelId?: string
   prUrl?: string
 }
 
@@ -129,6 +131,7 @@ class AgentController {
           displayName: persistedAgent.displayName ?? '',
           taskSummary: persistedAgent.taskSummary ?? '',
           persistedStatus: persistedAgent.persistedStatus,
+          labelId: persistedAgent.labelId,
           prUrl: persistedAgent.prUrl,
           bridge: this.bridges.get(runtime.id)!
         }
@@ -292,13 +295,14 @@ class AgentController {
   /**
    * Update the persisted display name, task summary, and/or status for an agent.
    */
-  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }): void {
+  updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }): void {
     const handle = this.agents.get(agentId)
     if (!handle) return
 
     if (meta.displayName !== undefined) handle.displayName = meta.displayName
     if (meta.taskSummary !== undefined) handle.taskSummary = meta.taskSummary
     if (meta.persistedStatus !== undefined) handle.persistedStatus = meta.persistedStatus
+    if (meta.labelId !== undefined) handle.labelId = meta.labelId
     if (meta.prUrl !== undefined) handle.prUrl = meta.prUrl
     this.persistAgents()
   }
@@ -1142,6 +1146,7 @@ class AgentController {
       displayName: agent.displayName,
       taskSummary: agent.taskSummary,
       persistedStatus: agent.persistedStatus,
+      labelId: agent.labelId,
       prUrl: agent.prUrl
     }))
 
