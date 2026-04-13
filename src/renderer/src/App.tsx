@@ -12,7 +12,8 @@ import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
-import { type AgentRuntime, type Interrupt, type Message, type AgentLabel } from './types'
+import { useCustomLabels } from './hooks/useCustomLabels'
+import { type AgentRuntime, type Interrupt, type Message } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -81,6 +82,7 @@ export function App() {
   const [quickLaunching, setQuickLaunching] = useState(false)
 
   const store = useAgentStore()
+  const { allLabels, createLabel, deleteLabel } = useCustomLabels()
 
   // Destructure stable callbacks (all use useCallback(fn, [])) to avoid
   // depending on the whole `store` object in downstream hooks.
@@ -268,7 +270,7 @@ export function App() {
       workspaceName: agent.workspaceName,
       taskSummary: agent.taskSummary,
       status: agent.status,
-      label: agent.label,
+      labelId: agent.labelId,
       model: agent.model,
       prUrl: agent.prUrl,
       lastActivityAt: formatTimeAgo(agent.lastActivityAt),
@@ -552,15 +554,15 @@ export function App() {
     [displayAgents]
   )
 
-  const labelCounts = useMemo(
-    () => ({
-      in_review: displayAgents.filter((agent) => agent.label === 'in_review').length,
-      blocked: displayAgents.filter((agent) => agent.label === 'blocked').length,
-      done: displayAgents.filter((agent) => agent.label === 'done').length,
-      draft: displayAgents.filter((agent) => agent.label === 'draft').length
-    }),
-    [displayAgents]
-  )
+  const labelCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const agent of displayAgents) {
+      if (agent.labelId) {
+        counts[agent.labelId] = (counts[agent.labelId] ?? 0) + 1
+      }
+    }
+    return counts
+  }, [displayAgents])
 
   const projectNames = useMemo(() => {
     const names = new Set(store.agents.map((agent) => agent.projectName))
@@ -609,9 +611,18 @@ export function App() {
     setSelectedAgentId(agentId)
   }, [])
 
-  const handleSetLabel = useCallback((agentId: string, label: AgentLabel | null) => {
-    storeSetLabel(agentId, label)
+  const handleSetLabel = useCallback((agentId: string, labelId: string | null) => {
+    storeSetLabel(agentId, labelId)
   }, [storeSetLabel])
+
+  const handleDeleteLabel = useCallback(async (labelId: string): Promise<boolean> => {
+    for (const agent of store.agents) {
+      if (agent.labelId === labelId) {
+        storeSetLabel(agent.id, null)
+      }
+    }
+    return deleteLabel(labelId)
+  }, [store.agents, storeSetLabel, deleteLabel])
 
   const handleRemoveAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -775,8 +786,8 @@ export function App() {
     setShowModelPicker(true)
   }, [selectedAgentId])
 
-  const handleDrawerSetLabel = useCallback((label: AgentLabel | null) => {
-    if (selectedAgentId) handleSetLabel(selectedAgentId, label)
+  const handleDrawerSetLabel = useCallback((labelId: string | null) => {
+    if (selectedAgentId) handleSetLabel(selectedAgentId, labelId)
   }, [selectedAgentId, handleSetLabel])
 
   const handleDrawerSetPrUrl = useCallback((prUrl: string | null) => {
@@ -1170,6 +1181,7 @@ export function App() {
         onSearchChange={setSearchQuery}
         counts={counts}
         labelCounts={labelCounts}
+        allLabels={allLabels}
         projects={projectNames}
       />
 
@@ -1193,6 +1205,9 @@ export function App() {
           setShowModelPicker(true)
         }}
         onSetLabel={handleSetLabel}
+        allLabels={allLabels}
+        onCreateLabel={createLabel}
+        onDeleteLabel={handleDeleteLabel}
       />
 
       <StatusBar
@@ -1227,6 +1242,9 @@ export function App() {
           onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
           onSetLabel={handleDrawerSetLabel}
+          allLabels={allLabels}
+          onCreateLabel={createLabel}
+          onDeleteLabel={handleDeleteLabel}
         />
       )}
 

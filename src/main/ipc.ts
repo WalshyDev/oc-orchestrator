@@ -336,12 +336,13 @@ export function registerIpcHandlers(): void {
         displayName: agent.displayName,
         taskSummary: agent.taskSummary,
         persistedStatus: agent.persistedStatus,
+        labelId: agent.labelId,
         prUrl: agent.prUrl
       }))
     }
   })
 
-  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }) => {
+  ipcMain.handle('agent:update-meta', async (_event, agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }) => {
     try {
       agentController.updateAgentMeta(agentId, meta)
       return { ok: true }
@@ -608,6 +609,48 @@ export function registerIpcHandlers(): void {
       return { ok: true }
     } catch (error) {
       console.error('[IPC] db:preferences:set failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  // ── Database: Custom Labels ──
+
+  ipcMain.handle('db:labels:list', async () => {
+    try {
+      const labels = database.getAllCustomLabels()
+      return { ok: true, data: labels }
+    } catch (error) {
+      console.error('[IPC] db:labels:list failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('db:labels:create', async (_event, options: { id: string; name: string; colorKey: string }) => {
+    try {
+      const label = database.createCustomLabel(options.id, options.name, options.colorKey)
+      return { ok: true, data: label }
+    } catch (error) {
+      console.error('[IPC] db:labels:create failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('db:labels:update', async (_event, options: { id: string; name: string; colorKey: string }) => {
+    try {
+      const label = database.updateCustomLabel(options.id, options.name, options.colorKey)
+      return { ok: true, data: label }
+    } catch (error) {
+      console.error('[IPC] db:labels:update failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('db:labels:delete', async (_event, labelId: string) => {
+    try {
+      const deleted = database.deleteCustomLabel(labelId)
+      return { ok: true, data: deleted }
+    } catch (error) {
+      console.error('[IPC] db:labels:delete failed:', error)
       return { ok: false, error: String(error) }
     }
   })

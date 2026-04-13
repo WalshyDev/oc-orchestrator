@@ -84,7 +84,7 @@ const api = {
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),
 
-  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string }): Promise<IpcResult> =>
+  updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:update-meta', agentId, meta),
 
   getStatuses: (): Promise<IpcResult> =>
@@ -169,6 +169,19 @@ const api = {
 
   setPreference: (key: string, value: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:preferences:set', key, value),
+
+  // ── Database: Custom Labels ──
+  listCustomLabels: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:labels:list'),
+
+  createCustomLabel: (options: { id: string; name: string; colorKey: string }): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:labels:create', options),
+
+  updateCustomLabel: (options: { id: string; name: string; colorKey: string }): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:labels:update', options),
+
+  deleteCustomLabel: (labelId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:labels:delete', labelId),
 
   // ── Notifications ──
   getNotificationPreferences: (): Promise<IpcResult> =>

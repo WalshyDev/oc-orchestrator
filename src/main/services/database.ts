@@ -20,6 +20,13 @@ export interface EventRecord {
   created_at: string
 }
 
+export interface CustomLabelRow {
+  id: string
+  name: string
+  color_key: string
+  created_at: string
+}
+
 let db: SqlJsDatabase | null = null
 let dbPath = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -167,6 +174,15 @@ class Database {
       )
     `)
 
+    sqlDb.run(`
+      CREATE TABLE IF NOT EXISTS custom_labels (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        color_key TEXT NOT NULL DEFAULT 'blue',
+        created_at TEXT NOT NULL
+      )
+    `)
+
     saveToDisk()
   }
 
@@ -280,6 +296,38 @@ class Database {
 
   getRecentEvents(limit: number = 100): EventRecord[] {
     return this.queryAll<EventRecord>('SELECT * FROM events ORDER BY created_at DESC LIMIT ?', [limit])
+  }
+
+  // ---------------------------------------------------------------------------
+  // Custom Labels
+  // ---------------------------------------------------------------------------
+
+  getAllCustomLabels(): CustomLabelRow[] {
+    return this.queryAll<CustomLabelRow>('SELECT * FROM custom_labels ORDER BY created_at ASC')
+  }
+
+  createCustomLabel(id: string, name: string, colorKey: string): CustomLabelRow {
+    const now = new Date().toISOString()
+    this.execute(
+      'INSERT INTO custom_labels (id, name, color_key, created_at) VALUES (?, ?, ?, ?)',
+      [id, name, colorKey, now]
+    )
+    return this.queryOne<CustomLabelRow>('SELECT * FROM custom_labels WHERE id = ?', [id])!
+  }
+
+  updateCustomLabel(id: string, name: string, colorKey: string): CustomLabelRow | undefined {
+    this.execute(
+      'UPDATE custom_labels SET name = ?, color_key = ? WHERE id = ?',
+      [name, colorKey, id]
+    )
+    return this.queryOne<CustomLabelRow>('SELECT * FROM custom_labels WHERE id = ?', [id])
+  }
+
+  deleteCustomLabel(id: string): boolean {
+    const existing = this.queryOne<CustomLabelRow>('SELECT * FROM custom_labels WHERE id = ?', [id])
+    if (!existing) return false
+    this.execute('DELETE FROM custom_labels WHERE id = ?', [id])
+    return true
   }
 
   // ---------------------------------------------------------------------------

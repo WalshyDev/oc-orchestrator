@@ -337,6 +337,12 @@ export function createDemoApi(): OrchestratorApi {
     ensureProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', created_at: '', updated_at: '' }),
     deleteProject: () => ok(true),
 
+    // ── Database: Custom Labels ──
+    listCustomLabels: () => ok([]),
+    createCustomLabel: () => ok({ id: 'custom', name: 'Custom', color_key: 'blue', created_at: '' }),
+    updateCustomLabel: () => ok({ id: 'custom', name: 'Custom', color_key: 'blue', created_at: '' }),
+    deleteCustomLabel: () => ok(true),
+
     // ── Database: Preferences ──
     getPreference: () => ok(undefined),
     setPreference: noop,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
-import type { AgentStatus, AgentLabel } from '../types'
+import type { AgentStatus } from '../types'
 import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
@@ -61,7 +61,7 @@ export interface LiveAgent {
   workspaceName: string
   taskSummary: string
   status: AgentStatus
-  label: AgentLabel | null
+  labelId: string | null
   model: string
   /** The model set by the user or first top-level assistant message.
    *  Used to restore the displayed model after an invoked agent
@@ -258,7 +258,7 @@ function emitMessagesThrottled(agentChanged: boolean): void {
   }
 }
 
-function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; prUrl?: string }): void {
+function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelId?: string; prUrl?: string }): void {
   window.api?.updateAgentMeta(agentId, meta)
 }
 
@@ -1329,7 +1329,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
-    label: existingAgent?.label ?? null,
+    labelId: existingAgent?.labelId ?? null,
     model: existingAgent?.model ?? 'starting...',
     configuredModel: existingAgent?.configuredModel,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
@@ -1708,7 +1708,9 @@ export function useAgentStore() {
       let shouldEmit = false
 
       if (agentsResult.ok && agentsResult.data) {
-        const PERSISTED_TO_LABEL: Record<string, AgentLabel> = {
+        // Legacy: old versions stored label values in persistedStatus.
+        // Map them to labelId for backward compatibility during migration.
+        const LEGACY_PERSISTED_TO_LABEL: Record<string, string> = {
           in_review: 'in_review', blocked: 'blocked', done: 'done', draft: 'draft',
           completed_manual: 'done', blocked_manual: 'blocked'
         }
@@ -1722,12 +1724,15 @@ export function useAgentStore() {
         }
 
         for (const agent of agentsResult.data) {
-          const restoredLabel = (agent.persistedStatus && PERSISTED_TO_LABEL[agent.persistedStatus]) ?? null
           const restoredStatus: AgentStatus = (agent.persistedStatus && PERSISTED_TO_STATUS[agent.persistedStatus]) || 'idle'
           upsertAgent(agent, restoredStatus)
           const liveAgent = state.agents.get(agent.id)
-          if (liveAgent && restoredLabel) {
-            liveAgent.label = restoredLabel
+          if (liveAgent) {
+            // Prefer the new labelId field; fall back to legacy persistedStatus mapping
+            const labelId = agent.labelId
+              || (agent.persistedStatus && LEGACY_PERSISTED_TO_LABEL[agent.persistedStatus])
+              || null
+            liveAgent.labelId = labelId
           }
           shouldEmit = true
         }
@@ -1887,7 +1892,7 @@ export function useAgentStore() {
 
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
-    const previousLabel = agent?.label ?? null
+    const previousLabelId = agent?.labelId ?? null
 
     if (agent) {
       applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
@@ -1916,7 +1921,7 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        agentAfter.label = previousLabel
+        agentAfter.labelId = previousLabelId
       }
       for (const [qId, q] of removedQuestions) {
         state.questions.set(qId, q)
@@ -2013,7 +2018,7 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
-    const previousLabel = agent?.label ?? null
+    const previousLabelId = agent?.labelId ?? null
     const removedPermission = state.permissions.get(permissionId)
 
     // Optimistically clear permission and set running
@@ -2038,7 +2043,7 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        agentAfter.label = previousLabel
+        agentAfter.labelId = previousLabelId
       }
       if (removedPermission) {
         state.permissions.set(permissionId, removedPermission)
@@ -2055,7 +2060,7 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
-    const previousLabel = agent?.label ?? null
+    const previousLabelId = agent?.labelId ?? null
     const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
@@ -2078,7 +2083,7 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        agentAfter.label = previousLabel
+        agentAfter.labelId = previousLabelId
       }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
@@ -2095,7 +2100,7 @@ export function useAgentStore() {
     const agent = state.agents.get(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
-    const previousLabel = agent?.label ?? null
+    const previousLabelId = agent?.labelId ?? null
     const removedQuestion = state.questions.get(requestId)
 
     // Optimistically clear question and set running
@@ -2118,7 +2123,7 @@ export function useAgentStore() {
         agentAfter.blockedSince = previousBlockedSince
         agentAfter.respondedAt = undefined
         agentAfter.lastActivityAt = Date.now()
-        agentAfter.label = previousLabel
+        agentAfter.labelId = previousLabelId
       }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
@@ -2234,12 +2239,12 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
-  const setLabel = useCallback((agentId: string, label: AgentLabel | null) => {
+  const setLabel = useCallback((agentId: string, labelId: string | null) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
-    agent.label = label
+    agent.labelId = labelId
     agent.lastActivityAt = Date.now()
-    persistAgentMeta(agentId, { persistedStatus: label ?? '' })
+    persistAgentMeta(agentId, { labelId: labelId ?? '' })
     emit({ agents: true })
   }, [])
 
