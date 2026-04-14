@@ -411,13 +411,13 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         worktreeStrategy === 'new-worktree' && freshWorktree
           ? { enabled: true, baseBranch }
           : undefined
+
+      // Must complete before onClose unmounts the component
+      await persistProjectSettings(directory.trim())
       await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy, attachments.length > 0 ? attachments : undefined, freshConfig)
 
       clearAttachments()
       onClose()
-
-      // Fire-and-forget: persist project and worktree settings after modal closes
-      void persistProjectSettings(directory.trim())
     } catch (error) {
       console.error('Launch failed:', error)
       setLaunching(false)
