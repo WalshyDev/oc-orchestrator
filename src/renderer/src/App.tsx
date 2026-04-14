@@ -5,7 +5,7 @@ import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, loadPersistedFilte
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
-import { LaunchModal, type FreshWorktreeConfig } from './components/LaunchModal'
+import { LaunchModal, type FreshWorktreeConfig, type ImportSessionConfig } from './components/LaunchModal'
 import { SessionBrowser } from './components/SessionBrowser'
 import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
@@ -903,7 +903,8 @@ export function App() {
     model?: string,
     worktreeStrategy?: string,
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
-    freshWorktreeConfig?: FreshWorktreeConfig
+    freshWorktreeConfig?: FreshWorktreeConfig,
+    importSession?: ImportSessionConfig
   ) => {
     let launchDirectory = directory
 
@@ -915,7 +916,7 @@ export function App() {
 
       const directoryParts = directory.replace(/\/$/, '').split('/').filter(Boolean)
       const projectSlug = sanitizeSlugSegment(directoryParts[directoryParts.length - 1] ?? 'project', 'project')
-      const taskSource = title?.trim() || prompt?.trim() || 'agent'
+      const taskSource = title?.trim() || prompt?.trim() || (importSession ? importSession.sessionTitle : 'agent')
       const taskSlug = sanitizeSlugSegment(taskSource, 'agent')
 
       const worktreeResult = freshWorktreeConfig?.enabled
@@ -936,6 +937,46 @@ export function App() {
       }
 
       launchDirectory = worktreeResult.data.worktreePath
+    }
+
+    // If importing a session, fork it into the new directory and resume
+    if (importSession) {
+      const forkResult = await window.api.forkSession({
+        sourceSessionId: importSession.sessionId,
+        targetDirectory: launchDirectory
+      })
+
+      if (!forkResult.ok || !forkResult.data) {
+        throw new Error(forkResult.error || 'Failed to fork session')
+      }
+
+      const resumeResult = await window.api.resumeAgent({
+        directory: launchDirectory,
+        sessionId: forkResult.data.sessionId,
+        title: title || forkResult.data.title
+      })
+
+      if (!resumeResult?.ok) {
+        throw new Error('Failed to resume forked session')
+      }
+
+      if (!resumeResult.data) return
+
+      const agentId = (resumeResult.data as { id: string }).id
+      setSelectedAgentId(agentId)
+
+      if (model && model !== 'auto') {
+        store.setAgentModel(agentId, model)
+        try { await window.api.updateConfig(agentId, { model }) }
+        catch { /* best-effort */ }
+      }
+
+      if (prompt?.trim()) {
+        try { await store.sendMessage(agentId, prompt.trim(), undefined, attachments) }
+        catch (error) { console.error('[App] Post-fork prompt failed:', error) }
+      }
+
+      return
     }
 
     // Detect leading @agent mentions and /commands in the prompt.

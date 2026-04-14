@@ -33,6 +33,8 @@ export interface OrchestratorApi {
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
+  listSessionsByProject: (projectDirectory: string) => Promise<IpcResult<ProjectSessionEntry[]>>
+  forkSession: (options: { sourceSessionId: string; targetDirectory: string }) => Promise<IpcResult<{ sessionId: string; title: string }>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[]; prUrl?: string }) => Promise<IpcResult>
@@ -111,6 +113,14 @@ export interface WorktreeListEntry {
 export interface SessionListEntry {
   id: string
   title: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProjectSessionEntry {
+  id: string
+  title: string
+  directory: string
   createdAt: number
   updatedAt: number
 }
