@@ -35,10 +35,11 @@ interface LabelDropdownProps {
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
   variant?: 'row' | 'action' | 'inline'
+  onOpenChange?: (open: boolean) => void
 }
 
-export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels, onCreateLabel, onDeleteLabel, variant = 'row' }: LabelDropdownProps) {
-  const { open, toggle, close, containerRef } = useDismiss()
+export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels, onCreateLabel, onDeleteLabel, variant = 'row', onOpenChange }: LabelDropdownProps) {
+  const { open, toggle, close, containerRef } = useDismiss(onOpenChange)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState<LabelColorKey>('blue')

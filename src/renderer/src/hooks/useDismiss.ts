@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 
-export function useDismiss<T extends HTMLElement = HTMLDivElement>() {
+export function useDismiss<T extends HTMLElement = HTMLDivElement>(onOpenChange?: (open: boolean) => void) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<T>(null)
+
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
 
   useEffect(() => {
     if (!open) return
