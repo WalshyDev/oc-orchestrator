@@ -73,6 +73,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [validating, setValidating] = useState(false)
   const [worktreeRoot, setWorktreeRoot] = useState('')
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
+  const [projectsReady, setProjectsReady] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const {
     attachments, isDragOver, fileInputRef,
@@ -222,17 +223,18 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
   }, [loadProjects])
 
-  // Seed saved projects from existing agent directories
+  // Seed projects from running agents, load the full list, then restore
+  // the last-used directory — sequential so the project list is complete
+  // before restore runs.
   useEffect(() => {
-    if (!knownDirectories || knownDirectories.length === 0) return
+    let cancelled = false
 
-    const seedFromAgents = async () => {
+    const seedKnownDirectories = async () => {
+      if (!knownDirectories?.length) return
       const seen = new Set<string>()
-
       for (const known of knownDirectories) {
         try {
           let dir = known.directory
-          // For worktree agents, resolve back to the actual repo root
           if (known.isWorktree) {
             const result = await window.api.getCommonRepoRoot(known.directory)
             if (result.ok && result.data) {
@@ -248,10 +250,34 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
           // ignore
         }
       }
-      await loadProjects()
     }
 
-    void seedFromAgents()
+    const init = async () => {
+      await seedKnownDirectories()
+      if (cancelled) return
+
+      let projects: Project[] = []
+      try {
+        const result = await window.api.listProjects()
+        if (result.ok && result.data) {
+          projects = result.data
+          setSavedProjects(projects)
+        }
+      } catch { /* ignore */ }
+      if (cancelled) return
+
+      try {
+        const result = await window.api.getPreference('launch:last-directory')
+        if (result.ok && result.data && projects.some((p) => p.repo_root === result.data)) {
+          setDirectory(result.data!)
+        }
+      } catch { /* ignore */ }
+
+      if (!cancelled) setProjectsReady(true)
+    }
+
+    void init()
+    return () => { cancelled = true }
   }, [])
 
   const removeProject = useCallback(async (projectId: string, event: React.MouseEvent) => {
@@ -260,7 +286,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     try {
       await window.api.deleteProject(projectId)
       setSavedProjects((prev) => prev.filter((p) => p.id !== projectId))
-      // If the removed project was selected, clear the directory
       const removed = savedProjects.find((p) => p.id === projectId)
       if (removed && removed.repo_root === directory) {
         setDirectory('')
@@ -269,10 +294,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       // ignore
     }
   }, [directory, savedProjects])
-
-  useEffect(() => {
-    void loadProjects()
-  }, [loadProjects])
 
   useEffect(() => {
     let isMounted = true
@@ -334,18 +355,17 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     return () => clearTimeout(timer)
   }, [directory, onValidateDirectory])
 
-  // Load per-project fresh worktree settings when directory changes.
-  // Always resolves to canonical repo root first for consistent project matching.
+  // Load per-project fresh worktree + base branch settings when directory changes.
+  // Guarded on projectsReady to avoid resetting state before the init flow completes.
   useEffect(() => {
     const dir = directory.trim()
-    if (!dir) return
+    if (!dir || !projectsReady) return
 
     let cancelled = false
     setDetectingBranch(true)
 
     const loadSettings = async () => {
       try {
-        // Resolve canonical repo root so project lookup is consistent
         const repoRootResult = await window.api.getRepoRoot(dir)
         if (cancelled) return
         const repoRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
@@ -358,7 +378,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
           return
         }
 
-        // Auto-detect default branch from the resolved repo root
         const branchResult = await window.api.getDefaultBranch(repoRoot)
         if (cancelled) return
         setBaseBranch(branchResult.ok && branchResult.data ? branchResult.data : 'origin/main')
@@ -373,7 +392,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
     void loadSettings()
     return () => { cancelled = true }
-  }, [directory, savedProjects])
+  }, [directory, savedProjects, projectsReady])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -390,7 +409,13 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     try {
       const repoRootResult = await window.api.getRepoRoot(dir)
       const canonicalRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
-      await saveProject(canonicalRoot)
+      // Write settings before reloading projects to avoid the settings effect
+      // reading stale fresh_worktree values from an intermediate savedProjects update.
+      const name = dirDisplayName(canonicalRoot)
+      const ensureResult = await window.api.ensureProject({ name, repoRoot: canonicalRoot })
+      if (!ensureResult.ok) {
+        console.warn('Failed to ensure project:', ensureResult.error)
+      }
       const settingsResult = await window.api.updateProjectSettings({
         repoRoot: canonicalRoot,
         settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null }
@@ -398,6 +423,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       if (!settingsResult.ok) {
         console.warn('Failed to persist worktree settings:', settingsResult.error)
       }
+      await window.api.setPreference('launch:last-directory', canonicalRoot)
+      await loadProjects()
     } catch (err) {
       console.warn('Failed to persist project settings:', err)
     }
