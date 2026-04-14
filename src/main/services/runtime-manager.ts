@@ -17,9 +17,10 @@ export interface RuntimeInfo {
 }
 
 const HEALTH_CHECK_INTERVAL_MS = 30_000
+const HEALTH_CHECK_TIMEOUT_MS = 10_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000
-const AUTO_RESTART_COOLDOWN_MS = 10_000
+const MAX_AUTO_RESTARTS = 2
 
 /**
  * Manages OpenCode server processes and client connections.
@@ -30,7 +31,8 @@ class RuntimeManager {
   private nextId = 1
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null
   private consecutiveFailures = new Map<string, number>()
-  private lastAutoRestart = new Map<string, number>()
+  /** Track auto-restart attempts per directory to prevent restart loops */
+  private autoRestartCount = new Map<string, number>()
 
   /**
    * Start (or reuse) an OpenCode server for a project directory.
@@ -109,18 +111,30 @@ class RuntimeManager {
       // Skip runtimes that were removed while we were iterating
       if (!this.runtimes.has(runtimeId)) continue
 
+      const startMs = Date.now()
       try {
         await this.checkHealth(runtime)
+        const elapsedMs = Date.now() - startMs
 
         // Reset failure count on success
         this.consecutiveFailures.set(runtimeId, 0)
 
+        // Log slow but successful health checks as a warning
+        if (elapsedMs > 3_000) {
+          console.warn(
+            `[RuntimeManager] Health check slow for ${runtimeId}: ${elapsedMs}ms (port=${runtime.port})`
+          )
+        }
+
         if (!runtime.healthy) {
           runtime.healthy = true
-          console.log(`[RuntimeManager] Runtime ${runtimeId} is healthy again`)
+          // Clear restart counter once a runtime for this directory is stable
+          this.autoRestartCount.delete(runtime.directory)
+          console.log(`[RuntimeManager] Runtime ${runtimeId} is healthy again (${elapsedMs}ms)`)
           this.broadcastToRenderer('runtime:healthy', { id: runtimeId })
         }
       } catch (error) {
+        const elapsedMs = Date.now() - startMs
         const failures = (this.consecutiveFailures.get(runtimeId) ?? 0) + 1
         this.consecutiveFailures.set(runtimeId, failures)
 
@@ -133,7 +147,7 @@ class RuntimeManager {
 
         console.warn(
           `[RuntimeManager] Health check failed for ${runtimeId} (${failures}/${MAX_CONSECUTIVE_FAILURES}):`,
-          `port=${runtime.port} portOpen=${portOpen} uptime=${uptimeSeconds}s dir=${runtime.directory}`,
+          `port=${runtime.port} portOpen=${portOpen} uptime=${uptimeSeconds}s elapsed=${elapsedMs}ms dir=${runtime.directory}`,
           error
         )
 
@@ -153,7 +167,7 @@ class RuntimeManager {
             consecutiveFailures: failures
           })
 
-          // Auto-restart if no active sessions and not recently restarted
+          // Auto-restart if no active sessions and under the restart cap
           await this.tryAutoRestart(runtimeId, runtime, portOpen)
         }
       }
@@ -162,22 +176,28 @@ class RuntimeManager {
 
   /**
    * Attempt to auto-restart a runtime that has exceeded the maximum consecutive
-   * health check failures. Skips restart if the runtime has active sessions or
-   * was recently restarted (within the cooldown period).
+   * health check failures. Tracks restart attempts per directory (not runtime ID,
+   * since restarts create new IDs) and gives up after MAX_AUTO_RESTARTS to avoid
+   * restart loops for persistently broken projects.
    */
   private async tryAutoRestart(
     runtimeId: string,
     runtime: RuntimeInfo,
     portOpen: boolean
   ): Promise<void> {
-    const lastRestart = this.lastAutoRestart.get(runtimeId) ?? 0
-    const sinceLastRestart = Date.now() - lastRestart
+    const restartsSoFar = this.autoRestartCount.get(runtime.directory) ?? 0
 
-    if (sinceLastRestart < AUTO_RESTART_COOLDOWN_MS) {
+    if (restartsSoFar >= MAX_AUTO_RESTARTS) {
       console.warn(
-        `[RuntimeManager] Skipping auto-restart for ${runtimeId}: ` +
-          `last restart was ${Math.round(sinceLastRestart / 1000)}s ago (cooldown: ${AUTO_RESTART_COOLDOWN_MS / 1000}s)`
+        `[RuntimeManager] Giving up on auto-restart for ${runtimeId}: ` +
+          `already restarted ${restartsSoFar}/${MAX_AUTO_RESTARTS} times for dir=${runtime.directory}`
       )
+      this.broadcastToRenderer('runtime:restart-skipped', {
+        id: runtimeId,
+        reason: 'max_restarts_exceeded',
+        restartCount: restartsSoFar,
+        directory: runtime.directory
+      })
       return
     }
 
@@ -194,10 +214,12 @@ class RuntimeManager {
       return
     }
 
+    this.autoRestartCount.set(runtime.directory, restartsSoFar + 1)
+
     console.log(
-      `[RuntimeManager] Auto-restarting ${runtimeId} (portOpen=${portOpen}, dir=${runtime.directory})`
+      `[RuntimeManager] Auto-restarting ${runtimeId} (attempt ${restartsSoFar + 1}/${MAX_AUTO_RESTARTS}, ` +
+        `portOpen=${portOpen}, dir=${runtime.directory})`
     )
-    this.lastAutoRestart.set(runtimeId, Date.now())
 
     try {
       const newRuntime = await this.restartRuntime(runtimeId)
@@ -261,13 +283,19 @@ class RuntimeManager {
 
   /**
    * Restart a runtime by stopping it gracefully and re-creating it.
+   * If `manual` is true (user-initiated), resets the auto-restart counter for the
+   * directory so auto-restarts can fire again if the new runtime also fails.
    */
-  async restartRuntime(runtimeId: string): Promise<RuntimeInfo | undefined> {
+  async restartRuntime(runtimeId: string, manual = false): Promise<RuntimeInfo | undefined> {
     const runtime = this.runtimes.get(runtimeId)
     if (!runtime) return undefined
 
     const { directory } = runtime
     console.log(`[RuntimeManager] Restarting runtime ${runtimeId} for ${directory}`)
+
+    if (manual) {
+      this.autoRestartCount.delete(directory)
+    }
 
     await this.stopRuntime(runtimeId)
     return this.ensureRuntime(directory)
@@ -314,7 +342,6 @@ class RuntimeManager {
 
     this.runtimes.delete(runtimeId)
     this.consecutiveFailures.delete(runtimeId)
-    this.lastAutoRestart.delete(runtimeId)
 
     this.broadcastToRenderer('runtime:stopped', { id: runtimeId })
   }
@@ -331,16 +358,19 @@ class RuntimeManager {
   }
 
   /**
-   * Perform a lightweight HTTP health check against the runtime's server URL.
-   * Throws if the server is unreachable or returns a non-OK status.
+   * Perform a health check using a direct fetch to the session list endpoint.
+   * Bypasses the SDK client which adds a custom fetch wrapper (req.timeout = false)
+   * that interferes with connection handling and causes spurious timeouts on some
+   * runtimes, even though the server itself responds in milliseconds.
    */
   private async checkHealth(runtime: RuntimeInfo): Promise<void> {
-    const response = await fetch(`${runtime.serverUrl}/health`, {
+    const response = await fetch(`${runtime.serverUrl}/session?limit=1`, {
       method: 'GET',
-      signal: AbortSignal.timeout(5_000)
+      headers: { 'x-opencode-directory': runtime.directory },
+      signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS)
     })
     if (!response.ok) {
-      throw new Error(`Health check returned status ${response.status}`)
+      throw new Error(`Health check returned status ${response.status} ${response.statusText}`)
     }
   }
 
@@ -355,7 +385,7 @@ class RuntimeManager {
     }
     this.runtimes.clear()
     this.consecutiveFailures.clear()
-    this.lastAutoRestart.clear()
+    this.autoRestartCount.clear()
   }
 
   getRuntime(runtimeId: string): RuntimeInfo | undefined {
