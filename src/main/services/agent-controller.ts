@@ -303,6 +303,7 @@ class AgentController {
 
   /**
    * Update the persisted display name, task summary, and/or status for an agent.
+   * When displayName changes, also syncs the title to the OpenCode session.
    */
   updateAgentMeta(agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[]; prUrl?: string }): void {
     const handle = this.agents.get(agentId)
@@ -314,6 +315,19 @@ class AgentController {
     if (meta.labelIds !== undefined) handle.labelIds = meta.labelIds
     if (meta.prUrl !== undefined) handle.prUrl = meta.prUrl
     this.persistAgents()
+
+    // Sync display name to the OpenCode session title so it's findable
+    // when browsing sessions later (e.g. for import/restore).
+    if (meta.displayName && handle.sessionId) {
+      const runtime = runtimeManager.getRuntime(handle.runtimeId)
+      if (runtime) {
+        runtime.client.session.update({
+          sessionID: handle.sessionId,
+          directory: handle.directory,
+          title: meta.displayName
+        }).catch(() => { /* best-effort */ })
+      }
+    }
   }
 
   /**
@@ -843,6 +857,12 @@ class AgentController {
     return result.data
   }
 
+  private getActiveSessionIds(): Set<string> {
+    return new Set(
+      Array.from(this.agents.values()).map((agent) => agent.sessionId)
+    )
+  }
+
   /**
    * List existing OpenCode sessions for a directory.
    * Spins up a temporary runtime if needed, then queries the SDK.
@@ -868,10 +888,7 @@ class AgentController {
       time?: { created?: number; updated?: number }
     }>
 
-    // Filter out sessions that are already managed by an active agent
-    const activeSessionIds = new Set(
-      Array.from(this.agents.values()).map((agent) => agent.sessionId)
-    )
+    const activeSessionIds = this.getActiveSessionIds()
 
     return sessions
       .filter((session) => !activeSessionIds.has(session.id))
@@ -881,6 +898,78 @@ class AgentController {
         createdAt: session.time?.created ?? 0,
         updatedAt: session.time?.updated ?? 0
       }))
+  }
+
+  /**
+   * List all root sessions for a project directory (across all worktrees).
+   * Uses session.list without a directory filter, then excludes active
+   * and subagent sessions.
+   */
+  async listSessionsByProject(projectDirectory: string): Promise<Array<{
+    id: string
+    title: string
+    directory: string
+    createdAt: number
+    updatedAt: number
+  }>> {
+    const runtime = await this.ensureBridgeForDirectory(projectDirectory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.list({
+      roots: true,
+      limit: 100
+    })
+
+    if (!result.data) return []
+
+    const sessions = result.data as Array<{
+      id: string
+      title?: string
+      directory?: string
+      parentID?: string
+      time?: { created?: number; updated?: number }
+    }>
+
+    const activeSessionIds = this.getActiveSessionIds()
+
+    return sessions
+      .filter((session) => !activeSessionIds.has(session.id) && !session.parentID)
+      .map((session) => ({
+        id: session.id,
+        title: session.title ?? session.id,
+        directory: session.directory ?? projectDirectory,
+        createdAt: session.time?.created ?? 0,
+        updatedAt: session.time?.updated ?? 0
+      }))
+  }
+
+  /**
+   * Fork an existing session into a target directory.
+   * Creates a copy of the session's messages in the new directory context.
+   */
+  async forkSession(options: {
+    sourceSessionId: string
+    targetDirectory: string
+  }): Promise<{ sessionId: string; title: string }> {
+    const { sourceSessionId, targetDirectory } = options
+
+    const runtime = await this.ensureBridgeForDirectory(targetDirectory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.fork({
+      sessionID: sourceSessionId,
+      directory: targetDirectory
+    })
+
+    const session = result.data as { id: string; title?: string } | undefined
+    if (!session) {
+      throw new Error('Failed to fork session')
+    }
+
+    return {
+      sessionId: session.id,
+      title: session.title ?? `fork-${sourceSessionId.slice(0, 8)}`
+    }
   }
 
   /**

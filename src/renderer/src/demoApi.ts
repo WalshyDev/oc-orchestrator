@@ -301,6 +301,8 @@ export function createDemoApi(): OrchestratorApi {
     listAgentConfigs: () => ok([]),
     listTools: () => ok([]),
     listSessions: () => ok([]),
+    listSessionsByProject: () => ok([]),
+    forkSession: () => ok({ sessionId: 'demo-fork', title: 'Forked session' }),
     resumeAgent: noop,
     listAgents: () => ok(DEMO_AGENTS),
     updateAgentMeta: noop,

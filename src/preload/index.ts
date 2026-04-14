@@ -78,6 +78,12 @@ const api = {
   listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>
     ipcRenderer.invoke('session:list', directory),
 
+  listSessionsByProject: (projectDirectory: string): Promise<IpcResult<Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }>>> =>
+    ipcRenderer.invoke('session:list-by-project', projectDirectory),
+
+  forkSession: (options: { sourceSessionId: string; targetDirectory: string }): Promise<IpcResult<{ sessionId: string; title: string }>> =>
+    ipcRenderer.invoke('session:fork', options),
+
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:resume', options),
 

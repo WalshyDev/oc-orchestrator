@@ -290,6 +290,29 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('session:list-by-project', async (_event, projectDirectory: string) => {
+    try {
+      const sessions = await agentController.listSessionsByProject(projectDirectory)
+      return { ok: true, data: sessions }
+    } catch (error) {
+      console.error('[IPC] session:list-by-project failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('session:fork', async (_event, options: {
+    sourceSessionId: string
+    targetDirectory: string
+  }) => {
+    try {
+      const result = await agentController.forkSession(options)
+      return { ok: true, data: result }
+    } catch (error) {
+      console.error('[IPC] session:fork failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:resume', async (_event, options: {
     directory: string
     sessionId: string
