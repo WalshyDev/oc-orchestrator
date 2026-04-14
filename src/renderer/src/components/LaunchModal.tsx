@@ -67,7 +67,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
-  const [branchOverridden, setBranchOverridden] = useState(false)
   const [detectingBranch, setDetectingBranch] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
@@ -342,7 +341,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     if (!dir) return
 
     let cancelled = false
-    setBranchOverridden(false)
     setDetectingBranch(true)
 
     const loadSettings = async () => {
@@ -388,30 +386,38 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const persistProjectSettings = async (dir: string) => {
+    try {
+      const repoRootResult = await window.api.getRepoRoot(dir)
+      const canonicalRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
+      await saveProject(canonicalRoot)
+      const settingsResult = await window.api.updateProjectSettings({
+        repoRoot: canonicalRoot,
+        settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null }
+      })
+      if (!settingsResult.ok) {
+        console.warn('Failed to persist worktree settings:', settingsResult.error)
+      }
+    } catch (err) {
+      console.warn('Failed to persist project settings:', err)
+    }
+  }
+
   const handleLaunch = async () => {
     if (!directory.trim() || dirError || validating) return
     setLaunching(true)
     try {
       const freshConfig: FreshWorktreeConfig | undefined =
         worktreeStrategy === 'new-worktree' && freshWorktree
-          ? { enabled: true, baseBranch: branchOverridden ? baseBranch : '' }
+          ? { enabled: true, baseBranch }
           : undefined
       await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy, attachments.length > 0 ? attachments : undefined, freshConfig)
-      // Resolve canonical repo root for consistent project identity
-      const repoRootResult = await window.api.getRepoRoot(directory.trim())
-      const canonicalRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : directory.trim()
-      await saveProject(canonicalRoot)
-      if (worktreeStrategy === 'new-worktree') {
-        const settingsResult = await window.api.updateProjectSettings({
-          repoRoot: canonicalRoot,
-          settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null }
-        })
-        if (!settingsResult.ok) {
-          console.warn('Failed to persist worktree settings:', settingsResult.error)
-        }
-      }
+
       clearAttachments()
       onClose()
+
+      // Fire-and-forget: persist project and worktree settings after modal closes
+      void persistProjectSettings(directory.trim())
     } catch (error) {
       console.error('Launch failed:', error)
       setLaunching(false)
@@ -590,7 +596,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   <input
                     type="text"
                     value={baseBranch}
-                    onChange={(e) => { setBaseBranch(e.target.value); setBranchOverridden(true) }}
+                    onChange={(e) => setBaseBranch(e.target.value)}
                     placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
                     disabled={detectingBranch}
                     className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
