@@ -1,6 +1,7 @@
-import { MagnifyingGlass } from '@phosphor-icons/react'
-import type { AgentStatus, LabelDefinition } from '../types'
-import { LABEL_COLORS } from '../types'
+import { useState, useRef, useEffect } from 'react'
+import { MagnifyingGlass, Columns, Check } from '@phosphor-icons/react'
+import type { AgentStatus, LabelDefinition, ColumnKey } from '../types'
+import { LABEL_COLORS, ALL_COLUMNS } from '../types'
 
 export type StatusFilter = 'blocked' | 'running' | 'idle' | 'errored' | 'completed'
 export type LabelFilter = string
@@ -143,6 +144,8 @@ interface FilterBarProps {
   labelCounts: Record<string, number>
   allLabels: LabelDefinition[]
   projects: string[]
+  visibleColumns: Set<ColumnKey>
+  onToggleColumn: (key: ColumnKey) => void
 }
 
 export function FilterBar({
@@ -156,7 +159,9 @@ export function FilterBar({
   counts,
   labelCounts,
   allLabels,
-  projects
+  projects,
+  visibleColumns,
+  onToggleColumn
 }: FilterBarProps) {
   const noFilters = isFilterEmpty(filter)
 
@@ -216,6 +221,9 @@ export function FilterBar({
           onClick={() => onCycleProject(project)}
         />
       ))}
+
+      <div className="flex-1" />
+      <ColumnToggle visibleColumns={visibleColumns} onToggle={onToggleColumn} />
     </div>
   )
 }
@@ -262,6 +270,72 @@ function FilterPill({
       {mode === 'exclude' && <span aria-hidden="true" className="text-[9px] leading-none">−</span>}
       {label}
     </button>
+  )
+}
+
+function ColumnToggle({
+  visibleColumns,
+  onToggle
+}: {
+  visibleColumns: Set<ColumnKey>
+  onToggle: (key: ColumnKey) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (event: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [open])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        onClick={() => setOpen((prev) => !prev)}
+        title="Toggle columns"
+        className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors cursor-pointer ${
+          open
+            ? 'bg-kumo-interact/12 border-kumo-interact/30 text-kumo-link'
+            : 'bg-kumo-control border-kumo-line text-kumo-subtle hover:border-kumo-fill-hover hover:text-kumo-default'
+        }`}
+      >
+        <Columns size={13} />
+        <span>Columns</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+          {ALL_COLUMNS.map((col) => {
+            const isVisible = visibleColumns.has(col.key)
+            return (
+              <button
+                key={col.key}
+                onClick={() => onToggle(col.key)}
+                className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left cursor-pointer"
+              >
+                <span className={`w-3.5 h-3.5 flex items-center justify-center rounded border ${isVisible ? 'bg-kumo-interact/20 border-kumo-interact/40 text-kumo-link' : 'border-kumo-line text-transparent'}`}>
+                  {isVisible && <Check size={10} weight="bold" />}
+                </span>
+                {col.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 

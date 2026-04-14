@@ -13,13 +13,12 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
-import { type AgentRuntime, type Interrupt, type Message } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
 import { loadSettings } from './data/settings'
 
-type SortColumn = 'agent' | 'status' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
 
 const NEW_AGENT_COMMAND = '/new'
@@ -41,6 +40,18 @@ function mapToolState(toolState?: string): ToolCall['state'] {
   if (toolState === 'completed') return 'completed'
   if (toolState === 'error' || toolState === 'failed') return 'failed'
   return 'running'
+}
+
+function extractLastAssistantMessage(messages: { role: string; parts: { type: string; text?: string }[] }[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'assistant') continue
+    const text = messages[i].parts
+      .filter((p) => p.type === 'text' && p.text)
+      .map((p) => p.text!)
+      .join(' ')
+    if (text) return text.slice(0, 200)
+  }
+  return undefined
 }
 
 export function App() {
@@ -66,7 +77,7 @@ export function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showSessionBrowser, setShowSessionBrowser] = useState(false)
 
-  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
+  const [sortColumn, setSortColumn] = useState<ColumnKey | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [tick, setTick] = useState(0)
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
@@ -80,6 +91,33 @@ export function App() {
   const [launchCommands, setLaunchCommands] = useState<ChatCommand[]>([])
   const [launchAgentConfigs, setLaunchAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
   const [quickLaunching, setQuickLaunching] = useState(false)
+  const [visibleColumns, setVisibleColumnsRaw] = useState<Set<ColumnKey>>(loadColumnVisibility)
+  const [columnWidths, setColumnWidthsRaw] = useState<ColumnWidths>(loadColumnWidths)
+
+  const setVisibleColumns = useCallback((value: Set<ColumnKey> | ((prev: Set<ColumnKey>) => Set<ColumnKey>)) => {
+    setVisibleColumnsRaw((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      saveColumnVisibility(next)
+      return next
+    })
+  }, [])
+
+  const handleColumnResize = useCallback((key: ColumnKey, width: number) => {
+    setColumnWidthsRaw((prev) => {
+      const next = { ...prev, [key]: width }
+      saveColumnWidths(next)
+      return next
+    })
+  }, [])
+
+  const handleColumnResetWidth = useCallback((key: ColumnKey) => {
+    setColumnWidthsRaw((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      saveColumnWidths(next)
+      return next
+    })
+  }, [])
 
   const store = useAgentStore()
   const { allLabels, createLabel, deleteLabel } = useCustomLabels()
@@ -258,25 +296,30 @@ export function App() {
 
   // ── Convert live agents to AgentRuntime shape ──
   const liveAgentsAsRuntimes: AgentRuntime[] = useMemo(() => {
-    return store.agents.map((agent): AgentRuntime => ({
-      id: agent.id,
-      name: agent.name,
-      projectId: agent.directory,
-      projectName: agent.projectName,
-      branchName: agent.branchName,
-      isWorktree: agent.isWorktree,
-      workspaceName: agent.workspaceName,
-      taskSummary: agent.taskSummary,
-      status: agent.status,
-      labelIds: agent.labelIds,
-      model: agent.model,
-      prUrl: agent.prUrl,
-      lastActivityAt: formatTimeAgo(agent.lastActivityAt),
-      lastActivityAtMs: agent.lastActivityAt,
-      blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
-      blockedSinceMs: agent.blockedSince
-    }))
-  }, [store.agents, tick])
+    return store.agents.map((agent): AgentRuntime => {
+      const lastMessage = extractLastAssistantMessage(getMessagesForSession(agent.sessionId))
+
+      return {
+        id: agent.id,
+        name: agent.name,
+        projectId: agent.directory,
+        projectName: agent.projectName,
+        branchName: agent.branchName,
+        isWorktree: agent.isWorktree,
+        workspaceName: agent.workspaceName,
+        taskSummary: agent.taskSummary,
+        status: agent.status,
+        labelIds: agent.labelIds,
+        model: agent.model,
+        prUrl: agent.prUrl,
+        lastActivityAt: formatTimeAgo(agent.lastActivityAt),
+        lastActivityAtMs: agent.lastActivityAt,
+        blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
+        blockedSinceMs: agent.blockedSince,
+        lastMessage
+      }
+    })
+  }, [store.agents, tick, getMessagesForSession])
 
   // ── Convert live permissions + needs_input agents to Interrupt shape ──
   const liveInterrupts: Interrupt[] = useMemo(() => {
@@ -348,7 +391,8 @@ export function App() {
           agent.name.toLowerCase().includes(query) ||
           agent.projectName.toLowerCase().includes(query) ||
           agent.taskSummary.toLowerCase().includes(query) ||
-          agent.branchName.toLowerCase().includes(query)
+          agent.branchName.toLowerCase().includes(query) ||
+          (agent.lastMessage ?? '').toLowerCase().includes(query)
       )
     }
 
@@ -384,6 +428,14 @@ export function App() {
           case 'model':
             leftVal = (left.model || '').toLowerCase()
             rightVal = (right.model || '').toLowerCase()
+            break
+          case 'lastMessage':
+            leftVal = (left.lastMessage || '').toLowerCase()
+            rightVal = (right.lastMessage || '').toLowerCase()
+            break
+          case 'label':
+            leftVal = left.labelIds.join(',').toLowerCase()
+            rightVal = right.labelIds.join(',').toLowerCase()
             break
         }
 
@@ -585,7 +637,7 @@ export function App() {
 
   // ── Sort handler ──
   const handleSort = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column as SortColumn)
+    setSortColumn(column as ColumnKey)
     setSortDirection(direction)
   }, [])
 
@@ -1196,6 +1248,18 @@ export function App() {
         labelCounts={labelCounts}
         allLabels={allLabels}
         projects={projectNames}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(key) => {
+          setVisibleColumns((prev) => {
+            const next = new Set(prev)
+            if (next.has(key)) {
+              if (next.size > 1) next.delete(key)
+            } else {
+              next.add(key)
+            }
+            return next
+          })
+        }}
       />
 
       <FleetTable
@@ -1223,6 +1287,10 @@ export function App() {
         allLabels={allLabels}
         onCreateLabel={createLabel}
         onDeleteLabel={handleDeleteLabel}
+        visibleColumns={visibleColumns}
+        columnWidths={columnWidths}
+        onColumnResize={handleColumnResize}
+        onColumnResetWidth={handleColumnResetWidth}
       />
 
       <StatusBar
