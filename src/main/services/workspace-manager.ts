@@ -370,17 +370,42 @@ class WorkspaceManager {
   }
 
   getDefaultBranch(repoRoot: string): string {
-    try {
-      const remoteHead = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      }).trim()
+    const gitOpts = { cwd: repoRoot, encoding: 'utf-8' as const, stdio: 'pipe' as const }
 
-      return remoteHead.replace('refs/remotes/', '')
-    } catch {
-      return 'origin/main'
+    const readOriginHead = (): string | null => {
+      try {
+        return execSync('git symbolic-ref refs/remotes/origin/HEAD', gitOpts)
+          .trim()
+          .replace('refs/remotes/', '')
+      } catch {
+        return null
+      }
     }
+
+    // Fast path: local symbolic-ref already cached
+    const cached = readOriginHead()
+    if (cached) return cached
+
+    // Query the remote and cache locally
+    try {
+      execSync('git remote set-head origin --auto', { ...gitOpts, timeout: 10_000 })
+      const resolved = readOriginHead()
+      if (resolved) return resolved
+    } catch {
+      // Network unavailable or remote doesn't support it
+    }
+
+    // Last resort: probe for common branch names
+    for (const name of ['main', 'master', 'staging', 'develop']) {
+      try {
+        execSync(`git rev-parse --verify origin/${name}`, gitOpts)
+        return `origin/${name}`
+      } catch {
+        continue
+      }
+    }
+
+    return 'origin/main'
   }
 
   /**
