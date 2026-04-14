@@ -19,3 +19,12 @@ mac:
       arch:
         - arm64
         - x64
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Development
