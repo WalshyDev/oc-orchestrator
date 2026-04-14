@@ -229,7 +229,7 @@ export function FleetTable({
             <col style={{ width: '26%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '10%' }} />
-            <col style={{ width: 96 }} />
+            <col style={{ width: 140 }} />
             <col style={{ width: 40 }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
@@ -773,7 +773,7 @@ function RowActions({
   const isStopping = agent.status === 'stopping'
 
   return (
-    <div className="hidden gap-1 group-hover:flex">
+    <div className="flex gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
       {agent.status === 'needs_approval' && (
         <button
           className={buttonBase}
