@@ -1,12 +1,13 @@
 import { createOpencodeServer } from '@opencode-ai/sdk/server'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2/client'
 import { BrowserWindow } from 'electron'
-import { createServer } from 'node:net'
+import { createServer, createConnection } from 'node:net'
 
 export interface RuntimeInfo {
   id: string
   directory: string
   serverUrl: string
+  port: number
   client: OpencodeClient
   close: () => void
   startedAt: number
@@ -18,6 +19,7 @@ export interface RuntimeInfo {
 const HEALTH_CHECK_INTERVAL_MS = 30_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000
+const AUTO_RESTART_COOLDOWN_MS = 10_000
 
 /**
  * Manages OpenCode server processes and client connections.
@@ -28,6 +30,7 @@ class RuntimeManager {
   private nextId = 1
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null
   private consecutiveFailures = new Map<string, number>()
+  private lastAutoRestart = new Map<string, number>()
 
   /**
    * Start (or reuse) an OpenCode server for a project directory.
@@ -56,6 +59,7 @@ class RuntimeManager {
       id: runtimeId,
       directory,
       serverUrl: server.url,
+      port,
       client,
       close: server.close,
       startedAt: Date.now(),
@@ -121,8 +125,15 @@ class RuntimeManager {
         this.consecutiveFailures.set(runtimeId, failures)
 
         runtime.healthy = false
+
+        // Diagnose whether the port is still open (process alive but slow)
+        // or nothing is listening (process dead)
+        const portOpen = await this.isPortOpen(runtime.port)
+        const uptimeSeconds = Math.round((Date.now() - runtime.startedAt) / 1000)
+
         console.warn(
           `[RuntimeManager] Health check failed for ${runtimeId} (${failures}/${MAX_CONSECUTIVE_FAILURES}):`,
+          `port=${runtime.port} portOpen=${portOpen} uptime=${uptimeSeconds}s dir=${runtime.directory}`,
           error
         )
 
@@ -133,16 +144,102 @@ class RuntimeManager {
 
         if (failures >= MAX_CONSECUTIVE_FAILURES) {
           console.error(
-            `[RuntimeManager] Runtime ${runtimeId} disconnected after ${failures} consecutive failures`
+            `[RuntimeManager] Runtime ${runtimeId} disconnected after ${failures} consecutive failures` +
+              ` (port=${runtime.port} portOpen=${portOpen})`
           )
           this.broadcastToRenderer('runtime:disconnected', {
             id: runtimeId,
             reason: 'health_check_failures',
             consecutiveFailures: failures
           })
+
+          // Auto-restart if no active sessions and not recently restarted
+          await this.tryAutoRestart(runtimeId, runtime, portOpen)
         }
       }
     }
+  }
+
+  /**
+   * Attempt to auto-restart a runtime that has exceeded the maximum consecutive
+   * health check failures. Skips restart if the runtime has active sessions or
+   * was recently restarted (within the cooldown period).
+   */
+  private async tryAutoRestart(
+    runtimeId: string,
+    runtime: RuntimeInfo,
+    portOpen: boolean
+  ): Promise<void> {
+    const lastRestart = this.lastAutoRestart.get(runtimeId) ?? 0
+    const sinceLastRestart = Date.now() - lastRestart
+
+    if (sinceLastRestart < AUTO_RESTART_COOLDOWN_MS) {
+      console.warn(
+        `[RuntimeManager] Skipping auto-restart for ${runtimeId}: ` +
+          `last restart was ${Math.round(sinceLastRestart / 1000)}s ago (cooldown: ${AUTO_RESTART_COOLDOWN_MS / 1000}s)`
+      )
+      return
+    }
+
+    if (runtime.activeSessions > 0) {
+      console.warn(
+        `[RuntimeManager] Skipping auto-restart for ${runtimeId}: ` +
+          `${runtime.activeSessions} active session(s) — requires manual intervention`
+      )
+      this.broadcastToRenderer('runtime:restart-skipped', {
+        id: runtimeId,
+        reason: 'active_sessions',
+        activeSessions: runtime.activeSessions
+      })
+      return
+    }
+
+    console.log(
+      `[RuntimeManager] Auto-restarting ${runtimeId} (portOpen=${portOpen}, dir=${runtime.directory})`
+    )
+    this.lastAutoRestart.set(runtimeId, Date.now())
+
+    try {
+      const newRuntime = await this.restartRuntime(runtimeId)
+      if (newRuntime) {
+        console.log(
+          `[RuntimeManager] Auto-restart succeeded: ${runtimeId} -> ${newRuntime.id} at port ${newRuntime.port}`
+        )
+        this.broadcastToRenderer('runtime:auto-restarted', {
+          oldId: runtimeId,
+          newId: newRuntime.id,
+          directory: newRuntime.directory
+        })
+      }
+    } catch (error) {
+      console.error(`[RuntimeManager] Auto-restart failed for ${runtimeId}:`, error)
+      this.broadcastToRenderer('runtime:restart-failed', {
+        id: runtimeId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
+  /**
+   * Quick TCP probe to check if anything is listening on the given port.
+   * Distinguishes "process dead" (port closed) from "process overloaded" (port open but slow).
+   */
+  private isPortOpen(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = createConnection({ host: '127.0.0.1', port, timeout: 1_000 })
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve(true)
+      })
+      socket.once('timeout', () => {
+        socket.destroy()
+        resolve(false)
+      })
+      socket.once('error', () => {
+        socket.destroy()
+        resolve(false)
+      })
+    })
   }
 
   /**
@@ -217,6 +314,7 @@ class RuntimeManager {
 
     this.runtimes.delete(runtimeId)
     this.consecutiveFailures.delete(runtimeId)
+    this.lastAutoRestart.delete(runtimeId)
 
     this.broadcastToRenderer('runtime:stopped', { id: runtimeId })
   }
@@ -257,6 +355,7 @@ class RuntimeManager {
     }
     this.runtimes.clear()
     this.consecutiveFailures.clear()
+    this.lastAutoRestart.clear()
   }
 
   getRuntime(runtimeId: string): RuntimeInfo | undefined {
