@@ -1,4 +1,4 @@
-import { execSync, exec } from 'child_process'
+import { execSync, execFileSync, exec } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 import fs from 'fs'
@@ -31,6 +31,19 @@ export interface DirectoryContext {
   branchName: string
   isWorktree: boolean
   workspaceName: string
+}
+
+// eslint-disable-next-line no-control-regex
+const GIT_REF_INVALID_CHARS = /[\x00-\x1f\x7f ~^:?*[\]\\]/
+
+function validateGitRef(ref: string): string {
+  const trimmed = ref.trim()
+  if (!trimmed) throw new Error('Git ref cannot be empty')
+  if (GIT_REF_INVALID_CHARS.test(trimmed)) throw new Error(`Invalid characters in git ref: ${trimmed}`)
+  if (trimmed.startsWith('-')) throw new Error(`Git ref cannot start with a dash: ${trimmed}`)
+  if (trimmed.includes('..')) throw new Error(`Git ref cannot contain "..": ${trimmed}`)
+  if (trimmed.endsWith('.lock') || trimmed.endsWith('.')) throw new Error(`Git ref cannot end with ".lock" or ".": ${trimmed}`)
+  return trimmed
 }
 
 /**
@@ -94,8 +107,10 @@ class WorkspaceManager {
 
   /**
    * Creates a fresh worktree based on the latest default branch from origin.
+   * Fetches first, then resolves the base ref — so the branch name is always
+   * up-to-date even when origin/HEAD has changed.
    */
-  createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string): FreshWorktreeInfo {
+  createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string, explicitBaseRef?: string): FreshWorktreeInfo {
     const timestamp = Date.now()
     const safeProjSlug = projectSlug.slice(0, 50)
     const safeTaskSlug = taskSlug.slice(0, 50)
@@ -109,17 +124,20 @@ class WorkspaceManager {
         fs.mkdirSync(parentDir, { recursive: true })
       }
 
-      execSync('git fetch origin --prune', {
+      execFileSync('git', ['fetch', 'origin', '--prune'], {
         cwd: repoRoot,
         encoding: 'utf-8',
         stdio: 'pipe'
       })
 
-      const baseRef = this.getDefaultBaseRef(repoRoot)
+      // Resolve after fetch so origin/HEAD reflects the latest remote state
+      const baseRef = explicitBaseRef
+        ? validateGitRef(explicitBaseRef)
+        : this.getDefaultBranch(repoRoot)
 
       console.log(`[WorkspaceManager] Creating fresh worktree at ${worktreePath} from ${baseRef}`)
 
-      execSync(`git worktree add -b "${branchName}" "${worktreePath}" "${baseRef}"`, {
+      execFileSync('git', ['worktree', 'add', '-b', branchName, worktreePath, baseRef], {
         cwd: repoRoot,
         encoding: 'utf-8',
         stdio: 'pipe'
@@ -329,7 +347,7 @@ class WorkspaceManager {
       stdio: 'pipe'
     })
 
-    const baseRef = this.getDefaultBaseRef(repoRoot)
+    const baseRef = this.getDefaultBranch(repoRoot)
     const timestamp = Date.now()
     const safeProjSlug = projectSlug.slice(0, 50)
     const safeTaskSlug = taskSlug.slice(0, 50)
@@ -351,7 +369,7 @@ class WorkspaceManager {
     return branchName
   }
 
-  private getDefaultBaseRef(repoRoot: string): string {
+  getDefaultBranch(repoRoot: string): string {
     try {
       const remoteHead = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
         cwd: repoRoot,

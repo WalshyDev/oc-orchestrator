@@ -9,6 +9,11 @@ import type { ChatCommand, AgentConfigItem } from './DetailDrawer'
 
 type WorktreeStrategy = 'new-worktree' | 'current-directory'
 
+export interface FreshWorktreeConfig {
+  enabled: boolean
+  baseBranch: string
+}
+
 function sanitizePathSegment(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -45,7 +50,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[]) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -60,6 +65,10 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [model, setModel] = useState(() => loadSettings().model)
   const { options: modelOptions } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
+  const [freshWorktree, setFreshWorktree] = useState(false)
+  const [baseBranch, setBaseBranch] = useState('')
+  const [branchOverridden, setBranchOverridden] = useState(false)
+  const [detectingBranch, setDetectingBranch] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
@@ -204,10 +213,10 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
   }, [])
 
-  const saveProject = useCallback(async (dir: string) => {
-    const name = dirDisplayName(dir)
+  const saveProject = useCallback(async (canonicalRoot: string) => {
+    const name = dirDisplayName(canonicalRoot)
     try {
-      await window.api.ensureProject({ name, repoRoot: dir })
+      await window.api.ensureProject({ name, repoRoot: canonicalRoot })
       await loadProjects()
     } catch {
       // ignore save failures
@@ -326,6 +335,48 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     return () => clearTimeout(timer)
   }, [directory, onValidateDirectory])
 
+  // Load per-project fresh worktree settings when directory changes.
+  // Always resolves to canonical repo root first for consistent project matching.
+  useEffect(() => {
+    const dir = directory.trim()
+    if (!dir) return
+
+    let cancelled = false
+    setBranchOverridden(false)
+    setDetectingBranch(true)
+
+    const loadSettings = async () => {
+      try {
+        // Resolve canonical repo root so project lookup is consistent
+        const repoRootResult = await window.api.getRepoRoot(dir)
+        if (cancelled) return
+        const repoRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
+
+        const matchedProject = savedProjects.find((p) => p.repo_root === repoRoot)
+        setFreshWorktree(!!matchedProject?.fresh_worktree)
+
+        if (matchedProject?.default_branch) {
+          setBaseBranch(matchedProject.default_branch)
+          return
+        }
+
+        // Auto-detect default branch from the resolved repo root
+        const branchResult = await window.api.getDefaultBranch(repoRoot)
+        if (cancelled) return
+        setBaseBranch(branchResult.ok && branchResult.data ? branchResult.data : 'origin/main')
+      } catch {
+        if (!cancelled) {
+          setFreshWorktree(false)
+          setBaseBranch('origin/main')
+        }
+      } finally {
+        if (!cancelled) setDetectingBranch(false)
+      }
+    }
+    void loadSettings()
+    return () => { cancelled = true }
+  }, [directory, savedProjects])
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -341,8 +392,24 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     if (!directory.trim() || dirError || validating) return
     setLaunching(true)
     try {
-      await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy, attachments.length > 0 ? attachments : undefined)
-      await saveProject(directory.trim())
+      const freshConfig: FreshWorktreeConfig | undefined =
+        worktreeStrategy === 'new-worktree' && freshWorktree
+          ? { enabled: true, baseBranch: branchOverridden ? baseBranch : '' }
+          : undefined
+      await onLaunch(directory, prompt || undefined, title || undefined, model, worktreeStrategy, attachments.length > 0 ? attachments : undefined, freshConfig)
+      // Resolve canonical repo root for consistent project identity
+      const repoRootResult = await window.api.getRepoRoot(directory.trim())
+      const canonicalRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : directory.trim()
+      await saveProject(canonicalRoot)
+      if (worktreeStrategy === 'new-worktree') {
+        const settingsResult = await window.api.updateProjectSettings({
+          repoRoot: canonicalRoot,
+          settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null }
+        })
+        if (!settingsResult.ok) {
+          console.warn('Failed to persist worktree settings:', settingsResult.error)
+        }
+      }
       clearAttachments()
       onClose()
     } catch (error) {
@@ -507,6 +574,29 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
               <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
                 Worktree path: {estimatedWorktreePath}
               </p>
+            )}
+            {worktreeStrategy === 'new-worktree' && (
+              <div className="flex flex-col gap-1.5 mt-1">
+                <label className="flex items-center gap-2 text-xs text-kumo-default cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={freshWorktree}
+                    onChange={(e) => setFreshWorktree(e.target.checked)}
+                    className="rounded border-kumo-line bg-kumo-control text-kumo-accent focus:ring-kumo-ring h-3.5 w-3.5"
+                  />
+                  Fetch latest from base branch
+                </label>
+                {freshWorktree && (
+                  <input
+                    type="text"
+                    value={baseBranch}
+                    onChange={(e) => { setBaseBranch(e.target.value); setBranchOverridden(true) }}
+                    placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
+                    disabled={detectingBranch}
+                    className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
+                  />
+                )}
+              </div>
             )}
           </div>
 

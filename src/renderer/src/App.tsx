@@ -5,7 +5,7 @@ import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, loadPersistedFilte
 import { FleetTable } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
-import { LaunchModal } from './components/LaunchModal'
+import { LaunchModal, type FreshWorktreeConfig } from './components/LaunchModal'
 import { SessionBrowser } from './components/SessionBrowser'
 import { SettingsModal } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
@@ -851,7 +851,8 @@ export function App() {
     title?: string,
     model?: string,
     worktreeStrategy?: string,
-    attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>
+    attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
+    freshWorktreeConfig?: FreshWorktreeConfig
   ) => {
     let launchDirectory = directory
 
@@ -865,11 +866,19 @@ export function App() {
       const projectSlug = sanitizeSlugSegment(directoryParts[directoryParts.length - 1] ?? 'project', 'project')
       const taskSource = title?.trim() || prompt?.trim() || 'agent'
       const taskSlug = sanitizeSlugSegment(taskSource, 'agent')
-      const worktreeResult = await window.api.createWorktree({
-        repoRoot: repoRootResult.data,
-        projectSlug,
-        taskSlug
-      })
+
+      const worktreeResult = freshWorktreeConfig?.enabled
+        ? await window.api.createFreshWorktree({
+            repoRoot: repoRootResult.data,
+            projectSlug,
+            taskSlug,
+            baseRef: freshWorktreeConfig.baseBranch || undefined
+          })
+        : await window.api.createWorktree({
+            repoRoot: repoRootResult.data,
+            projectSlug,
+            taskSlug
+          })
 
       if (!worktreeResult.ok || !worktreeResult.data) {
         throw new Error(worktreeResult.error || 'Failed to create worktree')

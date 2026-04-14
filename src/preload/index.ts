@@ -138,8 +138,11 @@ const api = {
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string }>> =>
     ipcRenderer.invoke('workspace:create', options),
 
-  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }): Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>> =>
+  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string; baseRef?: string }): Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>> =>
     ipcRenderer.invoke('workspace:create-fresh', options),
+
+  getDefaultBranch: (repoRoot: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('workspace:default-branch', repoRoot),
 
   removeWorktree: (options: { repoRoot: string; worktreePath: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('workspace:remove', options),
@@ -162,6 +165,9 @@ const api = {
 
   deleteProject: (projectId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:delete', projectId),
+
+  updateProjectSettings: (options: { repoRoot: string; settings: { default_branch?: string | null; fresh_worktree?: boolean } }): Promise<IpcResult> =>
+    ipcRenderer.invoke('db:projects:update-settings', options),
 
   // ── Database: Preferences ──
   getPreference: (key: string): Promise<IpcResult<string | undefined>> =>

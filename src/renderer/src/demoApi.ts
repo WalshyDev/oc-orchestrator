@@ -327,15 +327,17 @@ export function createDemoApi(): OrchestratorApi {
     getCommonRepoRoot: () => ok('/tmp/repo'),
     createWorktree: () => ok({ worktreePath: '/tmp/wt', branchName: 'demo' }),
     createFreshWorktree: () => ok({ worktreePath: '/tmp/wt', branchName: 'demo', baseRef: 'main' }),
+    getDefaultBranch: () => ok('origin/main'),
     removeWorktree: noop,
     listWorktrees: () => ok([]),
     getWorktreeStatus: () => ok({ dirty: false, changedFiles: 0 }),
 
     // ── Database: Projects ──
     listProjects: () => ok([]),
-    createProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', created_at: '', updated_at: '' }),
-    ensureProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', created_at: '', updated_at: '' }),
+    createProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
+    ensureProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
     deleteProject: () => ok(true),
+    updateProjectSettings: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
 
     // ── Database: Custom Labels ──
     listCustomLabels: () => ok([]),

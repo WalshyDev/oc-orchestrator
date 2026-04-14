@@ -54,7 +54,8 @@ export interface OrchestratorApi {
   getRepoRoot: (directory: string) => Promise<IpcResult<string>>
   getCommonRepoRoot: (directory: string) => Promise<IpcResult<string>>
   createWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string }>>
-  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>>
+  createFreshWorktree: (options: { repoRoot: string; projectSlug: string; taskSlug: string; baseRef?: string }) => Promise<IpcResult<{ worktreePath: string; branchName: string; baseRef: string }>>
+  getDefaultBranch: (repoRoot: string) => Promise<IpcResult<string>>
   removeWorktree: (options: { repoRoot: string; worktreePath: string }) => Promise<IpcResult>
   listWorktrees: (repoRoot: string) => Promise<IpcResult<WorktreeListEntry[]>>
   getWorktreeStatus: (worktreePath: string) => Promise<IpcResult<WorktreeStatus>>
@@ -64,6 +65,7 @@ export interface OrchestratorApi {
   createProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   ensureProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   deleteProject: (projectId: string) => Promise<IpcResult<boolean>>
+  updateProjectSettings: (options: { repoRoot: string; settings: { default_branch?: string | null; fresh_worktree?: boolean } }) => Promise<IpcResult<Project>>
 
   // ── Database: Custom Labels ──
   listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
@@ -122,6 +124,8 @@ export interface Project {
   id: string
   name: string
   repo_root: string
+  default_branch: string | null
+  fresh_worktree: number
   created_at: string
   updated_at: string
 }

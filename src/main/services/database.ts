@@ -8,6 +8,8 @@ export interface Project {
   id: string
   name: string
   repo_root: string
+  default_branch: string | null
+  fresh_worktree: number
   created_at: string
   updated_at: string
 }
@@ -183,7 +185,20 @@ class Database {
       )
     `)
 
+    // Add per-project worktree settings columns (safe to re-run)
+    this.addColumnIfMissing('projects', 'default_branch', 'TEXT')
+    this.addColumnIfMissing('projects', 'fresh_worktree', 'INTEGER DEFAULT 0')
+
     saveToDisk()
+  }
+
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    const sqlDb = getDb()
+    try {
+      sqlDb.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+    } catch {
+      // Column already exists — safe to ignore
+    }
   }
 
   private queryOne<T>(sql: string, params: unknown[] = []): T | undefined {
@@ -258,6 +273,21 @@ class Database {
       return this.getProject(existing.id)!
     }
     return this.createProject(name, repoRoot)
+  }
+
+  updateProjectSettings(repoRoot: string, settings: { default_branch?: string | null; fresh_worktree?: boolean }): Project | undefined {
+    const project = this.getProjectByRepoRoot(repoRoot)
+    if (!project) return undefined
+
+    const now = new Date().toISOString()
+    const branch = settings.default_branch !== undefined ? settings.default_branch : project.default_branch
+    const fresh = settings.fresh_worktree !== undefined ? (settings.fresh_worktree ? 1 : 0) : project.fresh_worktree
+
+    this.execute(
+      'UPDATE projects SET default_branch = ?, fresh_worktree = ?, updated_at = ? WHERE id = ?',
+      [branch, fresh, now, project.id]
+    )
+    return this.getProject(project.id)
   }
 
   deleteProject(projectId: string): boolean {
