@@ -83,6 +83,67 @@ export interface AgentRuntime {
   lastActivityAtMs: number
   blockedSince?: string
   blockedSinceMs?: number
+  lastMessage?: string
+}
+
+// ── Column visibility ──
+
+export type ColumnKey = 'agent' | 'status' | 'label' | 'task' | 'branch' | 'model' | 'lastMessage'
+
+export interface ColumnDef {
+  key: ColumnKey
+  label: string
+  defaultVisible: boolean
+  /** Relative flex weight — percentages are computed from visible columns at render time. */
+  flex: number
+}
+
+export const ALL_COLUMNS: ColumnDef[] = [
+  { key: 'agent',       label: 'Agent',        defaultVisible: true,  flex: 3 },
+  { key: 'status',      label: 'Status',       defaultVisible: true,  flex: 2 },
+  { key: 'label',       label: 'Label',        defaultVisible: true,  flex: 2 },
+  { key: 'task',        label: 'Task',         defaultVisible: true,  flex: 4 },
+  { key: 'lastMessage', label: 'Last Message', defaultVisible: true,  flex: 4 },
+  { key: 'branch',      label: 'Branch',       defaultVisible: true,  flex: 2 },
+  { key: 'model',       label: 'Model',        defaultVisible: true,  flex: 2 },
+]
+
+const COLUMN_VIS_KEY = 'oc-orchestrator:column-visibility'
+const COLUMN_WIDTHS_KEY = 'oc-orchestrator:column-widths'
+
+const DEFAULT_VISIBLE_COLUMNS = new Set<ColumnKey>(
+  ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)
+)
+
+export function loadColumnVisibility(): Set<ColumnKey> {
+  try {
+    const stored = localStorage.getItem(COLUMN_VIS_KEY)
+    if (!stored) return new Set(DEFAULT_VISIBLE_COLUMNS)
+    return new Set(JSON.parse(stored) as ColumnKey[])
+  } catch {
+    return new Set(DEFAULT_VISIBLE_COLUMNS)
+  }
+}
+
+export function saveColumnVisibility(visible: Set<ColumnKey>): void {
+  localStorage.setItem(COLUMN_VIS_KEY, JSON.stringify([...visible]))
+}
+
+/** User-specified pixel widths per column. Missing keys fall back to flex-based sizing. */
+export type ColumnWidths = Partial<Record<ColumnKey, number>>
+
+export function loadColumnWidths(): ColumnWidths {
+  try {
+    const stored = localStorage.getItem(COLUMN_WIDTHS_KEY)
+    if (!stored) return {}
+    return JSON.parse(stored) as ColumnWidths
+  } catch {
+    return {}
+  }
+}
+
+export function saveColumnWidths(widths: ColumnWidths): void {
+  localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(widths))
 }
 
 export interface Interrupt {

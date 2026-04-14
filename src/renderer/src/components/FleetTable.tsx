@@ -18,8 +18,8 @@ import {
   Link,
   ArrowLineUpRight
 } from '@phosphor-icons/react'
-import type { AgentRuntime, LabelDefinition, LabelColorKey } from '../types'
-import { formatBranchLabel, isUrgent, labelSortKey } from '../types'
+import type { AgentRuntime, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths } from '../types'
+import { formatBranchLabel, isUrgent, labelSortKey, ALL_COLUMNS } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
@@ -47,21 +47,15 @@ interface FleetTableProps {
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
+  visibleColumns: Set<ColumnKey>
+  columnWidths: ColumnWidths
+  onColumnResize?: (key: ColumnKey, width: number) => void
+  onColumnResetWidth?: (key: ColumnKey) => void
 }
 
-type SortColumn = 'agent' | 'status' | 'label' | 'task' | 'branch' | 'model'
 type SortDirection = 'asc' | 'desc'
 
 const SCROLL_STEP = 200
-
-const SORTABLE_COLUMNS: { key: SortColumn; label: string }[] = [
-  { key: 'agent', label: 'Agent' },
-  { key: 'status', label: 'Status' },
-  { key: 'label', label: 'Label' },
-  { key: 'task', label: 'Task' },
-  { key: 'branch', label: 'Branch' },
-  { key: 'model', label: 'Model' }
-]
 
 interface ContextMenuState {
   agentId: string
@@ -100,9 +94,13 @@ export function FleetTable({
   onReplaceLabel,
   allLabels = [],
   onCreateLabel,
-  onDeleteLabel
+  onDeleteLabel,
+  visibleColumns,
+  columnWidths,
+  onColumnResize,
+  onColumnResetWidth
 }: FleetTableProps) {
-  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
+  const [sortColumn, setSortColumn] = useState<ColumnKey | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renameState, setRenameState] = useState<RenameState | null>(null)
@@ -113,8 +111,67 @@ export function FleetTable({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
+  const tableRef = useRef<HTMLTableElement>(null)
 
-  const handleSort = useCallback((column: SortColumn) => {
+  const activeColumns = useMemo(() => {
+    const cols = ALL_COLUMNS.filter((col) => visibleColumns.has(col.key))
+    const flexCols = cols.filter((col) => columnWidths[col.key] == null)
+    const totalFlex = flexCols.reduce((sum, col) => sum + col.flex, 0)
+
+    return cols.map((col) => {
+      const customPx = columnWidths[col.key]
+      const width = customPx != null
+        ? `${customPx}px`
+        : `${((col.flex / totalFlex) * 100).toFixed(1)}%`
+      return { ...col, width }
+    })
+  }, [visibleColumns, columnWidths])
+
+  // ── Column resize via drag ──
+  const resizeState = useRef<{
+    key: ColumnKey
+    startX: number
+    startWidth: number
+  } | null>(null)
+
+  const handleResizeStart = useCallback((event: React.MouseEvent, colKey: ColumnKey, colIndex: number) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const thElements = tableRef.current?.querySelectorAll('thead th')
+    if (!thElements || !thElements[colIndex]) return
+    const startWidth = (thElements[colIndex] as HTMLElement).getBoundingClientRect().width
+
+    resizeState.current = { key: colKey, startX: event.clientX, startWidth }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handleMouseMove = (moveEvent: MouseEvent): void => {
+      if (!resizeState.current) return
+      const delta = moveEvent.clientX - resizeState.current.startX
+      const newWidth = Math.max(60, resizeState.current.startWidth + delta)
+      onColumnResize?.(resizeState.current.key, Math.round(newWidth))
+    }
+
+    const handleMouseUp = (): void => {
+      resizeState.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [onColumnResize])
+
+  const handleResizeDoubleClick = useCallback((event: React.MouseEvent, colKey: ColumnKey) => {
+    event.preventDefault()
+    event.stopPropagation()
+    onColumnResetWidth?.(colKey)
+  }, [onColumnResetWidth])
+
+  const handleSort = useCallback((column: ColumnKey) => {
     let nextDirection: SortDirection = 'asc'
     if (sortColumn === column) {
       nextDirection = sortDirection === 'asc' ? 'desc' : 'asc'
@@ -198,6 +255,10 @@ export function FleetTable({
           leftVal = (left.model || '').toLowerCase()
           rightVal = (right.model || '').toLowerCase()
           break
+        case 'lastMessage':
+          leftVal = (left.lastMessage || '').toLowerCase()
+          rightVal = (right.lastMessage || '').toLowerCase()
+          break
         default:
           return 0
       }
@@ -220,9 +281,9 @@ export function FleetTable({
     setLabelDropdownOpen(open)
   }, [])
 
-  const headerCellClass = 'px-3 py-2 text-left font-medium text-[11px] uppercase tracking-wide text-kumo-subtle bg-kumo-overlay border-b border-kumo-line cursor-pointer hover:text-kumo-default select-none'
+  const headerCellClass = 'relative px-3 py-2 text-left font-medium text-[11px] uppercase tracking-wide text-kumo-subtle bg-kumo-overlay border-b border-kumo-line cursor-pointer hover:text-kumo-default select-none'
 
-  const renderSortIndicator = (column: SortColumn) => {
+  const renderSortIndicator = (column: ColumnKey) => {
     if (sortColumn !== column) return null
     return sortDirection === 'asc'
       ? <CaretUp size={10} weight="bold" className="inline ml-0.5" />
@@ -242,20 +303,17 @@ export function FleetTable({
   return (
     <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
       <div ref={scrollContainerRef} className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', minWidth: 800 }}>
+        <table ref={tableRef} className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', minWidth: 800 }}>
           <colgroup>
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '26%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '10%' }} />
+            {activeColumns.map((col) => (
+              <col key={col.key} style={{ width: col.width }} />
+            ))}
             <col style={{ width: 140 }} />
             <col style={{ width: 40 }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr>
-              {SORTABLE_COLUMNS.map((col) => (
+              {activeColumns.map((col, index) => (
                 <th
                   key={col.key}
                   className={headerCellClass}
@@ -263,6 +321,12 @@ export function FleetTable({
                 >
                   {col.label}
                   {renderSortIndicator(col.key)}
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-kumo-interact/30 active:bg-kumo-interact/50 transition-colors z-10"
+                    onMouseDown={(event) => handleResizeStart(event, col.key, index)}
+                    onDoubleClick={(event) => handleResizeDoubleClick(event, col.key)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
                 </th>
               ))}
               <th className="px-3 py-2 bg-kumo-overlay border-b border-kumo-line" />
@@ -275,6 +339,7 @@ export function FleetTable({
                 key={agent.id}
                 agent={agent}
                 selected={agent.id === selectedId}
+                visibleColumns={visibleColumns}
                 onSelect={() => onSelect(agent.id)}
                 onContextMenu={(event) => handleContextMenu(event, agent.id)}
                 onApprove={onApprove ? () => onApprove(agent.id) : undefined}
@@ -561,6 +626,7 @@ function ContextMenu({
 function AgentRow({
   agent,
   selected,
+  visibleColumns,
   onSelect,
   onContextMenu,
   onApprove,
@@ -586,6 +652,7 @@ function AgentRow({
 }: {
   agent: AgentRuntime
   selected: boolean
+  visibleColumns: Set<ColumnKey>
   onSelect: () => void
   onContextMenu: (event: React.MouseEvent) => void
   onApprove?: () => void
@@ -647,6 +714,8 @@ function AgentRow({
     }
   }
 
+  const show = (key: ColumnKey): boolean => visibleColumns.has(key)
+
   return (
     <tr
       onClick={onSelect}
@@ -659,75 +728,85 @@ function AgentRow({
             : 'hover:bg-kumo-control'
       }`}
     >
-      <td className="px-3 py-2 overflow-hidden">
-        {isInlineEditing ? (
-          <input
-            ref={inlineInputRef}
-            value={inlineValue}
-            onChange={(event) => setInlineValue(event.target.value)}
-            onKeyDown={handleInlineKeyDown}
-            onBlur={handleInlineSubmit}
-            onClick={(event) => event.stopPropagation()}
-            className="font-semibold text-kumo-strong bg-kumo-control border border-kumo-ring rounded px-1.5 py-0.5 text-xs outline-none w-full max-w-[200px]"
-          />
-        ) : (
-          <div
-            onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
-            className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color] truncate"
-            title={agent.name}
-          >
-            {agent.name}
-          </div>
-        )}
-        <div className="flex items-center gap-1 text-[11px] text-kumo-subtle">
-          {agent.isWorktree && (
-            <span className="shrink-0 px-1 py-px rounded bg-kumo-brand/10 text-kumo-brand text-[9px] font-medium leading-tight">
-              WT
-            </span>
+      {show('agent') && (
+        <td className="px-3 py-2 overflow-hidden">
+          {isInlineEditing ? (
+            <input
+              ref={inlineInputRef}
+              value={inlineValue}
+              onChange={(event) => setInlineValue(event.target.value)}
+              onKeyDown={handleInlineKeyDown}
+              onBlur={handleInlineSubmit}
+              onClick={(event) => event.stopPropagation()}
+              className="font-semibold text-kumo-strong bg-kumo-control border border-kumo-ring rounded px-1.5 py-0.5 text-xs outline-none w-full max-w-[200px]"
+            />
+          ) : (
+            <div
+              onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
+              className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color] truncate"
+              title={agent.name}
+            >
+              {agent.name}
+            </div>
           )}
           <span className="truncate">{agent.projectName}</span>
-        </div>
-      </td>
-      <td className="px-3 py-2 overflow-hidden">
-        <div className="flex flex-col gap-0.5">
-          <StatusBadge status={agent.status} />
-          <span className={`font-mono text-[10px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>
-            {agent.lastActivityAt}
-          </span>
-        </div>
-      </td>
-      <td className="px-3 py-2">
-        {onToggleLabel && onClearLabels && (
-          <LabelDropdown
-            current={agent.labelIds}
-            onToggle={onToggleLabel}
-            onClear={onClearLabels}
-            onReplace={onReplaceLabel}
-            allLabels={allLabels}
-            onCreateLabel={onCreateLabel}
-            onDeleteLabel={onDeleteLabel}
-            variant="inline"
-            onOpenChange={onLabelDropdownChange}
-          />
-        )}
-      </td>
-      <td className="px-3 py-2 truncate text-kumo-default" title={agent.taskSummary || undefined}>
-        {agent.taskSummary}
-      </td>
-      <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle truncate" title={formatBranchLabel(agent)}>
-        {formatBranchLabel(agent)}
-      </td>
-      <td className="px-3 py-2 overflow-hidden">
-        {agent.model && agent.model !== 'starting...' && (
-          <button
-            onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
-            className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
-            title={agent.model}
-          >
-            {agent.model}
-          </button>
-        )}
-      </td>
+        </td>
+      )}
+      {show('status') && (
+        <td className="px-3 py-2 overflow-hidden">
+          <div className="flex flex-col gap-0.5">
+            <StatusBadge status={agent.status} />
+            <span className={`font-mono text-[10px] ${isStale ? 'text-kumo-danger font-medium' : 'text-kumo-subtle'}`}>
+              {agent.lastActivityAt}
+            </span>
+          </div>
+        </td>
+      )}
+      {show('label') && (
+        <td className="px-3 py-2">
+          {onToggleLabel && onClearLabels && (
+            <LabelDropdown
+              current={agent.labelIds}
+              onToggle={onToggleLabel}
+              onClear={onClearLabels}
+              onReplace={onReplaceLabel}
+              allLabels={allLabels}
+              onCreateLabel={onCreateLabel}
+              onDeleteLabel={onDeleteLabel}
+              variant="inline"
+              onOpenChange={onLabelDropdownChange}
+            />
+          )}
+        </td>
+      )}
+      {show('task') && (
+        <td className="px-3 py-2 truncate text-kumo-default" title={agent.taskSummary || undefined}>
+          {agent.taskSummary}
+        </td>
+      )}
+      {show('lastMessage') && (
+        <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]" title={agent.lastMessage || undefined}>
+          {agent.lastMessage || <span className="text-kumo-muted italic">--</span>}
+        </td>
+      )}
+      {show('branch') && (
+        <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle truncate" title={formatBranchLabel(agent)}>
+          {formatBranchLabel(agent)}
+        </td>
+      )}
+      {show('model') && (
+        <td className="px-3 py-2 overflow-hidden">
+          {agent.model && agent.model !== 'starting...' && (
+            <button
+              onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
+              className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
+              title={agent.model}
+            >
+              {agent.model}
+            </button>
+          )}
+        </td>
+      )}
       <td className="px-3 py-2 overflow-hidden">
         <div className="flex items-center justify-end gap-1">
           <RowActions
