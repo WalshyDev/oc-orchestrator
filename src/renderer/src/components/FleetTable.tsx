@@ -772,45 +772,33 @@ function RowActions({
   const isStoppable = agent.status === 'running' || agent.status === 'needs_input' || agent.status === 'needs_approval' || agent.status === 'stopping'
   const isStopping = agent.status === 'stopping'
 
+  // Context action slot — mutually exclusive statuses, always reserves space
+  let contextAction: { title: string; icon: React.ReactNode; handler?: () => void } | null = null
+  if (agent.status === 'needs_approval') {
+    contextAction = { title: 'Approve', icon: <Check size={12} weight="bold" />, handler: onApprove }
+  } else if (agent.status === 'needs_input') {
+    contextAction = { title: 'Reply', icon: <PencilSimple size={12} weight="bold" />, handler: onReply }
+  } else if (agent.status === 'running') {
+    contextAction = { title: 'Pause', icon: <Pause size={12} weight="bold" />, handler: onStop }
+  }
+
   return (
     <div className="flex gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
-      {agent.status === 'needs_approval' && (
-        <button
-          className={buttonBase}
-          title="Approve"
-          onClick={(event) => { event.stopPropagation(); onApprove?.() }}
-        >
-          <Check size={12} weight="bold" />
-        </button>
-      )}
-      {agent.status === 'needs_input' && (
-        <button
-          className={buttonBase}
-          title="Reply"
-          onClick={(event) => { event.stopPropagation(); onReply?.() }}
-        >
-          <PencilSimple size={12} weight="bold" />
-        </button>
-      )}
-      {agent.status === 'running' && (
-        <button
-          className={buttonBase}
-          title="Pause"
-          onClick={(event) => { event.stopPropagation(); onStop?.() }}
-        >
-          <Pause size={12} weight="bold" />
-        </button>
-      )}
-      {isStoppable && (
-        <button
-          className={`${buttonBase} ${isStopping ? 'opacity-50 cursor-not-allowed' : ''}`}
-          title={isStopping ? 'Stopping...' : 'Stop'}
-          disabled={isStopping}
-          onClick={(event) => { event.stopPropagation(); onStop?.() }}
-        >
-          <Square size={12} weight="fill" />
-        </button>
-      )}
+      <button
+        className={`${buttonBase} ${contextAction ? '' : 'invisible'}`}
+        title={contextAction?.title}
+        onClick={(event) => { event.stopPropagation(); contextAction?.handler?.() }}
+      >
+        {contextAction?.icon ?? <Pause size={12} weight="bold" />}
+      </button>
+      <button
+        className={`${buttonBase} ${isStoppable ? '' : 'invisible'} ${isStopping ? 'opacity-50 cursor-not-allowed' : ''}`}
+        title={isStopping ? 'Stopping...' : 'Stop'}
+        disabled={!isStoppable || isStopping}
+        onClick={(event) => { event.stopPropagation(); onStop?.() }}
+      >
+        <Square size={12} weight="fill" />
+      </button>
       <button
         className={destructiveButton}
         title="Remove"
