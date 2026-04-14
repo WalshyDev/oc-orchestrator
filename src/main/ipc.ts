@@ -500,12 +500,23 @@ export function registerIpcHandlers(): void {
     repoRoot: string
     projectSlug: string
     taskSlug: string
+    baseRef?: string
   }) => {
     try {
-      const result = workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug)
+      const result = workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug, options.baseRef)
       return { ok: true, data: result }
     } catch (error) {
       console.error('[IPC] workspace:create-fresh failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('workspace:default-branch', async (_event, repoRoot: string) => {
+    try {
+      const branch = workspaceManager.getDefaultBranch(repoRoot)
+      return { ok: true, data: branch }
+    } catch (error) {
+      console.error('[IPC] workspace:default-branch failed:', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -587,6 +598,22 @@ export function registerIpcHandlers(): void {
       return { ok: true, data: deleted }
     } catch (error) {
       console.error('[IPC] db:projects:delete failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('db:projects:update-settings', async (_event, options: {
+    repoRoot: string
+    settings: { default_branch?: string | null; fresh_worktree?: boolean }
+  }) => {
+    try {
+      const project = database.updateProjectSettings(options.repoRoot, options.settings)
+      if (!project) {
+        return { ok: false, error: `No project found for repo root: ${options.repoRoot}` }
+      }
+      return { ok: true, data: project }
+    } catch (error) {
+      console.error('[IPC] db:projects:update-settings failed:', error)
       return { ok: false, error: String(error) }
     }
   })
