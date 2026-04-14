@@ -108,6 +108,8 @@ export function FleetTable({
   const [renameState, setRenameState] = useState<RenameState | null>(null)
   const [prLinkState, setPrLinkState] = useState<PrLinkState | null>(null)
   const [inlineEditId, setInlineEditId] = useState<string | null>(null)
+  const [labelDropdownOpen, setLabelDropdownOpen] = useState(false)
+  const frozenOrderRef = useRef<string[] | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
@@ -156,6 +158,15 @@ export function FleetTable({
   }, [])
 
   const sortedAgents = useMemo(() => {
+    // While a label dropdown is open, preserve the frozen row order
+    // so toggling labels doesn't cause the row to jump mid-interaction
+    if (labelDropdownOpen && frozenOrderRef.current) {
+      const agentMap = new Map(agents.map((a) => [a.id, a]))
+      return frozenOrderRef.current
+        .map((id) => agentMap.get(id))
+        .filter((a): a is AgentRuntime => a !== undefined)
+    }
+
     if (!sortColumn) return agents
 
     const sorted = [...agents].sort((left, right) => {
@@ -197,7 +208,17 @@ export function FleetTable({
     })
 
     return sorted
-  }, [agents, sortColumn, sortDirection, allLabels])
+  }, [agents, sortColumn, sortDirection, allLabels, labelDropdownOpen])
+
+  const sortedAgentsRef = useRef(sortedAgents)
+  sortedAgentsRef.current = sortedAgents
+
+  const handleLabelDropdownChange = useCallback((open: boolean) => {
+    if (open) {
+      frozenOrderRef.current = sortedAgentsRef.current.map((a) => a.id)
+    }
+    setLabelDropdownOpen(open)
+  }, [])
 
   const headerCellClass = 'px-3 py-2 text-left font-medium text-[11px] uppercase tracking-wide text-kumo-subtle bg-kumo-overlay border-b border-kumo-line cursor-pointer hover:text-kumo-default select-none'
 
@@ -278,6 +299,7 @@ export function FleetTable({
                   setInlineEditId(null)
                 }}
                 onCancelInlineEdit={() => setInlineEditId(null)}
+                onLabelDropdownChange={handleLabelDropdownChange}
               />
             ))}
           </tbody>
@@ -349,6 +371,7 @@ export function FleetTable({
           allLabels={allLabels}
           onCreateLabel={onCreateLabel}
           onDeleteLabel={onDeleteLabel}
+          onLabelDropdownChange={handleLabelDropdownChange}
         />
       )}
 
@@ -402,7 +425,8 @@ function ContextMenu({
   onClearLabels,
   allLabels,
   onCreateLabel,
-  onDeleteLabel
+  onDeleteLabel,
+  onLabelDropdownChange
 }: {
   agent: AgentRuntime
   posX: number
@@ -423,6 +447,7 @@ function ContextMenu({
   allLabels: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
+  onLabelDropdownChange?: (open: boolean) => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -511,6 +536,7 @@ function ContextMenu({
           onCreateLabel={onCreateLabel}
           onDeleteLabel={onDeleteLabel}
           variant="action"
+          onOpenChange={onLabelDropdownChange}
         />
       </div>
 
@@ -555,7 +581,8 @@ function AgentRow({
   isInlineEditing,
   onStartInlineEdit,
   onInlineRename,
-  onCancelInlineEdit
+  onCancelInlineEdit,
+  onLabelDropdownChange
 }: {
   agent: AgentRuntime
   selected: boolean
@@ -580,6 +607,7 @@ function AgentRow({
   onStartInlineEdit: () => void
   onInlineRename: (newName: string) => void
   onCancelInlineEdit: () => void
+  onLabelDropdownChange?: (open: boolean) => void
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
@@ -679,6 +707,7 @@ function AgentRow({
             onCreateLabel={onCreateLabel}
             onDeleteLabel={onDeleteLabel}
             variant="inline"
+            onOpenChange={onLabelDropdownChange}
           />
         )}
       </td>
