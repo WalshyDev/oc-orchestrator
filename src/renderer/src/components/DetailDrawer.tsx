@@ -51,6 +51,10 @@ const LOAD_MORE_INCREMENT = 50
 const NEAR_BOTTOM_THRESHOLD = 80
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
 
+// Persists unsent input text per agent across drawer open/close cycles.
+// Module-level so it survives component unmount (the drawer is conditionally rendered).
+const draftInputs = new Map<string, string>()
+
 function loadDrawerWidth(): number {
   try {
     const stored = localStorage.getItem(DRAWER_WIDTH_KEY)
@@ -146,7 +150,12 @@ export const DetailDrawer = memo(function DetailDrawer({
   onCreateLabel,
   onDeleteLabel
 }: DetailDrawerProps) {
-  const [inputText, setInputText] = useState('')
+  const [inputText, _setInputText] = useState(() => draftInputs.get(agent.id) ?? '')
+  const setInputText = useCallback((text: string) => {
+    _setInputText(text)
+    if (text) draftInputs.set(agent.id, text)
+    else draftInputs.delete(agent.id)
+  }, [agent.id])
   const [activeTab, setActiveTab] = useState<TabKey>('transcript')
   const [isVisible, setIsVisible] = useState(false)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
@@ -159,11 +168,12 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
   const [showPrLinkModal, setShowPrLinkModal] = useState(false)
 
-  // Reset the visible window when switching agents
+  // Reset state when switching agents within an open drawer
   const prevAgentIdRef = useRef(agent.id)
   if (prevAgentIdRef.current !== agent.id) {
     prevAgentIdRef.current = agent.id
     setVisibleMessageCount(VISIBLE_MESSAGE_WINDOW)
+    _setInputText(draftInputs.get(agent.id) ?? '')
   }
 
   const hiddenCount = Math.max(0, messages.length - visibleMessageCount)
