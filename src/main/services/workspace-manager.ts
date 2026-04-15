@@ -106,6 +106,56 @@ class WorkspaceManager {
   }
 
   /**
+   * Runs `git fetch origin --prune`, handling case-insensitive ref collisions
+   * that occur on macOS when remote branches differ only by case (e.g.
+   * `jcabot/AAA-810` vs `jcabot/aaa-810`).  On failure, strips the
+   * conflicting entries from packed-refs and retries once.
+   */
+  private fetchOriginWithPrune(cwd: string): void {
+    const gitOpts = { cwd, encoding: 'utf-8' as const, stdio: 'pipe' as const }
+    const fetchArgs = ['fetch', 'origin', '--prune']
+
+    try {
+      execFileSync('git', fetchArgs, gitOpts)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (!msg.includes('cannot lock ref')) {
+        throw error
+      }
+
+      console.warn('[WorkspaceManager] Ref lock conflict during fetch --prune, repairing packed-refs')
+      this.repairPackedRefs(cwd, msg)
+
+      execFileSync('git', fetchArgs, gitOpts)
+    }
+  }
+
+  private repairPackedRefs(cwd: string, errorMessage: string): void {
+    const gitDir = execFileSync('git', ['rev-parse', '--git-dir'], {
+      cwd, encoding: 'utf-8', stdio: 'pipe'
+    }).trim()
+    const packedRefsPath = path.resolve(cwd, gitDir, 'packed-refs')
+
+    const refMatch = errorMessage.match(/cannot lock ref '([^']+)'/)
+    if (refMatch && fs.existsSync(packedRefsPath)) {
+      const refPath = refMatch[1].toLowerCase()
+      const content = fs.readFileSync(packedRefsPath, 'utf-8')
+      const filtered = content
+        .split('\n')
+        .filter((line) => !line.toLowerCase().includes(refPath))
+        .join('\n')
+      fs.writeFileSync(packedRefsPath, filtered, 'utf-8')
+      console.warn(`[WorkspaceManager] Removed case-conflicting ref "${refMatch[1]}" from packed-refs`)
+    }
+
+    const lockMatch = errorMessage.match(/Unable to create '([^']+\.lock)'/)
+    if (lockMatch && fs.existsSync(lockMatch[1])) {
+      fs.unlinkSync(lockMatch[1])
+      console.warn(`[WorkspaceManager] Removed stale lock file: ${lockMatch[1]}`)
+    }
+  }
+
+  /**
    * Creates a fresh worktree based on the latest default branch from origin.
    * Fetches first, then resolves the base ref — so the branch name is always
    * up-to-date even when origin/HEAD has changed.
@@ -124,11 +174,7 @@ class WorkspaceManager {
         fs.mkdirSync(parentDir, { recursive: true })
       }
 
-      execFileSync('git', ['fetch', 'origin', '--prune'], {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      })
+      this.fetchOriginWithPrune(repoRoot)
 
       // Resolve after fetch so origin/HEAD reflects the latest remote state
       const baseRef = explicitBaseRef
@@ -341,11 +387,7 @@ class WorkspaceManager {
   async resetToDefaultBranch(directory: string, projectSlug: string, taskSlug: string): Promise<string> {
     const repoRoot = await this.getCommonRepoRoot(directory)
 
-    execSync('git fetch origin --prune', {
-      cwd: directory,
-      encoding: 'utf-8',
-      stdio: 'pipe'
-    })
+    this.fetchOriginWithPrune(directory)
 
     const baseRef = this.getDefaultBranch(repoRoot)
     const timestamp = Date.now()
