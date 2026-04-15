@@ -191,10 +191,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </div>
               </div>
 
-              {/* Notification Preferences */}
+              {/* Notify When */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  Notification Preferences
+                  Notify When
                 </label>
                 <div className="flex flex-col gap-2 pl-1">
                   {(
@@ -218,6 +218,27 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     </label>
                   ))}
                 </div>
+              </div>
+
+              {/* Notification Sound */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Notification Sound
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer group pl-1">
+                  <input
+                    type="checkbox"
+                    checked={settings.soundEnabled}
+                    onChange={(event) => {
+                      updateSettings({ soundEnabled: event.target.checked })
+                      window.api.setSoundEnabled(event.target.checked)
+                    }}
+                    className="w-3.5 h-3.5 rounded border-kumo-line bg-kumo-control accent-kumo-brand"
+                  />
+                  <span className="text-sm text-kumo-default group-hover:text-kumo-strong transition-colors">
+                    Play sound with notifications
+                  </span>
+                </label>
               </div>
 
               {/* Verbose Mode */}

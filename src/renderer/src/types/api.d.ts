@@ -82,6 +82,8 @@ export interface OrchestratorApi {
   // ── Notifications ──
   getNotificationPreferences: () => Promise<IpcResult<NotificationPreferences>>
   setNotificationPreference: (eventType: NotifiableEventType, enabled: boolean) => Promise<IpcResult>
+  getSoundEnabled: () => Promise<IpcResult<boolean>>
+  setSoundEnabled: (enabled: boolean) => Promise<IpcResult>
   getPendingNotificationAgent: () => Promise<IpcResult<string | null>>
 
   // ── App Info ──

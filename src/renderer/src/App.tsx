@@ -243,6 +243,7 @@ export function App() {
     for (const [key, enabled] of Object.entries(settings.notifications)) {
       window.api.setNotificationPreference(key as keyof typeof settings.notifications, enabled)
     }
+    window.api.setSoundEnabled(settings.soundEnabled)
   }, [])
 
   // ── Suppress notifications for the agent whose transcript is open ──

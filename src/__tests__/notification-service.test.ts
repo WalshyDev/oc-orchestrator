@@ -30,11 +30,21 @@ class TestNotificationService {
     disconnected: true
   }
 
+  private soundEnabled = true
+
   private sentNotifications = new Map<string, number>()
-  public notificationsSent: Array<{ agentId: string; status: NotifiableEventType; agentName: string; projectName?: string }> = []
+  public notificationsSent: Array<{ agentId: string; status: NotifiableEventType; agentName: string; projectName?: string; silent: boolean }> = []
 
   setPreference(eventType: NotifiableEventType, enabled: boolean): void {
     this.preferences[eventType] = enabled
+  }
+
+  setSoundEnabled(enabled: boolean): void {
+    this.soundEnabled = enabled
+  }
+
+  getSoundEnabled(): boolean {
+    return this.soundEnabled
   }
 
   getPreferences(): NotificationPreferences {
@@ -56,7 +66,7 @@ class TestNotificationService {
     }
 
     this.recordNotification(agentId, status)
-    this.notificationsSent.push({ agentId, status, agentName, projectName })
+    this.notificationsSent.push({ agentId, status, agentName, projectName, silent: !this.soundEnabled })
   }
 
   private isDuplicate(agentId: string, eventType: NotifiableEventType): boolean {
@@ -214,13 +224,41 @@ describe('NotificationService', () => {
         agentId: 'agent-1',
         status: 'errored',
         agentName: 'Build Worker',
-        projectName: 'my-project'
+        projectName: 'my-project',
+        silent: false
       })
     })
 
     it('handles missing project name', () => {
       service.checkAndNotify('agent-1', 'needs_approval', 'Agent X')
       expect(service.notificationsSent[0].projectName).toBeUndefined()
+    })
+  })
+
+  describe('sound preference', () => {
+    it('defaults to sound enabled', () => {
+      expect(service.getSoundEnabled()).toBe(true)
+    })
+
+    it('sends notifications with silent=false when sound is enabled', () => {
+      service.checkAndNotify('agent-1', 'errored', 'Agent Alpha')
+      expect(service.notificationsSent[0].silent).toBe(false)
+    })
+
+    it('sends notifications with silent=true when sound is disabled', () => {
+      service.setSoundEnabled(false)
+      service.checkAndNotify('agent-1', 'errored', 'Agent Alpha')
+      expect(service.notificationsSent[0].silent).toBe(true)
+    })
+
+    it('can toggle sound back on after disabling', () => {
+      service.setSoundEnabled(false)
+      expect(service.getSoundEnabled()).toBe(false)
+      service.setSoundEnabled(true)
+      expect(service.getSoundEnabled()).toBe(true)
+
+      service.checkAndNotify('agent-1', 'errored', 'Agent Alpha')
+      expect(service.notificationsSent[0].silent).toBe(false)
     })
   })
 })

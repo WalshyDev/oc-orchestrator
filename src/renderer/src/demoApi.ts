@@ -360,6 +360,8 @@ export function createDemoApi(): OrchestratorApi {
       disconnected: false
     }),
     setNotificationPreference: noop,
+    getSoundEnabled: () => ok(true),
+    setSoundEnabled: noop,
     getPendingNotificationAgent: () => ok(null),
 
     // ── App Info ──

@@ -740,6 +740,25 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('notifications:get-sound-enabled', async () => {
+    try {
+      return { ok: true, data: notificationService.getSoundEnabled() }
+    } catch (error) {
+      console.error('[IPC] notifications:get-sound-enabled failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('notifications:set-sound-enabled', async (_event, enabled: boolean) => {
+    try {
+      notificationService.setSoundEnabled(enabled)
+      return { ok: true }
+    } catch (error) {
+      console.error('[IPC] notifications:set-sound-enabled failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('notifications:get-pending-agent', async () => {
     try {
       const agentId = notificationService.getPendingAgentId()
