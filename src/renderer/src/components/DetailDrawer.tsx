@@ -329,6 +329,10 @@ export const DetailDrawer = memo(function DetailDrawer({
     return () => cancelAnimationFrame(frame)
   }, [])
 
+  useEffect(() => {
+    textareaRef.current?.focus()
+  }, [agent.id])
+
   const scrollToBottom = (el: HTMLDivElement) => { el.scrollTop = el.scrollHeight }
 
   const reengageFollow = () => {
