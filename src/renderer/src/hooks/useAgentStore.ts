@@ -1309,20 +1309,26 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   const existingAgent = state.agents.get(payload.id)
 
-  // If the agent was launched with a prompt but no explicit title, derive name from prompt
-  // If launched without either, mark as autoNamed so the first prompt can rename it
-  const hasExplicitTitle = payload.title !== payload.prompt?.slice(0, 80) &&
-    !payload.title.match(/^.+-\d+$/) // matches pattern like "project-1" (auto-generated)
+  // Detect auto-generated titles: the backend produces "projectSlug-N" when no
+  // title and no prompt are provided, or echoes the prompt's first 80 chars.
+  const projectSlug = payload.directory.split('/').pop() ?? 'project'
+  const isAutoTitle = payload.title === payload.prompt?.slice(0, 80)
+    || new RegExp(`^${projectSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+$`).test(payload.title)
   const agentName = hasPrompt
     ? deriveNameFromPrompt(payload.prompt)
     : payload.title.slice(0, 30)
+
+  // On reconnection upsertAgent runs again — preserve the user's rename.
+  const autoNamed = existingAgent !== undefined
+    ? existingAgent.autoNamed
+    : isAutoTitle
 
   const agent: LiveAgent = {
     id: payload.id,
     runtimeId: payload.runtimeId,
     sessionId: payload.sessionId,
     directory: payload.directory,
-    name: payload.displayName || existingAgent?.name || (hasExplicitTitle ? payload.title.slice(0, 30) : agentName),
+    name: payload.displayName || existingAgent?.name || (isAutoTitle ? agentName : payload.title.slice(0, 30)),
     projectName: payload.projectName || existingAgent?.projectName || payload.directory.split('/').pop() || payload.directory,
     branchName: existingAgent?.branchName ?? payload.branchName ?? '',
     isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
@@ -1336,7 +1342,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
     tokens: existingAgent?.tokens ?? { input: 0, output: 0 },
-    autoNamed: !hasExplicitTitle
+    autoNamed
   }
 
   state.agents.set(payload.id, agent)
