@@ -295,7 +295,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
       <div className={`${menuPosition} z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl`}>
         {current.length > 0 && (
           <button
-            onClick={(event) => { event.stopPropagation(); onClear(); close() }}
+            onClick={(event) => { event.stopPropagation(); onClear() }}
             className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] rounded transition-colors text-left text-kumo-default hover:bg-kumo-fill"
           >
             <XCircle size={12} />
