@@ -47,6 +47,8 @@ class NotificationService {
     disconnected: true
   }
 
+  private soundEnabled = true
+
   private sentNotifications = new Map<string, number>()
 
   // Prevent Notification objects from being garbage-collected before the
@@ -57,6 +59,14 @@ class NotificationService {
 
   setPreference(eventType: NotifiableEventType, enabled: boolean): void {
     this.preferences[eventType] = enabled
+  }
+
+  setSoundEnabled(enabled: boolean): void {
+    this.soundEnabled = enabled
+  }
+
+  getSoundEnabled(): boolean {
+    return this.soundEnabled
   }
 
   getPreferences(): NotificationPreferences {
@@ -150,7 +160,7 @@ class NotificationService {
     const notification = new Notification({
       title,
       body,
-      silent: false
+      silent: !this.soundEnabled
     })
 
     // Prevent GC from collecting the notification before the user clicks it.

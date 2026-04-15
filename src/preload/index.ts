@@ -202,6 +202,12 @@ const api = {
   setNotificationPreference: (eventType: string, enabled: boolean): Promise<IpcResult> =>
     ipcRenderer.invoke('notifications:set-preference', eventType, enabled),
 
+  getSoundEnabled: (): Promise<IpcResult<boolean>> =>
+    ipcRenderer.invoke('notifications:get-sound-enabled'),
+
+  setSoundEnabled: (enabled: boolean): Promise<IpcResult> =>
+    ipcRenderer.invoke('notifications:set-sound-enabled', enabled),
+
   getPendingNotificationAgent: (): Promise<IpcResult<string | null>> =>
     ipcRenderer.invoke('notifications:get-pending-agent'),
 

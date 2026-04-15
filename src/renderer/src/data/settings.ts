@@ -13,6 +13,7 @@ export interface AppSettings {
   createPrPrompt: string
   notifications: NotificationPrefs
   verboseMode: boolean
+  soundEnabled: boolean
 }
 
 export const SETTINGS_STORAGE_KEY = 'oc-orchestrator:settings'
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     completed: false,
   },
   verboseMode: false,
+  soundEnabled: true,
 }
 
 export function loadSettings(): AppSettings {
