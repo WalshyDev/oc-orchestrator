@@ -55,6 +55,10 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 // Module-level so it survives component unmount (the drawer is conditionally rendered).
 const draftInputs = new Map<string, string>()
 
+// Stores sent message history per agent for up/down arrow cycling.
+// Seeded from existing user messages when first accessed, then appended on each send.
+const inputHistories = new Map<string, string[]>()
+
 function loadDrawerWidth(): number {
   try {
     const stored = localStorage.getItem(DRAWER_WIDTH_KEY)
@@ -168,12 +172,24 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
   const [showPrLinkModal, setShowPrLinkModal] = useState(false)
 
+  // Input history cycling: -1 = not browsing, 0+ = offset from most recent
+  const historyIndexRef = useRef(-1)
+  const savedDraftRef = useRef('')
+
+  if (!inputHistories.has(agent.id)) {
+    const userTexts = messages
+      .filter((m) => m.role === 'user' && m.content.trim())
+      .map((m) => m.content.trim())
+    inputHistories.set(agent.id, userTexts)
+  }
+
   // Reset state when switching agents within an open drawer
   const prevAgentIdRef = useRef(agent.id)
   if (prevAgentIdRef.current !== agent.id) {
     prevAgentIdRef.current = agent.id
     setVisibleMessageCount(VISIBLE_MESSAGE_WINDOW)
     _setInputText(draftInputs.get(agent.id) ?? '')
+    historyIndexRef.current = -1
   }
 
   const hiddenCount = Math.max(0, messages.length - visibleMessageCount)
@@ -422,8 +438,17 @@ export const DetailDrawer = memo(function DetailDrawer({
   }
 
   const handleSend = () => {
-    if ((!inputText.trim() && attachments.length === 0) || !onSendMessage) return
-    onSendMessage(inputText.trim(), attachments.length > 0 ? attachments : undefined)
+    const trimmed = inputText.trim()
+    if ((!trimmed && attachments.length === 0) || !onSendMessage) return
+    if (trimmed) {
+      const history = inputHistories.get(agent.id) ?? []
+      if (history[history.length - 1] !== trimmed) {
+        history.push(trimmed)
+        if (!inputHistories.has(agent.id)) inputHistories.set(agent.id, history)
+      }
+    }
+    historyIndexRef.current = -1
+    onSendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
     setInputText('')
     clearAttachments()
     requestAnimationFrame(reengageFollow)
@@ -476,6 +501,35 @@ export const DetailDrawer = memo(function DetailDrawer({
       if (event.key === 'ArrowUp') {
         event.preventDefault()
         setCommandPickerIndex((prev) => (prev - 1 + matchingCommands.length) % matchingCommands.length)
+        return
+      }
+    }
+
+    // ── Input history cycling (ArrowUp/ArrowDown) ──
+    // Only activates on single-line input, or when cursor is at the boundary.
+    const history = inputHistories.get(agent.id)
+    if (history && history.length > 0) {
+      const textarea = event.currentTarget as HTMLTextAreaElement
+      const singleLine = !textarea.value.includes('\n')
+      const atStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
+      const atEnd = textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length
+      const fromEnd = (i: number) => history[history.length - 1 - i]
+
+      if (event.key === 'ArrowUp' && (singleLine || atStart)) {
+        const next = historyIndexRef.current + 1
+        if (next < history.length) {
+          event.preventDefault()
+          if (historyIndexRef.current === -1) savedDraftRef.current = inputText
+          historyIndexRef.current = next
+          setInputText(fromEnd(next))
+        }
+        return
+      }
+
+      if (event.key === 'ArrowDown' && (singleLine || atEnd) && historyIndexRef.current >= 0) {
+        event.preventDefault()
+        historyIndexRef.current -= 1
+        setInputText(historyIndexRef.current < 0 ? savedDraftRef.current : fromEnd(historyIndexRef.current))
         return
       }
     }
