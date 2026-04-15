@@ -12,7 +12,7 @@ import {
   CircleNotch,
   ClockCounterClockwise
 } from '@phosphor-icons/react'
-import { EMPTY_FILTER, type FilterState, type StatusFilter } from './FilterBar'
+import { type FilterState, type StatusFilter } from './FilterBar'
 
 interface CommandPaletteProps {
   agents: Array<{ id: string; name: string; projectName: string; status: string }>
@@ -21,7 +21,7 @@ interface CommandPaletteProps {
   onLaunchAgent: () => void
   onResumeSession: () => void
   onOpenSettings: () => void
-  onFilterChange: (filter: FilterState) => void
+  onFilterChange: (filter: FilterState | ((prev: FilterState) => FilterState)) => void
   onStopAll: () => void
   onApproveAll: () => void
 }
@@ -151,6 +151,11 @@ export function CommandPalette({
       }
     ]
 
+    const navigateWithStatus = (statuses: Set<StatusFilter>): void => {
+      onClose()
+      onFilterChange((prev) => ({ ...prev, statuses, excludeStatuses: new Set() }))
+    }
+
     const navigationCommands: CommandItem[] = [
       {
         id: 'nav-fleet',
@@ -158,10 +163,7 @@ export function CommandPalette({
         description: 'View the full agent fleet',
         icon: <SquaresFour size={16} className="text-kumo-link" />,
         category: 'navigation',
-        action: () => {
-          onClose()
-          onFilterChange(EMPTY_FILTER)
-        }
+        action: () => navigateWithStatus(new Set())
       },
       {
         id: 'nav-blocked',
@@ -169,10 +171,7 @@ export function CommandPalette({
         description: 'Filter to agents needing attention',
         icon: <Warning size={16} className="text-kumo-danger" />,
         category: 'navigation',
-        action: () => {
-          onClose()
-          onFilterChange({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['blocked']) })
-        }
+        action: () => navigateWithStatus(new Set(['blocked']))
       },
       {
         id: 'nav-running',
@@ -180,10 +179,7 @@ export function CommandPalette({
         description: 'Filter to actively running agents',
         icon: <CircleNotch size={16} className="text-kumo-success" />,
         category: 'navigation',
-        action: () => {
-          onClose()
-          onFilterChange({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['running']) })
-        }
+        action: () => navigateWithStatus(new Set(['running']))
       }
     ]
 

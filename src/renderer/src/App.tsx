@@ -1259,7 +1259,7 @@ export function App() {
       {showInterruptBanner && (
         <InterruptBanner
           interrupts={displayInterrupts}
-          onReviewAll={() => setFilter({ ...EMPTY_FILTER, statuses: new Set<StatusFilter>(['blocked']) })}
+          onReviewAll={() => setFilter((prev) => ({ ...prev, statuses: new Set<StatusFilter>(['blocked']), excludeStatuses: new Set() }))}
           onDismiss={() => setDismissedInterruptIds(new Set(displayInterrupts.map((i) => i.id)))}
         />
       )}
@@ -1461,8 +1461,8 @@ export function App() {
             setShowCommandPalette(false)
             setShowSettings(true)
           }}
-          onFilterChange={(newFilter) => {
-            setFilter(newFilter)
+          onFilterChange={(updater) => {
+            setFilter(updater)
             setShowCommandPalette(false)
           }}
           onStopAll={async () => {
