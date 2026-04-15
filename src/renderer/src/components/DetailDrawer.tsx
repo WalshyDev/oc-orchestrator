@@ -1218,10 +1218,58 @@ function toolIconStyle(toolState: string | undefined): string {
   return 'text-kumo-link animate-spin'
 }
 
-function parseToolCommand(input: string | undefined): string | undefined {
+const todoStatusIcons: Record<string, string> = {
+  completed: '[x]',
+  in_progress: '[~]'
+}
+
+function summarizeToolInput(name: string, input: string | undefined): string | undefined {
   if (!input) return undefined
   try {
-    return JSON.parse(input).command as string | undefined
+    const parsed = JSON.parse(input)
+    switch (name.toLowerCase()) {
+      case 'bash':
+        return parsed.command ? `$ ${parsed.command}` : undefined
+
+      case 'read': {
+        if (!parsed.filePath) return undefined
+        const range = parsed.offset
+          ? `:${parsed.offset}${parsed.limit ? `-${parsed.offset + parsed.limit}` : ''}`
+          : ''
+        return parsed.filePath + range
+      }
+
+      case 'write':
+      case 'edit':
+        return parsed.filePath ?? undefined
+
+      case 'grep': {
+        if (!parsed.pattern) return undefined
+        const scope = parsed.include ? ` (${parsed.include})` : parsed.path ? ` in ${parsed.path}` : ''
+        return `/${parsed.pattern}/${scope}`
+      }
+
+      case 'glob':
+        return parsed.pattern
+          ? parsed.pattern + (parsed.path ? ` in ${parsed.path}` : '')
+          : undefined
+
+      case 'task':
+        return parsed.description ?? undefined
+
+      case 'todowrite':
+        if (!Array.isArray(parsed.todos)) return undefined
+        return parsed.todos
+          .map((t: { content?: string; status?: string }) =>
+            `${todoStatusIcons[t.status ?? ''] ?? '[ ]'} ${t.content ?? ''}`)
+          .join('\n')
+
+      case 'webfetch':
+        return parsed.url ?? undefined
+
+      default:
+        return undefined
+    }
   } catch {
     return undefined
   }
@@ -1259,9 +1307,9 @@ const ToolGroupBubble = memo(function ToolGroupBubble({ message, verbose = false
                   {tool.state}
                 </span>
               </div>
-              {verbose && parseToolCommand(tool.input) && (
-                <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
-                  $ {parseToolCommand(tool.input)}
+              {summarizeToolInput(tool.name, tool.input) && (
+                <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
+                  {summarizeToolInput(tool.name, tool.input)}
                 </pre>
               )}
               {tool.output && (
