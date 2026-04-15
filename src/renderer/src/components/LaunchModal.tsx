@@ -114,6 +114,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [projectsReady, setProjectsReady] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
+  const [projectSearch, setProjectSearch] = useState('')
   const {
     attachments, isDragOver, fileInputRef,
     removeAttachment, clearAttachments,
@@ -417,10 +418,21 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     )
   }, [importSessions, importSearch])
 
+  const filteredProjects = useMemo(() => {
+    if (!projectSearch.trim()) return savedProjects
+    const q = projectSearch.toLowerCase()
+    return savedProjects.filter((p) =>
+      p.name.toLowerCase().includes(q) || p.repo_root.toLowerCase().includes(q)
+    )
+  }, [savedProjects, projectSearch])
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) setShowDropdown(false)
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowDropdown(false)
+        setProjectSearch('')
+      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -487,12 +499,13 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const handleBrowse = async () => {
     const selected = await onSelectDirectory()
-    if (selected) { setDirectory(selected); setShowDropdown(false) }
+    if (selected) { setDirectory(selected); setShowDropdown(false); setProjectSearch('') }
   }
 
   const handleSelectProject = (repoRoot: string) => {
     setDirectory(repoRoot)
     setShowDropdown(false)
+    setProjectSearch('')
   }
 
   const selectButtonClasses =
@@ -593,45 +606,62 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 </button>
 
                 {showDropdown && (
-                  <div className="fixed mt-1 bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl z-[210] max-h-[320px] overflow-y-auto overflow-x-hidden" style={{
+                  <div className="fixed mt-1 bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl z-[210] max-h-[320px] flex flex-col overflow-hidden" style={{
                     width: dropdownRef.current?.querySelector('button')?.getBoundingClientRect().width,
                     left: dropdownRef.current?.querySelector('button')?.getBoundingClientRect().left,
                     top: (dropdownRef.current?.querySelector('button')?.getBoundingClientRect().bottom ?? 0) + 4
                   }}>
                     {savedProjects.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
-                          Saved Projects
-                        </div>
-                        {savedProjects.map((project) => (
-                          <div
-                            key={project.id}
-                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
-                            onMouseDown={() => handleSelectProject(project.repo_root)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
-                              <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
-                            </div>
-                            <button
-                              onMouseDown={(e) => void removeProject(project.id, e)}
-                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
-                              title="Remove from saved projects"
-                            >
-                              <Trash size={12} />
-                            </button>
-                          </div>
-                        ))}
-                        <div className="border-t border-kumo-fill-hover" />
-                      </>
+                      <div className="px-2 pt-2 pb-1 shrink-0">
+                        <input
+                          type="text"
+                          value={projectSearch}
+                          onChange={(e) => setProjectSearch(e.target.value)}
+                          placeholder="Search projects..."
+                          className="w-full rounded border border-kumo-line bg-kumo-elevated px-2 py-1 text-xs text-kumo-default placeholder:text-kumo-subtle outline-none focus:border-kumo-ring"
+                          autoFocus
+                        />
+                      </div>
                     )}
-                    <button
-                      onMouseDown={() => void handleBrowse()}
-                      className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
-                    >
-                      <FolderOpen size={14} className="text-kumo-subtle" />
-                      Browse for directory...
-                    </button>
+                    <div className="overflow-y-auto flex-1">
+                      {filteredProjects.length > 0 && (
+                        <>
+                          <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
+                            Saved Projects
+                          </div>
+                          {filteredProjects.map((project) => (
+                            <div
+                              key={project.id}
+                              className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
+                              onMouseDown={() => handleSelectProject(project.repo_root)}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
+                                <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
+                              </div>
+                              <button
+                                onMouseDown={(e) => void removeProject(project.id, e)}
+                                className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
+                                title="Remove from saved projects"
+                              >
+                                <Trash size={12} />
+                              </button>
+                            </div>
+                          ))}
+                          <div className="border-t border-kumo-fill-hover" />
+                        </>
+                      )}
+                      {filteredProjects.length === 0 && savedProjects.length > 0 && (
+                        <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
+                      )}
+                      <button
+                        onMouseDown={() => void handleBrowse()}
+                        className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
+                      >
+                        <FolderOpen size={14} className="text-kumo-subtle" />
+                        Browse for directory...
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
