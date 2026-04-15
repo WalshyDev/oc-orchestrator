@@ -19,7 +19,7 @@ import {
   ArrowLineUpRight
 } from '@phosphor-icons/react'
 import type { AgentRuntime, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths } from '../types'
-import { formatBranchLabel, isUrgent, labelSortKey, ALL_COLUMNS } from '../types'
+import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
@@ -265,7 +265,8 @@ export function FleetTable({
 
       if (leftVal < rightVal) return sortDirection === 'asc' ? -1 : 1
       if (leftVal > rightVal) return sortDirection === 'asc' ? 1 : -1
-      return 0
+      // Tie-breaker: sort by status priority (running before idle, etc.)
+      return compareStatusPriority(left.status, right.status)
     })
 
     return sorted

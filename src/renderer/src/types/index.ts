@@ -229,3 +229,19 @@ export function labelSortKey(labelIds: string[], allLabels: LabelDefinition[] = 
   if (labelIds.length === 0) return '\uffff'
   return resolveNames(labelIds, allLabels).join(',').toLowerCase()
 }
+
+const STATUS_PRIORITY: Record<AgentStatus, number> = {
+  needs_input: 0,
+  needs_approval: 1,
+  running: 2,
+  starting: 3,
+  idle: 4,
+  stopping: 5,
+  errored: 6,
+  completed: 7,
+  disconnected: 8
+}
+
+export function compareStatusPriority(a: AgentStatus, b: AgentStatus): number {
+  return STATUS_PRIORITY[a] - STATUS_PRIORITY[b]
+}
