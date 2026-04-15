@@ -13,7 +13,7 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
-import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, compareStatusPriority } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -444,7 +444,8 @@ export function App() {
         if (leftVal > rightVal) return sortDirection === 'asc' ? 1 : -1
       }
 
-      return 0
+      // Tie-breaker: sort by status priority (running before idle, etc.)
+      return compareStatusPriority(left.status, right.status)
     })
 
     return agents
