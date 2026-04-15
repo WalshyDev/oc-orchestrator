@@ -18,7 +18,7 @@ import {
   Link,
   ArrowLineUpRight
 } from '@phosphor-icons/react'
-import type { AgentRuntime, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths } from '../types'
+import type { AgentRuntime, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths, SortDirection } from '../types'
 import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
@@ -29,6 +29,8 @@ interface FleetTableProps {
   agents: AgentRuntime[]
   selectedId: string | null
   onSelect: (id: string) => void
+  sortColumn?: ColumnKey | null
+  sortDirection?: SortDirection
   onSort?: (column: string, direction: 'asc' | 'desc') => void
   onApprove?: (agentId: string) => void
   onReply?: (agentId: string) => void
@@ -53,8 +55,6 @@ interface FleetTableProps {
   onColumnResetWidth?: (key: ColumnKey) => void
 }
 
-type SortDirection = 'asc' | 'desc'
-
 const SCROLL_STEP = 200
 
 interface ContextMenuState {
@@ -77,6 +77,8 @@ export function FleetTable({
   agents,
   selectedId,
   onSelect,
+  sortColumn: sortColumnProp,
+  sortDirection: sortDirectionProp = 'asc',
   onSort,
   onApprove,
   onReply,
@@ -100,8 +102,10 @@ export function FleetTable({
   onColumnResize,
   onColumnResetWidth
 }: FleetTableProps) {
-  const [sortColumn, setSortColumn] = useState<ColumnKey | null>(null)
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [sortColumnLocal, setSortColumnLocal] = useState<ColumnKey | null>(null)
+  const [sortDirectionLocal, setSortDirectionLocal] = useState<SortDirection>('asc')
+  const sortColumn = sortColumnProp !== undefined ? sortColumnProp : sortColumnLocal
+  const sortDirection = sortDirectionProp !== undefined ? sortDirectionProp : sortDirectionLocal
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renameState, setRenameState] = useState<RenameState | null>(null)
   const [prLinkState, setPrLinkState] = useState<PrLinkState | null>(null)
@@ -176,8 +180,8 @@ export function FleetTable({
     if (sortColumn === column) {
       nextDirection = sortDirection === 'asc' ? 'desc' : 'asc'
     }
-    setSortColumn(column)
-    setSortDirection(nextDirection)
+    setSortColumnLocal(column)
+    setSortDirectionLocal(nextDirection)
     onSort?.(column, nextDirection)
   }, [sortColumn, sortDirection, onSort])
 
