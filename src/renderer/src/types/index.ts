@@ -110,6 +110,28 @@ export const ALL_COLUMNS: ColumnDef[] = [
 
 const COLUMN_VIS_KEY = 'oc-orchestrator:column-visibility'
 const COLUMN_WIDTHS_KEY = 'oc-orchestrator:column-widths'
+const SORT_KEY = 'oc-orchestrator:sort'
+
+export type SortDirection = 'asc' | 'desc'
+
+export interface SortState {
+  column: ColumnKey | null
+  direction: SortDirection
+}
+
+export function loadSort(): SortState {
+  try {
+    const stored = localStorage.getItem(SORT_KEY)
+    if (!stored) return { column: null, direction: 'asc' }
+    return JSON.parse(stored) as SortState
+  } catch {
+    return { column: null, direction: 'asc' }
+  }
+}
+
+export function saveSort(state: SortState): void {
+  localStorage.setItem(SORT_KEY, JSON.stringify(state))
+}
 
 const DEFAULT_VISIBLE_COLUMNS = new Set<ColumnKey>(
   ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)

@@ -13,13 +13,11 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
-import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, compareStatusPriority } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
 import { loadSettings } from './data/settings'
-
-type SortDirection = 'asc' | 'desc'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -77,8 +75,8 @@ export function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showSessionBrowser, setShowSessionBrowser] = useState(false)
 
-  const [sortColumn, setSortColumn] = useState<ColumnKey | null>(null)
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [sortColumn, setSortColumnRaw] = useState<ColumnKey | null>(() => loadSort().column)
+  const [sortDirection, setSortDirectionRaw] = useState<SortDirection>(() => loadSort().direction)
   const [tick, setTick] = useState(0)
   const [agentCommands, setAgentCommands] = useState<ChatCommand[]>([])
   const [agentConfigs, setAgentConfigs] = useState<Array<{ name: string; description?: string }>>([])
@@ -639,8 +637,10 @@ export function App() {
 
   // ── Sort handler ──
   const handleSort = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column as ColumnKey)
-    setSortDirection(direction)
+    const col = column as ColumnKey
+    setSortColumnRaw(col)
+    setSortDirectionRaw(direction)
+    saveSort({ column: col, direction })
   }, [])
 
   // ── Row actions ──
@@ -1309,6 +1309,8 @@ export function App() {
         agents={filteredAgents}
         selectedId={selectedAgentId}
         onSelect={setSelectedAgentId}
+        sortColumn={sortColumn}
+        sortDirection={sortDirection}
         onSort={handleSort}
         onApprove={handleRowApprove}
         onReply={handleRowReply}
