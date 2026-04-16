@@ -305,6 +305,7 @@ export function createDemoApi(): OrchestratorApi {
     forkSession: () => ok({ sessionId: 'demo-fork', title: 'Forked session' }),
     resumeAgent: noop,
     listAgents: () => ok(DEMO_AGENTS),
+    isAgentsRestored: () => ok(true),
     updateAgentMeta: noop,
     getStatuses: () => ok(DEMO_STATUSES),
     replyToQuestion: noop,
@@ -382,6 +383,7 @@ export function createDemoApi(): OrchestratorApi {
     onRuntimeStopped: noopListener,
     onEventError: noopListener,
     onUpdateAvailable: noopListener,
-    onNotificationSelectAgent: noopListener
+    onNotificationSelectAgent: noopListener,
+    onAgentsRestored: noopListener
   }
 }

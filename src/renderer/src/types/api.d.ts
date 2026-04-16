@@ -37,6 +37,7 @@ export interface OrchestratorApi {
   forkSession: (options: { sourceSessionId: string; targetDirectory: string }) => Promise<IpcResult<{ sessionId: string; title: string }>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
+  isAgentsRestored: () => Promise<IpcResult<boolean>>
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[]; prUrl?: string }) => Promise<IpcResult>
   getStatuses: () => Promise<IpcResult<AgentStatusesPayload>>
   replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
@@ -104,6 +105,7 @@ export interface OrchestratorApi {
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => () => void
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => () => void
   onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => () => void
+  onAgentsRestored: (callback: () => void) => () => void
 }
 
 export interface WorktreeListEntry {

@@ -9,6 +9,8 @@ import { startUpdateChecker, stopUpdateChecker } from './services/update-checker
 let mainWindowRef: BrowserWindow | null = null
 
 const WINDOW_BOUNDS_KEY = 'window_bounds'
+const DEFAULT_WIDTH = 1440
+const DEFAULT_HEIGHT = 900
 
 function getAppIcon(): Electron.NativeImage | undefined {
   const iconPath = app.isPackaged
@@ -27,7 +29,7 @@ function loadWindowBounds(): { x?: number; y?: number; width: number; height: nu
     const raw = database.getPreference(WINDOW_BOUNDS_KEY)
     if (raw) return JSON.parse(raw)
   } catch { /* ignore */ }
-  return { width: 1440, height: 900 }
+  return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
 }
 
 function saveWindowBounds(window: BrowserWindow): void {
@@ -36,15 +38,24 @@ function saveWindowBounds(window: BrowserWindow): void {
   database.setPreference(WINDOW_BOUNDS_KEY, JSON.stringify({ ...bounds, maximized }))
 }
 
-function createWindow(): BrowserWindow {
-  const savedBounds = loadWindowBounds()
+function applySavedBounds(window: BrowserWindow): void {
+  const saved = loadWindowBounds()
+  if (saved.x !== undefined && saved.y !== undefined) {
+    window.setBounds({ x: saved.x, y: saved.y, width: saved.width, height: saved.height })
+  } else if (saved.width !== DEFAULT_WIDTH || saved.height !== DEFAULT_HEIGHT) {
+    window.setSize(saved.width, saved.height)
+  }
+  if (saved.maximized) window.maximize()
+}
 
+function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     icon: getAppIcon(),
-    ...savedBounds,
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
     minWidth: 1024,
     minHeight: 680,
-    show: false,
+    show: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: '#0a0a0b',
@@ -52,14 +63,6 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
-  })
-
-  if (savedBounds.maximized) {
-    mainWindow.maximize()
-  }
-
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
   })
 
   mainWindow.on('resized', () => saveWindowBounds(mainWindow))
@@ -109,23 +112,37 @@ app.whenReady().then(async () => {
     app.dock.setIcon(appIcon)
   }
 
-  // Initialize the database
+  registerIpcHandlers()
+
+  // Create the window before DB init so the UI appears immediately.
+  mainWindowRef = createWindow()
+
   await database.init()
   console.log('[Main] Database initialized')
   database.logEvent(null, 'app:started')
+  applySavedBounds(mainWindowRef)
 
-  registerIpcHandlers()
-
-  await agentController.restorePersistedAgents()
-  console.log('[Main] Restored persisted agents')
-
-  mainWindowRef = createWindow()
-
-  // Start runtime health checks after window creation
   runtimeManager.startHealthChecks()
   agentController.startIdleRuntimeChecks()
   startUpdateChecker()
-  console.log('[Main] Health checks started')
+
+  // Restore agents after the renderer has loaded so the window appears
+  // with the loading indicator before we start spawning runtimes.
+  // If did-finish-load already fired while awaiting DB init, start immediately.
+  const startRestore = (): void => {
+    agentController.restorePersistedAgents().then(() => {
+      console.log('[Main] Restored persisted agents')
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('agents:restored')
+      }
+    })
+  }
+
+  if (!mainWindowRef.webContents.isLoading()) {
+    startRestore()
+  } else {
+    mainWindowRef.webContents.once('did-finish-load', startRestore)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

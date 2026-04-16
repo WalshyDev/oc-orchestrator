@@ -341,6 +341,10 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:restored', () => {
+    return { ok: true, data: agentController.restored }
+  })
+
   ipcMain.handle('agent:list', async () => {
     const agents = agentController.getAllAgents()
     return {
