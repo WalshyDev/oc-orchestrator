@@ -463,6 +463,31 @@ function inferFileAction(before: string | undefined, after: string | undefined):
   return 'modified'
 }
 
+// ── Optimistic User Messages ──
+
+const OPTIMISTIC_PREFIX = 'optimistic-user-'
+let optimisticCounter = 0
+
+function injectOptimisticUserMessage(sessionId: string, text: string): void {
+  if (!text.trim()) return
+  const messages = state.messages.get(sessionId) ?? []
+  const id = `${OPTIMISTIC_PREFIX}${++optimisticCounter}`
+  messages.push({
+    id,
+    role: 'user',
+    sessionId,
+    createdAt: Date.now(),
+    parts: [{ id: `${id}-part`, type: 'text', text }]
+  })
+  state.messages.set(sessionId, messages)
+}
+
+function removeOptimisticUserMessages(sessionId: string): void {
+  const messages = state.messages.get(sessionId)
+  if (!messages) return
+  state.messages.set(sessionId, messages.filter((msg) => !msg.id.startsWith(OPTIMISTIC_PREFIX)))
+}
+
 function upsertMessage(message: LiveMessage): LiveMessage {
   const messages = state.messages.get(message.sessionId) ?? []
   const existingMessage = messages.find((candidate) => candidate.id === message.id)
@@ -557,9 +582,16 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
   const typed = entries as HistoricalSessionMessage[]
   const subAgentAssistantIds = identifySubAgentMessages(typed)
+  const optimisticsCleaned = new Set<string>()
 
   for (const entry of typed) {
     if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
+
+    // Real messages replace optimistic placeholders (once per session)
+    if (entry.info.role === 'user' && !optimisticsCleaned.has(entry.info.sessionID)) {
+      optimisticsCleaned.add(entry.info.sessionID)
+      removeOptimisticUserMessages(entry.info.sessionID)
+    }
 
     const createdAt = getMessageCreatedAt(entry.info)
     const message = upsertMessage({
@@ -836,6 +868,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
             agentChanged = true
           }
         }
+      }
+
+      // When the server-authoritative user message arrives, drop any
+      // optimistic placeholder we injected earlier so it doesn't duplicate.
+      if (role === 'user') {
+        removeOptimisticUserMessages(sessionId)
       }
 
       // Store message
@@ -1272,6 +1310,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   if (hasPrompt) {
     agent.taskSummary = payload.prompt.slice(0, 120)
     agent.status = 'running'
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
   } else {
     agent.taskSummary = 'Waiting for prompt...'
     agent.status = 'idle'
@@ -1351,6 +1390,10 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   if (!state.messages.has(payload.sessionId)) state.messages.set(payload.sessionId, [])
   if (!state.fileChanges.has(payload.sessionId)) state.fileChanges.set(payload.sessionId, [])
   if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
+
+  if (hasPrompt && !existingAgent) {
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
+  }
 }
 
 function applyStatuses(statuses: AgentStatusesPayload): void {
@@ -1583,6 +1626,7 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
   agent.blockedSince = undefined
   agent.respondedAt = Date.now()
 
+  injectOptimisticUserMessage(agent.sessionId, text)
   persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
 }
 
