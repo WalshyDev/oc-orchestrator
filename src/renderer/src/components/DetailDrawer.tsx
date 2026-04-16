@@ -1537,7 +1537,7 @@ function ActionDropdownButton({
         <CaretDown size={10} className="ml-0.5" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+        <div className="absolute bottom-full right-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
           {visibleItems.map((item) => (
             <button
               key={item.label}
