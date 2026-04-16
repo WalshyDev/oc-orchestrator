@@ -704,6 +704,15 @@ function processEvent(payload: OpenCodeEventPayload): void {
     logEvent(resolvedSessionId, type, props)
   }
 
+  // DEBUG: trace event delivery for new sessions
+  if (type === 'message.updated' || type === 'message.part.updated') {
+    const dbgSession = (props.info as Record<string, unknown>)?.sessionID ?? (props.part as Record<string, unknown>)?.sessionID
+    const hasAgent = !!findAgentBySession(dbgSession as string)
+    const hasMsgs = state.messages.has(dbgSession as string)
+    const msgCount = state.messages.get(dbgSession as string)?.length ?? 0
+    console.debug(`[processEvent] ${type} session=${(dbgSession as string)?.slice(-8)} agent=${hasAgent} msgs=${hasMsgs}(${msgCount})`)
+  }
+
   switch (type) {
     case 'session.status': {
       const sessionId = props.sessionID as string
@@ -1241,6 +1250,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
 const RESUME_MESSAGE_LIMIT = 10
 
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
+  const existingMsgs = state.messages.get(payload.sessionId)
+  console.debug(`[handleAgentLaunched] id=${payload.id} session=${payload.sessionId.slice(-8)} existingMsgs=${existingMsgs?.length ?? 'none'} agentExists=${state.agents.has(payload.id)}`)
   upsertAgent(payload)
   emit({ agents: true })
 
@@ -1250,8 +1261,10 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
     void window.api.getMessages(payload.id).then((result) => {
       if (!result.ok || !result.data) return
       const entries = result.data as HistoricalSessionMessage[]
+      console.debug(`[handleAgentLaunched:hydrate] id=${payload.id} session=${payload.sessionId.slice(-8)} historicalMsgs=${entries?.length ?? 0} currentStoreMsgs=${state.messages.get(payload.sessionId)?.length ?? 0}`)
       if (!Array.isArray(entries) || entries.length === 0) return
       hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
+      console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
       emit({ messages: true })
     })
 
