@@ -60,7 +60,10 @@ export class EventBridge {
       // Consume the stream in the background so start() can resolve
       // immediately after the connection is established.
       if ('stream' in result && result.stream) {
+        console.log(`[EventBridge:${this.runtimeId}] Stream available, starting consumer`)
         this.consumeStream(result.stream as AsyncIterable<{ type: string; properties: unknown }>)
+      } else {
+        console.error(`[EventBridge:${this.runtimeId}] No stream in subscribe result! Keys: ${Object.keys(result as object).join(', ')}`)
       }
     } catch (error) {
       if (this.connected) {
@@ -75,15 +78,22 @@ export class EventBridge {
     }
   }
 
+  private eventCount = 0
+
   private async consumeStream(stream: AsyncIterable<{ type: string; properties: unknown }>): Promise<void> {
     try {
       for await (const event of stream) {
         if (!this.connected) break
+        this.eventCount++
+        if (this.eventCount <= 5 || this.eventCount % 50 === 0) {
+          console.log(`[EventBridge:${this.runtimeId}] Event #${this.eventCount}: ${event.type}`)
+        }
         this.forwardEvent(event)
       }
+      console.log(`[EventBridge:${this.runtimeId}] Stream ended naturally after ${this.eventCount} events`)
     } catch (error) {
       if (this.connected) {
-        console.error(`[EventBridge:${this.runtimeId}] Stream consumption error:`, error)
+        console.error(`[EventBridge:${this.runtimeId}] Stream consumption error after ${this.eventCount} events:`, error)
         this.broadcastToRenderer('event:error', {
           runtimeId: this.runtimeId,
           error: String(error)
