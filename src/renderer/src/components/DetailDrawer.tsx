@@ -824,14 +824,17 @@ export const DetailDrawer = memo(function DetailDrawer({
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />
           )}
           {/* Custom quick action buttons — positional slots */}
-          {quickActions.map((qa, i) =>
-            qa && isQuickActionValid(qa) ? (
-              <QuickActionButton
-                key={qa.id}
-                action={qa}
-                onClick={onQuickAction ? () => onQuickAction(qa) : undefined}
-              />
-            ) : (
+          {quickActions.map((qa, i) => {
+            if (qa && isQuickActionValid(qa)) {
+              return (
+                <QuickActionButton
+                  key={qa.id}
+                  action={qa}
+                  onClick={onQuickAction ? () => onQuickAction(qa) : undefined}
+                />
+              )
+            }
+            return (
               <button
                 key={`placeholder-${i}`}
                 type="button"
@@ -843,7 +846,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 Custom
               </button>
             )
-          )}
+          })}
         </div>
 
         {/* Input row: text input left, action buttons + send right */}

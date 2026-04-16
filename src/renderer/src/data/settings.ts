@@ -24,8 +24,6 @@ export interface QuickAction {
 
 export const MAX_QUICK_ACTIONS = 7
 
-// Fixed-length slots array: null entries represent empty slots.
-// This preserves button positions (e.g. slot 1 = command, slot 2 = empty, slot 3 = command).
 export type QuickActionSlots = (QuickAction | null)[]
 
 export interface AppSettings {
@@ -54,7 +52,15 @@ export const DEFAULT_CREATE_PR_PROMPT = `Prepare this work for review.
 Return the final PR URL or manual URL, plus a short note on what you committed.`
 
 export function emptySlots(): QuickActionSlots {
-  return Array.from({ length: MAX_QUICK_ACTIONS }, () => null)
+  return new Array<QuickAction | null>(MAX_QUICK_ACTIONS).fill(null)
+}
+
+export function parseSlashCommand(text: string): { name: string; args: string } | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('/')) return null
+  const spaceIndex = trimmed.indexOf(' ')
+  if (spaceIndex === -1) return { name: trimmed.slice(1), args: '' }
+  return { name: trimmed.slice(1, spaceIndex), args: trimmed.slice(spaceIndex + 1).trim() }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

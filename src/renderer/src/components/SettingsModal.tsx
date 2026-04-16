@@ -74,8 +74,6 @@ function getIconComponent(iconKey: QuickActionIcon): typeof GitPullRequest {
   return ICON_OPTIONS.find((o) => o.value === iconKey)?.icon ?? Lightning
 }
 
-type TabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
-
 export type SettingsTabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
 
 export interface ChatCommandOption {
@@ -89,7 +87,7 @@ interface SettingsModalProps {
   commands?: ChatCommandOption[]
 }
 
-const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
+const TAB_LIST: { id: SettingsTabId; label: string; icon: typeof GearSix }[] = [
   { id: 'general', label: 'General', icon: GearSix },
   { id: 'quick-actions', label: 'Quick Actions', icon: Lightning },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
@@ -97,7 +95,7 @@ const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
 ]
 
 export function SettingsModal({ onClose, initialTab = 'general', commands = [] }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab)
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab)
   const [settings, setSettings] = useState(loadSettings)
   const [appVersion, setAppVersion] = useState<string>('')
   const { options: modelOptions } = useModelOptions()
@@ -571,7 +569,7 @@ function QuickActionsTab({
                         Button Label
                       </label>
                       <input
-                        ref={autoFocusIndex === index || expandedIndex === index ? labelInputRef : undefined}
+                        ref={autoFocusIndex === index ? labelInputRef : undefined}
                         type="text"
                         value={qa.label}
                         onChange={(e) => updateAction(index, { label: e.target.value })}
