@@ -8,15 +8,20 @@ interface TooltipProps {
   position?: 'top' | 'bottom'
 }
 
+interface FinalCoords {
+  top: number
+  left: number
+}
+
 const GAP = 8
 const VIEWPORT_PADDING = 8
 
 export function Tooltip({ content, children, delay = 1000, position = 'top' }: TooltipProps) {
-  const [visible, setVisible] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [finalCoords, setFinalCoords] = useState<FinalCoords | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+  const anchorRef = useRef<{ centerX: number; anchorY: number } | null>(null)
 
   const clearTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -25,36 +30,39 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
 
   useEffect(() => clearTimer, [])
 
-  // After the tooltip renders, clamp it within the viewport
-  const clampToViewport = useCallback((node: HTMLDivElement | null) => {
-    tooltipRef.current = node
-    if (!node) return
-    const rect = node.getBoundingClientRect()
-    const overflowRight = rect.right - (window.innerWidth - VIEWPORT_PADDING)
-    const overflowLeft = VIEWPORT_PADDING - rect.left
-    if (overflowRight > 0) {
-      node.style.left = `${parseFloat(node.style.left) - overflowRight}px`
-    } else if (overflowLeft > 0) {
-      node.style.left = `${parseFloat(node.style.left) + overflowLeft}px`
-    }
-  }, [])
+  // Ref callback on the hidden tooltip: measure it, compute clamped position, then reveal
+  const measureAndPlace = useCallback((node: HTMLDivElement | null) => {
+    if (!node || !anchorRef.current) return
+    const { centerX, anchorY } = anchorRef.current
+    const tooltipRect = node.getBoundingClientRect()
+    const tooltipW = tooltipRect.width
+    const tooltipH = tooltipRect.height
+
+    let left = centerX - tooltipW / 2
+    left = Math.max(VIEWPORT_PADDING, Math.min(left, window.innerWidth - tooltipW - VIEWPORT_PADDING))
+
+    const top = position === 'top' ? anchorY - tooltipH : anchorY
+
+    setFinalCoords({ top, left })
+  }, [position])
 
   const showTooltip = () => {
     timerRef.current = setTimeout(() => {
       const rect = triggerRef.current?.getBoundingClientRect()
-      if (rect) {
-        const left = rect.left + rect.width / 2
-        const top = position === 'top' ? rect.top - GAP : rect.bottom + GAP
-        setCoords({ top, left })
+      if (!rect) return
+      anchorRef.current = {
+        centerX: rect.left + rect.width / 2,
+        anchorY: position === 'top' ? rect.top - GAP : rect.bottom + GAP,
       }
-      setVisible(true)
+      setPending(true)
     }, delay)
   }
 
   const hideTooltip = () => {
     clearTimer()
-    setVisible(false)
-    setCoords(null)
+    setPending(false)
+    setFinalCoords(null)
+    anchorRef.current = null
   }
 
   return (
@@ -65,14 +73,23 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
       onMouseLeave={hideTooltip}
     >
       {children}
-      {visible && coords && createPortal(
+      {pending && !finalCoords && createPortal(
+        // Hidden measurement render — invisible, no animation
         <div
-          ref={clampToViewport}
+          ref={measureAndPlace}
+          className="fixed z-[200] pointer-events-none"
+          style={{ opacity: 0, top: 0, left: 0 }}
+        >
+          {content}
+        </div>,
+        document.body,
+      )}
+      {finalCoords && createPortal(
+        <div
           className="fixed z-[200] pointer-events-none"
           style={{
-            top: coords.top,
-            left: coords.left,
-            transform: position === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+            top: finalCoords.top,
+            left: finalCoords.left,
             animation: 'tooltip-fade-in 150ms ease-out',
           }}
         >
