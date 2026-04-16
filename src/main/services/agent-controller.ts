@@ -242,6 +242,10 @@ class AgentController {
 
     // Only send the initial prompt if one was provided
     if (prompt && prompt.trim()) {
+      // The server may have disposed between session.create and now
+      // (server.instance.disposed closes the SSE stream). Re-establish
+      // the stream before sending the prompt so response events aren't lost.
+      await handle.bridge.ensureStreaming()
       await client.session.promptAsync({
         sessionID: session.id,
         directory,
@@ -301,6 +305,7 @@ class AgentController {
     })
 
     if (prompt && prompt.trim()) {
+      await handle.bridge.ensureStreaming()
       await runtime.client.session.promptAsync({
         sessionID: session.id,
         directory: handle.directory,
@@ -353,6 +358,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    await handle.bridge.ensureStreaming()
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
@@ -748,6 +754,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    await handle.bridge.ensureStreaming()
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
