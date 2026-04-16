@@ -16,6 +16,7 @@ const MAX_RECONNECT_ATTEMPTS = 10
 export class EventBridge {
   private abortController: AbortController | null = null
   private connected = false
+  private streaming = false
   private isReconnecting = false
   private reconnectAttempts = 0
   private currentBackoff = INITIAL_BACKOFF_MS
@@ -45,6 +46,25 @@ export class EventBridge {
     await this.connectStream()
   }
 
+  /**
+   * Guarantee the SSE stream is alive before sending a prompt.
+   * If the server disposed and the stream ended, reconnect immediately
+   * and wait for it to be ready — otherwise the prompt's response
+   * events are lost.
+   */
+  async ensureStreaming(): Promise<void> {
+    if (this.streaming) return
+    if (!this.connected) {
+      await this.start()
+      return
+    }
+    console.log(`[EventBridge:${this.runtimeId}] Stream dead, reconnecting before prompt`)
+    this.isReconnecting = false
+    this.reconnectAttempts = 0
+    this.currentBackoff = INITIAL_BACKOFF_MS
+    await this.connectStream()
+  }
+
   private async connectStream(): Promise<void> {
     try {
       const result = await this.client.event.subscribe({
@@ -61,11 +81,14 @@ export class EventBridge {
       // immediately after the connection is established.
       if ('stream' in result && result.stream) {
         console.log(`[EventBridge:${this.runtimeId}] Stream available, starting consumer`)
+        this.streaming = true
         this.consumeStream(result.stream as AsyncIterable<{ type: string; properties: unknown }>)
       } else {
         console.error(`[EventBridge:${this.runtimeId}] No stream in subscribe result! Keys: ${Object.keys(result as object).join(', ')}`)
+        this.streaming = false
       }
     } catch (error) {
+      this.streaming = false
       if (this.connected) {
         console.error(`[EventBridge:${this.runtimeId}] Event stream error:`, error)
         this.broadcastToRenderer('event:error', {
@@ -90,8 +113,16 @@ export class EventBridge {
         }
         this.forwardEvent(event)
       }
-      console.log(`[EventBridge:${this.runtimeId}] Stream ended naturally after ${this.eventCount} events`)
+      this.streaming = false
+      // The server closed the SSE stream (e.g. server.instance.disposed).
+      // Reconnect so events from subsequent prompts aren't lost.
+      if (this.connected) {
+        console.log(`[EventBridge:${this.runtimeId}] Stream ended after ${this.eventCount} events, reconnecting`)
+        this.eventCount = 0
+        this.scheduleReconnect()
+      }
     } catch (error) {
+      this.streaming = false
       if (this.connected) {
         console.error(`[EventBridge:${this.runtimeId}] Stream consumption error after ${this.eventCount} events:`, error)
         this.broadcastToRenderer('event:error', {
@@ -149,6 +180,7 @@ export class EventBridge {
 
   stop(): void {
     this.connected = false
+    this.streaming = false
     this.isReconnecting = false
     this.reconnectAttempts = 0
     this.currentBackoff = INITIAL_BACKOFF_MS
