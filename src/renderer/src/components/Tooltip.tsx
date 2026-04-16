@@ -8,17 +8,12 @@ interface TooltipProps {
   position?: 'top' | 'bottom'
 }
 
-interface FinalCoords {
-  top: number
-  left: number
-}
-
 const GAP = 8
 const VIEWPORT_PADDING = 8
 
 export function Tooltip({ content, children, delay = 1000, position = 'top' }: TooltipProps) {
   const [pending, setPending] = useState(false)
-  const [finalCoords, setFinalCoords] = useState<FinalCoords | null>(null)
+  const [finalCoords, setFinalCoords] = useState<{ top: number; left: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
   const anchorRef = useRef<{ centerX: number; anchorY: number } | null>(null)
@@ -30,7 +25,6 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
 
   useEffect(() => clearTimer, [])
 
-  // Ref callback on the hidden tooltip: measure it, compute clamped position, then reveal
   const measureAndPlace = useCallback((node: HTMLDivElement | null) => {
     if (!node || !anchorRef.current) return
     const { centerX, anchorY } = anchorRef.current
@@ -74,7 +68,6 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
     >
       {children}
       {pending && !finalCoords && createPortal(
-        // Hidden measurement render — invisible, no animation
         <div
           ref={measureAndPlace}
           className="fixed z-[200] pointer-events-none"
