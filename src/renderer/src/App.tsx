@@ -906,7 +906,8 @@ export function App() {
     worktreeStrategy?: string,
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
-    importSession?: ImportSessionConfig
+    importSession?: ImportSessionConfig,
+    labelIds?: string[]
   ) => {
     let launchDirectory = directory
 
@@ -967,6 +968,10 @@ export function App() {
       const agentId = (resumeResult.data as { id: string }).id
       setSelectedAgentId(agentId)
 
+      if (labelIds?.length) {
+        for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
+      }
+
       if (model && model !== 'auto') {
         store.setAgentModel(agentId, model)
         try { await window.api.updateConfig(agentId, { model }) }
@@ -1002,6 +1007,10 @@ export function App() {
 
     const agentId = (result.data as { id: string }).id
     setSelectedAgentId(agentId)
+
+    if (labelIds?.length) {
+      for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
+    }
 
     if (model && model !== 'auto') {
       store.setAgentModel(agentId, model)
@@ -1390,6 +1399,8 @@ export function App() {
           }))}
           commands={launchCommands}
           agentConfigs={launchAgentConfigs}
+          allLabels={allLabels}
+          onCreateLabel={createLabel}
         />
       )}
 

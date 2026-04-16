@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, ChatCircleDots, Play } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { LabelDropdown } from './LabelDropdown'
 import { useModelOptions } from '../hooks/useModelOptions'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
+import type { LabelDefinition, LabelColorKey } from '../types'
 import type { Project, MessageAttachment, ProjectSessionEntry } from '../types/api'
 import type { ChatCommand, AgentConfigItem } from './DetailDrawer'
 
@@ -88,15 +90,17 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
   commands?: ChatCommand[]
   agentConfigs?: AgentConfigItem[]
+  allLabels?: LabelDefinition[]
+  onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
 }
 
-export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory, knownDirectories, commands = [], agentConfigs = [] }: LaunchModalProps) {
+export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDirectory, knownDirectories, commands = [], agentConfigs = [], allLabels = [], onCreateLabel }: LaunchModalProps) {
   const [activeTab, setActiveTab] = useState<ModalTab>('new')
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -106,6 +110,10 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
+  const [labelIds, setLabelIds] = useState<string[]>([])
+  const toggleLabelId = useCallback((id: string) => {
+    setLabelIds((prev) => prev.includes(id) ? prev.filter((l) => l !== id) : [...prev, id])
+  }, [])
   const [detectingBranch, setDetectingBranch] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
@@ -486,8 +494,10 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         ? attachments
         : undefined
 
+      const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
+
       await persistProjectSettings(directory.trim())
-      await onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveStrategy, effectiveAttachments, freshConfig, importConfig)
+      await onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
 
       clearAttachments()
       onClose()
@@ -763,6 +773,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
                 />
               </div>
+
+              {/* Labels */}
+              {allLabels.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                    Labels <span className="text-kumo-subtle/60">(optional)</span>
+                  </label>
+                  <LabelDropdown
+                    current={labelIds}
+                    onToggle={toggleLabelId}
+                    onClear={() => setLabelIds([])}
+                    allLabels={allLabels}
+                    onCreateLabel={onCreateLabel}
+                    variant="action"
+                  />
+                </div>
+              )}
 
               {/* Prompt */}
               <div className="flex flex-col gap-1.5">
