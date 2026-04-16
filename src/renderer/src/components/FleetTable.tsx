@@ -362,6 +362,7 @@ export function FleetTable({
                 onCreateLabel={onCreateLabel}
                 onDeleteLabel={onDeleteLabel}
                 onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
+                onRemovePrLink={onSetPrUrl ? () => onSetPrUrl(agent.id, null) : undefined}
                 onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
                 onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
                 isInlineEditing={inlineEditId === agent.id}
@@ -649,6 +650,7 @@ function AgentRow({
   onCreateLabel,
   onDeleteLabel,
   onEditPrLink,
+  onRemovePrLink,
   onOpenTerminal,
   onOpenInEditor,
   isInlineEditing,
@@ -675,6 +677,7 @@ function AgentRow({
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
   onEditPrLink?: () => void
+  onRemovePrLink?: () => void
   onOpenTerminal?: () => void
   onOpenInEditor?: () => void
   isInlineEditing: boolean
@@ -824,7 +827,20 @@ function AgentRow({
             onRemove={onRemove}
           />
           {agent.prUrl ? (
-            <Tooltip content={<PrTooltipContent url={agent.prUrl} />} position="top">
+            <Tooltip
+              content={
+                <PrTooltipContent
+                  url={agent.prUrl}
+                  actions={{
+                    onOpen: () => window.api?.openExternal(agent.prUrl!),
+                    onEdit: onEditPrLink,
+                    onRemove: onRemovePrLink,
+                  }}
+                />
+              }
+              position="top"
+              interactive
+            >
               <button
                 onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
                 className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
