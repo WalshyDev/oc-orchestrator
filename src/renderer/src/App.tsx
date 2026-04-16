@@ -267,6 +267,14 @@ export function App() {
   // The detail drawer looks up agents from the unfiltered list, so we
   // only need to set the selection — no need to clear filters/search.
 
+  // Menu bar: open settings modal when triggered from native menu
+  useEffect(() => {
+    if (!window.api?.onMenuOpenSettings) return
+    return window.api.onMenuOpenSettings(() => {
+      setShowSettings(true)
+    })
+  }, [])
+
   // Push path: main process sends agentId directly via IPC
   useEffect(() => {
     if (!window.api?.onNotificationSelectAgent) return

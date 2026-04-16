@@ -287,6 +287,12 @@ const api = {
     const handler = () => callback()
     ipcRenderer.on('agents:restored', handler)
     return () => ipcRenderer.removeListener('agents:restored', handler)
+  },
+
+  onMenuOpenSettings: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('menu:open-settings', handler)
+    return () => ipcRenderer.removeListener('menu:open-settings', handler)
   }
 }
 
