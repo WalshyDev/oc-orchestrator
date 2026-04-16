@@ -109,6 +109,7 @@ const DEFAULT_RUNTIME_IDLE_TIMEOUT_MS = 15 * 60_000
 class AgentController {
   private agents = new Map<string, AgentHandle>()
   private bridges = new Map<string, EventBridge>()
+  private pendingBridge = new Map<string, Promise<RuntimeInfo>>()
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
@@ -1142,6 +1143,21 @@ class AgentController {
   }
 
   private async ensureBridgeForDirectory(directory: string): Promise<RuntimeInfo> {
+    // Deduplicate concurrent calls for the same directory.
+    const pending = this.pendingBridge.get(directory)
+    if (pending) return pending
+
+    const promise = this.createBridgeForDirectory(directory)
+    this.pendingBridge.set(directory, promise)
+
+    try {
+      return await promise
+    } finally {
+      this.pendingBridge.delete(directory)
+    }
+  }
+
+  private async createBridgeForDirectory(directory: string): Promise<RuntimeInfo> {
     const runtime = await runtimeManager.ensureRuntime(directory)
 
     if (!this.bridges.has(runtime.id)) {
