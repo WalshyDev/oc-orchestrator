@@ -36,9 +36,10 @@ interface LabelDropdownProps {
   onDeleteLabel?: (id: string) => Promise<boolean>
   variant?: 'row' | 'action' | 'inline'
   onOpenChange?: (open: boolean) => void
+  className?: string
 }
 
-export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels, onCreateLabel, onDeleteLabel, variant = 'row', onOpenChange }: LabelDropdownProps) {
+export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels, onCreateLabel, onDeleteLabel, variant = 'row', onOpenChange, className: extraClass }: LabelDropdownProps) {
   const { open, toggle, close, containerRef } = useDismiss(onOpenChange)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -115,7 +116,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
       trigger = (
         <button
           onClick={handleOpen}
-          className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
+          className="flex items-center gap-1 w-full px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
         >
           {(current.length === 1 && BUILTIN_ICONS[current[0]]) || <Tag size={12} />}
           {displayLabel}
@@ -408,7 +409,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
   }
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div ref={containerRef} className={`relative inline-flex ${extraClass ?? ''}`}>
       {trigger}
       {open && renderMenu()}
     </div>

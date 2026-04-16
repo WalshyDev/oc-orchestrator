@@ -22,7 +22,7 @@ export interface QuickAction {
   prompt: string
 }
 
-export const MAX_QUICK_ACTIONS = 3
+export const MAX_QUICK_ACTIONS = 7
 
 export interface AppSettings {
   model: string
