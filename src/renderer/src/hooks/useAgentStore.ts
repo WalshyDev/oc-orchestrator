@@ -154,6 +154,7 @@ interface AgentStoreState {
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
   healthy: boolean
+  initializing: boolean
 }
 
 let state: AgentStoreState = {
@@ -163,7 +164,8 @@ let state: AgentStoreState = {
   messages: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
-  healthy: true
+  healthy: true,
+  initializing: true
 }
 
 let eventCounter = 0
@@ -1789,6 +1791,7 @@ export function useAgentStore() {
       } catch {
         // Questions API may not be available on older servers
       }
+
     }
 
     const cleanups = [
@@ -1799,10 +1802,29 @@ export function useAgentStore() {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
         state.healthy = false
         emit({ agents: true })
+      }),
+      window.api.onAgentsRestored(async () => {
+        await initializeAgents()
+        if (!cancelled && state.initializing) {
+          state.initializing = false
+          emit({ agents: true })
+        }
       })
     ]
 
-    void initializeAgents()
+    // Run initial fetch. If restoration already completed before we
+    // mounted (fast startup or no persisted agents), clear initializing
+    // immediately. Otherwise the onAgentsRestored listener handles it.
+    const boot = async (): Promise<void> => {
+      await initializeAgents()
+      if (cancelled) return
+      const restored = await window.api.isAgentsRestored()
+      if (!cancelled && restored.ok && restored.data && state.initializing) {
+        state.initializing = false
+        emit({ agents: true })
+      }
+    }
+    void boot()
 
     // Periodic status reconciliation: re-poll the server every 30s to correct
     // any status drift caused by missed SSE events (reconnection gaps, dropped
@@ -2292,6 +2314,7 @@ export function useAgentStore() {
     permissions,
     questions,
     healthy: storeState.healthy,
+    initializing: storeState.initializing,
     launchAgent,
     sendMessage,
     listCommands,
@@ -2316,7 +2339,7 @@ export function useAgentStore() {
     getEventsForSession,
     getToolCallsForSession
   }), [
-    agents, permissions, questions, storeState.healthy,
+    agents, permissions, questions, storeState.healthy, storeState.initializing,
     launchAgent, sendMessage, listCommands, listAgentConfigs,
     executeCommand, prepareFreshAgent, resetSession,
     respondToPermission, replyToQuestion, rejectQuestion,

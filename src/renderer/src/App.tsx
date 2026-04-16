@@ -1314,38 +1314,47 @@ export function App() {
         }}
       />
 
-      <FleetTable
-        agents={filteredAgents}
-        selectedId={selectedAgentId}
-        onSelect={setSelectedAgentId}
-        sortColumn={sortColumn}
-        sortDirection={sortDirection}
-        onSort={handleSort}
-        onApprove={handleRowApprove}
-        onReply={handleRowReply}
-        onStop={handleRowStop}
-        onOpen={handleRowOpen}
-        onRemove={handleRemoveAgent}
-        onRename={storeRenameAgent}
-        onOpenTerminal={handleOpenTerminal}
-        onOpenInEditor={handleOpenInEditorForAgent}
-        onCreatePr={handleCreatePrForAgent}
-        onSetPrUrl={storeSetPrUrl}
-        onChangeModel={(agentId) => {
-          setModelPickerAgentId(agentId)
-          setShowModelPicker(true)
-        }}
-        onToggleLabel={handleToggleLabel}
-        onClearLabels={handleClearLabels}
-        onReplaceLabel={handleReplaceLabel}
-        allLabels={allLabels}
-        onCreateLabel={createLabel}
-        onDeleteLabel={handleDeleteLabel}
-        visibleColumns={visibleColumns}
-        columnWidths={columnWidths}
-        onColumnResize={handleColumnResize}
-        onColumnResetWidth={handleColumnResetWidth}
-      />
+      {store.initializing ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-kumo-subtle">
+            <div className="h-5 w-5 border-2 border-kumo-subtle/30 border-t-kumo-subtle rounded-full animate-spin" />
+            <span className="text-sm">Restoring agents...</span>
+          </div>
+        </div>
+      ) : (
+        <FleetTable
+          agents={filteredAgents}
+          selectedId={selectedAgentId}
+          onSelect={setSelectedAgentId}
+          sortColumn={sortColumn}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+          onApprove={handleRowApprove}
+          onReply={handleRowReply}
+          onStop={handleRowStop}
+          onOpen={handleRowOpen}
+          onRemove={handleRemoveAgent}
+          onRename={storeRenameAgent}
+          onOpenTerminal={handleOpenTerminal}
+          onOpenInEditor={handleOpenInEditorForAgent}
+          onCreatePr={handleCreatePrForAgent}
+          onSetPrUrl={storeSetPrUrl}
+          onChangeModel={(agentId) => {
+            setModelPickerAgentId(agentId)
+            setShowModelPicker(true)
+          }}
+          onToggleLabel={handleToggleLabel}
+          onClearLabels={handleClearLabels}
+          onReplaceLabel={handleReplaceLabel}
+          allLabels={allLabels}
+          onCreateLabel={createLabel}
+          onDeleteLabel={handleDeleteLabel}
+          visibleColumns={visibleColumns}
+          columnWidths={columnWidths}
+          onColumnResize={handleColumnResize}
+          onColumnResetWidth={handleColumnResetWidth}
+        />
+      )}
 
       <StatusBar
         agentCount={displayAgents.length}
