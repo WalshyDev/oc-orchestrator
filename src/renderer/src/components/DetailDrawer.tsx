@@ -981,8 +981,8 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           </div>
 
-          {/* Right column: Label, PR, Open In + Send/Stop at bottom */}
-          <div className="flex flex-col gap-1 shrink-0 justify-end w-[88px]">
+          {/* Right column: Label, PR, Open In at top · Send/Stop at bottom */}
+          <div className="flex flex-col gap-1 shrink-0 w-[88px]">
             {onToggleLabel && onClearLabels && (
               <LabelDropdown
                 current={agent.labelIds}
@@ -1031,6 +1031,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
               ]}
             />
+            <div className="flex-1" />
             {/* Send / Stop toggle button */}
             {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') ? (
               <button
