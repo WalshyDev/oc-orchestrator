@@ -17,7 +17,7 @@ import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type C
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
-import { loadSettings, type QuickAction } from './data/settings'
+import { loadSettings, parseSlashCommand, type QuickAction } from './data/settings'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -787,18 +787,13 @@ export function App() {
     }
 
     // Check if input is a slash command (other than /new which is handled above)
-    if (trimmedText.startsWith('/')) {
-      const spaceIndex = trimmedText.indexOf(' ')
-      const commandName = spaceIndex === -1 ? trimmedText.slice(1) : trimmedText.slice(1, spaceIndex)
-      const commandArgs = spaceIndex === -1 ? '' : trimmedText.slice(spaceIndex + 1).trim()
-
-      const handled = await handleBuiltInCommand(selectedAgentId, commandName, commandArgs)
+    const parsed = parseSlashCommand(trimmedText)
+    if (parsed) {
+      const handled = await handleBuiltInCommand(selectedAgentId, parsed.name, parsed.args)
       if (handled) return
 
-      // Not a built-in or cached command — try executing via the runtime anyway.
-      // The runtime may know about commands (custom slash commands, skills) that
-      // haven't been fetched into agentCommands yet.
-      await storeExecuteCommand(selectedAgentId, commandName, commandArgs)
+      // Not a built-in — try the runtime directly (custom slash commands, skills)
+      await storeExecuteCommand(selectedAgentId, parsed.name, parsed.args)
       return
     }
 
@@ -905,15 +900,12 @@ export function App() {
   }, [store])
 
   const handleQuickActionForAgent = useCallback(async (agentId: string, action: QuickAction) => {
-    const trimmed = action.prompt.trim()
-    if (trimmed.startsWith('/')) {
-      const spaceIndex = trimmed.indexOf(' ')
-      const commandName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
-      const commandArgs = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim()
-      await storeExecuteCommand(agentId, commandName, commandArgs)
+    const parsed = parseSlashCommand(action.prompt)
+    if (parsed) {
+      await storeExecuteCommand(agentId, parsed.name, parsed.args)
       return
     }
-    await store.sendMessage(agentId, trimmed, undefined, undefined, action.label)
+    await store.sendMessage(agentId, action.prompt.trim(), undefined, undefined, action.label)
   }, [store, storeExecuteCommand])
 
   const handleOpenTerminal = useCallback((agentId: string) => {

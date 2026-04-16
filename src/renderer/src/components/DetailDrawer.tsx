@@ -815,7 +815,7 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail — quick actions + approve/deny */}
+        {/* Action Rail */}
         <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
@@ -823,26 +823,30 @@ export const DetailDrawer = memo(function DetailDrawer({
           {onDeny && (
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />
           )}
-          {/* Custom quick action buttons + placeholder slots */}
-          {quickActions.filter(isQuickActionValid).map((qa) => (
-            <QuickActionButton
-              key={qa.id}
-              action={qa}
-              onClick={onQuickAction ? () => onQuickAction(qa) : undefined}
-            />
-          ))}
-          {Array.from({ length: MAX_QUICK_ACTIONS - quickActions.filter(isQuickActionValid).length }, (_, i) => (
-            <button
-              key={`placeholder-${i}`}
-              type="button"
-              onClick={onOpenQuickActionSettings}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed whitespace-nowrap border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
-              title="Configure in Settings → Quick Actions"
-            >
-              <Plus size={10} />
-              Custom
-            </button>
-          ))}
+          {/* Custom quick action buttons — positional slots */}
+          {quickActions.map((qa, i) => {
+            if (qa && isQuickActionValid(qa)) {
+              return (
+                <QuickActionButton
+                  key={qa.id}
+                  action={qa}
+                  onClick={onQuickAction ? () => onQuickAction(qa) : undefined}
+                />
+              )
+            }
+            return (
+              <button
+                key={`placeholder-${i}`}
+                type="button"
+                onClick={onOpenQuickActionSettings}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed whitespace-nowrap border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
+                title="Configure in Settings → Quick Actions"
+              >
+                <Plus size={10} />
+                Custom
+              </button>
+            )
+          })}
         </div>
 
         {/* Input row: text input left, action buttons + send right */}

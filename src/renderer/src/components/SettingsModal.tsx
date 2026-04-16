@@ -27,6 +27,7 @@ import {
   type NotificationPrefs,
   type QuickAction,
   type QuickActionIcon,
+  type QuickActionSlots,
 } from '../data/settings'
 import { useModelOptions } from '../hooks/useModelOptions'
 
@@ -73,8 +74,6 @@ function getIconComponent(iconKey: QuickActionIcon): typeof GitPullRequest {
   return ICON_OPTIONS.find((o) => o.value === iconKey)?.icon ?? Lightning
 }
 
-type TabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
-
 export type SettingsTabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
 
 export interface ChatCommandOption {
@@ -88,7 +87,7 @@ interface SettingsModalProps {
   commands?: ChatCommandOption[]
 }
 
-const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
+const TAB_LIST: { id: SettingsTabId; label: string; icon: typeof GearSix }[] = [
   { id: 'general', label: 'General', icon: GearSix },
   { id: 'quick-actions', label: 'Quick Actions', icon: Lightning },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
@@ -96,7 +95,7 @@ const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
 ]
 
 export function SettingsModal({ onClose, initialTab = 'general', commands = [] }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab)
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab)
   const [settings, setSettings] = useState(loadSettings)
   const [appVersion, setAppVersion] = useState<string>('')
   const { options: modelOptions } = useModelOptions()
@@ -448,45 +447,51 @@ function QuickActionsTab({
   inputClasses,
   commands = [],
 }: {
-  quickActions: QuickAction[]
-  onChange: (actions: QuickAction[]) => void
+  quickActions: QuickActionSlots
+  onChange: (actions: QuickActionSlots) => void
   inputClasses: string
   commands?: ChatCommandOption[]
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [autoFocusId, setAutoFocusId] = useState<string | null>(null)
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+  const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null)
   const labelInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-focus + select the label input when a new action is created
   useEffect(() => {
-    if (autoFocusId && expandedId === autoFocusId && labelInputRef.current) {
+    if (autoFocusIndex !== null && expandedIndex === autoFocusIndex && labelInputRef.current) {
       labelInputRef.current.focus()
       labelInputRef.current.select()
-      setAutoFocusId(null)
+      setAutoFocusIndex(null)
     }
-  }, [autoFocusId, expandedId])
+  }, [autoFocusIndex, expandedIndex])
 
-  const addAction = () => {
-    if (quickActions.length >= MAX_QUICK_ACTIONS) return
-    const id = `qa-${Date.now()}`
+  const addActionAtSlot = (index: number) => {
     const newAction: QuickAction = {
-      id,
+      id: `qa-${Date.now()}`,
       label: 'New Action',
       icon: 'lightning',
       prompt: '',
     }
-    onChange([...quickActions, newAction])
-    setExpandedId(id)
-    setAutoFocusId(id)
+    const updated = [...quickActions]
+    updated[index] = newAction
+    onChange(updated)
+    setExpandedIndex(index)
+    setAutoFocusIndex(index)
   }
 
-  const updateAction = (id: string, partial: Partial<QuickAction>) => {
-    onChange(quickActions.map((qa) => (qa.id === id ? { ...qa, ...partial } : qa)))
+  const updateAction = (index: number, partial: Partial<QuickAction>) => {
+    const qa = quickActions[index]
+    if (!qa) return
+    const updated = [...quickActions]
+    updated[index] = { ...qa, ...partial }
+    onChange(updated)
   }
 
-  const removeAction = (id: string) => {
-    onChange(quickActions.filter((qa) => qa.id !== id))
-    if (expandedId === id) setExpandedId(null)
+  const removeAction = (index: number) => {
+    const updated = [...quickActions]
+    updated[index] = null
+    onChange(updated)
+    if (expandedIndex === index) setExpandedIndex(null)
   }
 
   return (
@@ -501,8 +506,23 @@ function QuickActionsTab({
       </div>
 
       <div className="flex flex-col gap-2">
-        {quickActions.map((qa) => {
-          const isExpanded = expandedId === qa.id
+        {quickActions.map((qa, index) => {
+          if (!qa) {
+            // Empty slot — show "Add" placeholder
+            return (
+              <button
+                key={`slot-${index}`}
+                type="button"
+                onClick={() => addActionAtSlot(index)}
+                className="flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-kumo-subtle border border-dashed border-kumo-line rounded-lg hover:text-kumo-default hover:border-kumo-subtle hover:bg-kumo-fill/50 transition-colors"
+              >
+                <Plus size={12} />
+                Slot {index + 1} — Add Quick Action
+              </button>
+            )
+          }
+
+          const isExpanded = expandedIndex === index
           const IconComp = getIconComponent(qa.icon)
           const isValid = isQuickActionValid(qa)
 
@@ -513,9 +533,10 @@ function QuickActionsTab({
             >
               {/* Header with expand toggle + remove */}
               <div className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-kumo-fill/50 transition-colors">
+                <span className="text-[10px] text-kumo-subtle font-mono shrink-0 w-3">{index + 1}</span>
                 <button
                   type="button"
-                  onClick={() => setExpandedId(isExpanded ? null : qa.id)}
+                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
                   className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
                 >
                   <IconComp size={14} className="text-kumo-subtle shrink-0" />
@@ -530,7 +551,7 @@ function QuickActionsTab({
                 </button>
                 <button
                   type="button"
-                  onClick={() => removeAction(qa.id)}
+                  onClick={() => removeAction(index)}
                   className="w-6 h-6 flex items-center justify-center rounded-md text-kumo-subtle hover:text-kumo-danger hover:bg-kumo-danger/10 transition-colors shrink-0"
                   title="Remove"
                 >
@@ -548,10 +569,10 @@ function QuickActionsTab({
                         Button Label
                       </label>
                       <input
-                        ref={autoFocusId === qa.id || expandedId === qa.id ? labelInputRef : undefined}
+                        ref={autoFocusIndex === index ? labelInputRef : undefined}
                         type="text"
                         value={qa.label}
-                        onChange={(e) => updateAction(qa.id, { label: e.target.value })}
+                        onChange={(e) => updateAction(index, { label: e.target.value })}
                         maxLength={20}
                         placeholder="e.g. Create PR, Run Tests"
                         className={inputClasses}
@@ -568,7 +589,7 @@ function QuickActionsTab({
                             <button
                               key={opt.value}
                               type="button"
-                              onClick={() => updateAction(qa.id, { icon: opt.value })}
+                              onClick={() => updateAction(index, { icon: opt.value })}
                               title={opt.label}
                               className={`w-7 h-7 flex items-center justify-center rounded-md border transition-colors ${
                                 qa.icon === opt.value
@@ -587,7 +608,7 @@ function QuickActionsTab({
                   {/* Prompt with slash command autocomplete */}
                   <PromptTextarea
                     value={qa.prompt}
-                    onChange={(v) => updateAction(qa.id, { prompt: v })}
+                    onChange={(v) => updateAction(index, { prompt: v })}
                     commands={commands}
                     inputClasses={inputClasses}
                   />
@@ -597,17 +618,6 @@ function QuickActionsTab({
           )
         })}
       </div>
-
-      {quickActions.length < MAX_QUICK_ACTIONS && (
-        <button
-          type="button"
-          onClick={addAction}
-          className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-kumo-subtle border border-dashed border-kumo-line rounded-lg hover:text-kumo-default hover:border-kumo-subtle hover:bg-kumo-fill/50 transition-colors"
-        >
-          <Plus size={12} />
-          Add Quick Action
-        </button>
-      )}
     </div>
   )
 }
