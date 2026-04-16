@@ -634,7 +634,7 @@ function ContextMenu({
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
-      {quickActions.filter(isQuickActionValid).map((qa) => {
+      {quickActions.filter((qa): qa is QuickAction => qa !== null && isQuickActionValid(qa)).map((qa) => {
         const Icon = quickActionIconMap[qa.icon] ?? Lightning
         return (
           <button key={qa.id} className={itemClass} onClick={() => onQuickAction(qa)}>

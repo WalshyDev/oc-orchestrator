@@ -24,13 +24,17 @@ export interface QuickAction {
 
 export const MAX_QUICK_ACTIONS = 7
 
+// Fixed-length slots array: null entries represent empty slots.
+// This preserves button positions (e.g. slot 1 = command, slot 2 = empty, slot 3 = command).
+export type QuickActionSlots = (QuickAction | null)[]
+
 export interface AppSettings {
   model: string
   editor: string
   customEditorCommand: string
   terminal: string
   createPrPrompt: string
-  quickActions: QuickAction[]
+  quickActions: QuickActionSlots
   notifications: NotificationPrefs
   verboseMode: boolean
   soundEnabled: boolean
@@ -49,13 +53,17 @@ export const DEFAULT_CREATE_PR_PROMPT = `Prepare this work for review.
 
 Return the final PR URL or manual URL, plus a short note on what you committed.`
 
+export function emptySlots(): QuickActionSlots {
+  return Array.from({ length: MAX_QUICK_ACTIONS }, () => null)
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   model: 'auto',
   editor: 'vscode',
   customEditorCommand: '',
   terminal: 'default',
   createPrPrompt: DEFAULT_CREATE_PR_PROMPT,
-  quickActions: [],
+  quickActions: emptySlots(),
   notifications: {
     needs_approval: true,
     needs_input: true,
@@ -73,11 +81,15 @@ export function loadSettings(): AppSettings {
 
     const parsed = JSON.parse(stored) as Partial<AppSettings>
 
-    // Quick actions: take up to MAX_QUICK_ACTIONS, default to empty.
-    // Existing users without quickActions simply get no custom buttons (PR is still static).
-    const quickActions = Array.isArray(parsed.quickActions)
-      ? parsed.quickActions.slice(0, MAX_QUICK_ACTIONS)
-      : []
+    // Quick actions: fixed-length slots array. Migrate old dense arrays and
+    // pad/trim to exactly MAX_QUICK_ACTIONS slots.
+    let quickActions: QuickActionSlots
+    if (Array.isArray(parsed.quickActions)) {
+      const raw = parsed.quickActions.slice(0, MAX_QUICK_ACTIONS)
+      quickActions = Array.from({ length: MAX_QUICK_ACTIONS }, (_, i) => raw[i] ?? null)
+    } else {
+      quickActions = emptySlots()
+    }
 
     return {
       ...DEFAULT_SETTINGS,
