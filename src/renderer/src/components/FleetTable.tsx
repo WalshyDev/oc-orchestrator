@@ -26,6 +26,26 @@ import { TextInputModal } from './TextInputModal'
 import { Tooltip } from './Tooltip'
 import { PrTooltipContent } from './PrTooltip'
 import { useDismiss } from '../hooks/useDismiss'
+import {
+  Lightning,
+  Rocket,
+  Code,
+  CheckCircle,
+  PaperPlaneTilt,
+  Wrench,
+} from '@phosphor-icons/react'
+import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
+
+const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
+  'git-pull-request': GitPullRequest,
+  'rocket': Rocket,
+  'lightning': Lightning,
+  'terminal': Terminal,
+  'code': Code,
+  'check-circle': CheckCircle,
+  'paper-plane': PaperPlaneTilt,
+  'wrench': Wrench,
+}
 
 interface FleetTableProps {
   agents: AgentRuntime[]
@@ -43,6 +63,7 @@ interface FleetTableProps {
   onOpenTerminal?: (agentId: string) => void
   onOpenInEditor?: (agentId: string) => void
   onCreatePr?: (agentId: string) => void
+  onQuickAction?: (agentId: string, action: QuickAction) => void
   onSetPrUrl?: (agentId: string, prUrl: string | null) => void
   onChangeModel?: (agentId: string) => void
   onToggleLabel?: (agentId: string, labelId: string) => void
@@ -91,6 +112,7 @@ export function FleetTable({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
+  onQuickAction,
   onSetPrUrl,
   onChangeModel,
   onToggleLabel,
@@ -425,6 +447,10 @@ export function FleetTable({
             onCreatePr?.(contextMenu.agentId)
             closeContextMenu()
           }}
+          onQuickAction={(action: QuickAction) => {
+            onQuickAction?.(contextMenu.agentId, action)
+            closeContextMenu()
+          }}
           onRemovePrLink={() => {
             onSetPrUrl?.(contextMenu.agentId, null)
             closeContextMenu()
@@ -492,6 +518,7 @@ function ContextMenu({
   onOpenTerminal,
   onOpenInEditor,
   onCreatePr,
+  onQuickAction,
   onRemovePrLink,
   onEditPrLink,
   onToggleLabel,
@@ -513,6 +540,7 @@ function ContextMenu({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
   onCreatePr: () => void
+  onQuickAction: (action: QuickAction) => void
   onRemovePrLink: () => void
   onEditPrLink: () => void
   onToggleLabel: (labelId: string) => void
@@ -523,6 +551,13 @@ function ContextMenu({
   onLabelDropdownChange?: (open: boolean) => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
+  const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
+
+  useEffect(() => {
+    const onSettingsChanged = () => setQuickActions(loadSettings().quickActions)
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
+  }, [])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -599,6 +634,14 @@ function ContextMenu({
       <button className={itemClass} onClick={onCreatePr}>
         <GitPullRequest size={13} /> Create PR
       </button>
+      {quickActions.filter(isQuickActionValid).map((qa) => {
+        const Icon = quickActionIconMap[qa.icon] ?? Lightning
+        return (
+          <button key={qa.id} className={itemClass} onClick={() => onQuickAction(qa)}>
+            <Icon size={13} /> {qa.label}
+          </button>
+        )
+      })}
       <div className="px-2.5 py-1.5">
         <div className="text-[10px] text-kumo-subtle uppercase tracking-wide mb-1">Label</div>
         <LabelDropdown

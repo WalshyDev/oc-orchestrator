@@ -1,17 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   X,
   GearSix,
   Keyboard,
   Info,
+  Lightning,
+  GitPullRequest,
+  Rocket,
+  Terminal as TerminalIcon,
+  Code,
+  CheckCircle,
+  PaperPlaneTilt,
+  Wrench,
+  Plus,
+  Trash,
+  CaretDown,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import {
   DEFAULT_CREATE_PR_PROMPT,
+  MAX_QUICK_ACTIONS,
+  isQuickActionValid,
   loadSettings,
   saveSettings,
   type AppSettings,
   type NotificationPrefs,
+  type QuickAction,
+  type QuickActionIcon,
 } from '../data/settings'
 import { useModelOptions } from '../hooks/useModelOptions'
 
@@ -43,20 +58,45 @@ const KEYBOARD_SHORTCUTS = [
   { key: 'A', action: 'Approve Pending Tool', scope: 'Drawer' },
 ]
 
-type TabId = 'general' | 'shortcuts' | 'about'
+const ICON_OPTIONS: { value: QuickActionIcon; label: string; icon: typeof GitPullRequest }[] = [
+  { value: 'git-pull-request', label: 'PR', icon: GitPullRequest },
+  { value: 'rocket', label: 'Rocket', icon: Rocket },
+  { value: 'lightning', label: 'Lightning', icon: Lightning },
+  { value: 'terminal', label: 'Terminal', icon: TerminalIcon },
+  { value: 'code', label: 'Code', icon: Code },
+  { value: 'check-circle', label: 'Check', icon: CheckCircle },
+  { value: 'paper-plane', label: 'Send', icon: PaperPlaneTilt },
+  { value: 'wrench', label: 'Wrench', icon: Wrench },
+]
+
+function getIconComponent(iconKey: QuickActionIcon): typeof GitPullRequest {
+  return ICON_OPTIONS.find((o) => o.value === iconKey)?.icon ?? Lightning
+}
+
+type TabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
+
+export type SettingsTabId = 'general' | 'quick-actions' | 'shortcuts' | 'about'
+
+export interface ChatCommandOption {
+  command: string
+  description: string
+}
 
 interface SettingsModalProps {
   onClose: () => void
+  initialTab?: SettingsTabId
+  commands?: ChatCommandOption[]
 }
 
 const TAB_LIST: { id: TabId; label: string; icon: typeof GearSix }[] = [
   { id: 'general', label: 'General', icon: GearSix },
+  { id: 'quick-actions', label: 'Quick Actions', icon: Lightning },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'about', label: 'About', icon: Info },
 ]
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('general')
+export function SettingsModal({ onClose, initialTab = 'general', commands = [] }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab)
   const [settings, setSettings] = useState(loadSettings)
   const [appVersion, setAppVersion] = useState<string>('')
   const { options: modelOptions } = useModelOptions()
@@ -262,6 +302,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </p>
               </div>
 
+              {/* Create PR Prompt */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
@@ -296,6 +337,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 <p className="text-[11px] text-kumo-subtle">Additional themes coming in a future release.</p>
               </div>
             </div>
+          )}
+
+          {activeTab === 'quick-actions' && (
+            <QuickActionsTab
+              quickActions={settings.quickActions}
+              onChange={(quickActions) => updateSettings({ quickActions })}
+              inputClasses={inputClasses}
+              commands={commands}
+            />
           )}
 
           {activeTab === 'shortcuts' && (
@@ -385,6 +435,284 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
              Save
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Quick Actions Tab ──
+
+function QuickActionsTab({
+  quickActions,
+  onChange,
+  inputClasses,
+  commands = [],
+}: {
+  quickActions: QuickAction[]
+  onChange: (actions: QuickAction[]) => void
+  inputClasses: string
+  commands?: ChatCommandOption[]
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [autoFocusId, setAutoFocusId] = useState<string | null>(null)
+  const labelInputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus + select the label input when a new action is created
+  useEffect(() => {
+    if (autoFocusId && expandedId === autoFocusId && labelInputRef.current) {
+      labelInputRef.current.focus()
+      labelInputRef.current.select()
+      setAutoFocusId(null)
+    }
+  }, [autoFocusId, expandedId])
+
+  const addAction = () => {
+    if (quickActions.length >= MAX_QUICK_ACTIONS) return
+    const id = `qa-${Date.now()}`
+    const newAction: QuickAction = {
+      id,
+      label: 'New Action',
+      icon: 'lightning',
+      prompt: '',
+    }
+    onChange([...quickActions, newAction])
+    setExpandedId(id)
+    setAutoFocusId(id)
+  }
+
+  const updateAction = (id: string, partial: Partial<QuickAction>) => {
+    onChange(quickActions.map((qa) => (qa.id === id ? { ...qa, ...partial } : qa)))
+  }
+
+  const removeAction = (id: string) => {
+    onChange(quickActions.filter((qa) => qa.id !== id))
+    if (expandedId === id) setExpandedId(null)
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <p className="text-xs text-kumo-subtle">
+          Quick action buttons appear in the agent drawer&apos;s action rail. Each sends a prompt to the agent when clicked. You can have up to {MAX_QUICK_ACTIONS}.
+        </p>
+        <p className="text-[11px] text-kumo-subtle mt-1">
+          Tip: start a prompt with <code className="px-1 py-0.5 rounded bg-kumo-fill text-kumo-default">/command-name</code> to run an OpenCode slash command.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {quickActions.map((qa) => {
+          const isExpanded = expandedId === qa.id
+          const IconComp = getIconComponent(qa.icon)
+          const isValid = isQuickActionValid(qa)
+
+          return (
+            <div
+              key={qa.id}
+              className={`border rounded-lg overflow-hidden bg-kumo-control/30 ${isValid ? 'border-kumo-line' : 'border-kumo-danger/30'}`}
+            >
+              {/* Header with expand toggle + remove */}
+              <div className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-kumo-fill/50 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(isExpanded ? null : qa.id)}
+                  className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+                >
+                  <IconComp size={14} className="text-kumo-subtle shrink-0" />
+                  <span className="text-sm font-medium text-kumo-default flex-1 truncate">{qa.label || 'Untitled'}</span>
+                  {!isValid && (
+                    <span className="text-[9px] text-kumo-danger font-medium shrink-0">Incomplete</span>
+                  )}
+                  <CaretDown
+                    size={12}
+                    className={`text-kumo-subtle transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeAction(qa.id)}
+                  className="w-6 h-6 flex items-center justify-center rounded-md text-kumo-subtle hover:text-kumo-danger hover:bg-kumo-danger/10 transition-colors shrink-0"
+                  title="Remove"
+                >
+                  <Trash size={12} />
+                </button>
+              </div>
+
+              {/* Expanded editor */}
+              {isExpanded && (
+                <div className="px-3 pb-3 flex flex-col gap-3 border-t border-kumo-line pt-3">
+                  {/* Label + Icon row */}
+                  <div className="flex gap-2">
+                    <div className="flex-1 flex flex-col gap-1">
+                      <label className="text-[11px] font-medium text-kumo-subtle uppercase tracking-wide">
+                        Button Label
+                      </label>
+                      <input
+                        ref={autoFocusId === qa.id || expandedId === qa.id ? labelInputRef : undefined}
+                        type="text"
+                        value={qa.label}
+                        onChange={(e) => updateAction(qa.id, { label: e.target.value })}
+                        maxLength={20}
+                        placeholder="e.g. Create PR, Run Tests"
+                        className={inputClasses}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-medium text-kumo-subtle uppercase tracking-wide">
+                        Icon
+                      </label>
+                      <div className="flex gap-1">
+                        {ICON_OPTIONS.map((opt) => {
+                          const OptIcon = opt.icon
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => updateAction(qa.id, { icon: opt.value })}
+                              title={opt.label}
+                              className={`w-7 h-7 flex items-center justify-center rounded-md border transition-colors ${
+                                qa.icon === opt.value
+                                  ? 'border-kumo-brand bg-kumo-brand/10 text-kumo-brand'
+                                  : 'border-kumo-line text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill'
+                              }`}
+                            >
+                              <OptIcon size={13} />
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Prompt with slash command autocomplete */}
+                  <PromptTextarea
+                    value={qa.prompt}
+                    onChange={(v) => updateAction(qa.id, { prompt: v })}
+                    commands={commands}
+                    inputClasses={inputClasses}
+                  />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {quickActions.length < MAX_QUICK_ACTIONS && (
+        <button
+          type="button"
+          onClick={addAction}
+          className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-kumo-subtle border border-dashed border-kumo-line rounded-lg hover:text-kumo-default hover:border-kumo-subtle hover:bg-kumo-fill/50 transition-colors"
+        >
+          <Plus size={12} />
+          Add Quick Action
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Prompt textarea with slash command autocomplete ──
+
+function PromptTextarea({
+  value,
+  onChange,
+  commands,
+  inputClasses,
+}: {
+  value: string
+  onChange: (value: string) => void
+  commands: ChatCommandOption[]
+  inputClasses: string
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [showAutocomplete, setShowAutocomplete] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(0)
+
+  // Show autocomplete when the full value starts with "/" and there's no space yet (single-token command)
+  const trimmed = value.trim().toLowerCase()
+  const isTypingCommand = value.startsWith('/') && !value.includes(' ') && !value.includes('\n')
+  const matchingCommands = isTypingCommand
+    ? commands.filter((c) => c.command.startsWith(trimmed))
+    : []
+  const shouldShow = showAutocomplete && matchingCommands.length > 0 && !commands.some((c) => c.command === trimmed)
+
+  const insertCommand = (command: string) => {
+    onChange(`${command} `)
+    setShowAutocomplete(false)
+    setSelectedIndex(0)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!shouldShow) return
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      e.preventDefault()
+      const selected = matchingCommands[selectedIndex]
+      if (selected) insertCommand(selected.command)
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setSelectedIndex((prev) => (prev + 1) % matchingCommands.length)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setSelectedIndex((prev) => (prev - 1 + matchingCommands.length) % matchingCommands.length)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setShowAutocomplete(false)
+      return
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[11px] font-medium text-kumo-subtle uppercase tracking-wide">
+        Prompt
+      </label>
+      <div className="relative">
+        {shouldShow && (
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-1 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl max-h-40 overflow-y-auto">
+            {matchingCommands.map((cmd, index) => (
+              <button
+                key={cmd.command}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  insertCommand(cmd.command)
+                }}
+                className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                  index === selectedIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                }`}
+              >
+                <span className="font-mono text-[11px] text-kumo-default">{cmd.command}</span>
+                <span className="text-[11px] text-kumo-subtle truncate">{cmd.description}</span>
+              </button>
+            ))}
+            <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+              Tab/Enter to select · Arrow keys to navigate
+            </div>
+          </div>
+        )}
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value)
+            setShowAutocomplete(true)
+            setSelectedIndex(0)
+          }}
+          onKeyDown={handleKeyDown}
+          onBlur={() => setTimeout(() => setShowAutocomplete(false), 150)}
+          onFocus={() => setShowAutocomplete(true)}
+          placeholder="The message sent to the agent when this button is clicked... Type / for commands."
+          rows={6}
+          className={`${inputClasses} min-h-24 resize-y leading-6`}
+        />
       </div>
     </div>
   )

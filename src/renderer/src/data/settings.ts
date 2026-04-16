@@ -5,12 +5,32 @@ export interface NotificationPrefs {
   completed: boolean
 }
 
+export type QuickActionIcon =
+  | 'git-pull-request'
+  | 'rocket'
+  | 'lightning'
+  | 'terminal'
+  | 'code'
+  | 'check-circle'
+  | 'paper-plane'
+  | 'wrench'
+
+export interface QuickAction {
+  id: string
+  label: string
+  icon: QuickActionIcon
+  prompt: string
+}
+
+export const MAX_QUICK_ACTIONS = 3
+
 export interface AppSettings {
   model: string
   editor: string
   customEditorCommand: string
   terminal: string
   createPrPrompt: string
+  quickActions: QuickAction[]
   notifications: NotificationPrefs
   verboseMode: boolean
   soundEnabled: boolean
@@ -35,6 +55,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customEditorCommand: '',
   terminal: 'default',
   createPrPrompt: DEFAULT_CREATE_PR_PROMPT,
+  quickActions: [],
   notifications: {
     needs_approval: true,
     needs_input: true,
@@ -52,6 +73,12 @@ export function loadSettings(): AppSettings {
 
     const parsed = JSON.parse(stored) as Partial<AppSettings>
 
+    // Quick actions: take up to MAX_QUICK_ACTIONS, default to empty.
+    // Existing users without quickActions simply get no custom buttons (PR is still static).
+    const quickActions = Array.isArray(parsed.quickActions)
+      ? parsed.quickActions.slice(0, MAX_QUICK_ACTIONS)
+      : []
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -60,10 +87,15 @@ export function loadSettings(): AppSettings {
         ...(parsed.notifications ?? {}),
       },
       createPrPrompt: parsed.createPrPrompt?.trim() ? parsed.createPrPrompt : DEFAULT_CREATE_PR_PROMPT,
+      quickActions,
     }
   } catch {
     return DEFAULT_SETTINGS
   }
+}
+
+export function isQuickActionValid(qa: QuickAction): boolean {
+  return Boolean(qa.label?.trim() && qa.prompt?.trim())
 }
 
 export const SETTINGS_CHANGED_EVENT = 'oc-orchestrator:settings-changed'
