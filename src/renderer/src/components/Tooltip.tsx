@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 interface TooltipProps {
@@ -9,11 +9,13 @@ interface TooltipProps {
 }
 
 const GAP = 8
+const VIEWPORT_PADDING = 8
 
 export function Tooltip({ content, children, delay = 1000, position = 'top' }: TooltipProps) {
   const [visible, setVisible] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
 
   const clearTimer = () => {
@@ -22,6 +24,20 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
   }
 
   useEffect(() => clearTimer, [])
+
+  // After the tooltip renders, clamp it within the viewport
+  const clampToViewport = useCallback((node: HTMLDivElement | null) => {
+    tooltipRef.current = node
+    if (!node) return
+    const rect = node.getBoundingClientRect()
+    const overflowRight = rect.right - (window.innerWidth - VIEWPORT_PADDING)
+    const overflowLeft = VIEWPORT_PADDING - rect.left
+    if (overflowRight > 0) {
+      node.style.left = `${parseFloat(node.style.left) - overflowRight}px`
+    } else if (overflowLeft > 0) {
+      node.style.left = `${parseFloat(node.style.left) + overflowLeft}px`
+    }
+  }, [])
 
   const showTooltip = () => {
     timerRef.current = setTimeout(() => {
@@ -51,6 +67,7 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
       {children}
       {visible && coords && createPortal(
         <div
+          ref={clampToViewport}
           className="fixed z-[200] pointer-events-none"
           style={{
             top: coords.top,
