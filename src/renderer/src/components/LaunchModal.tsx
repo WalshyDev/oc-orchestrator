@@ -754,6 +754,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     value={model}
                     onChange={(value) => setModel(value)}
                     options={modelOptions}
+                    searchable
+                    searchPlaceholder="Search models…"
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />
@@ -1040,6 +1042,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                             value={model}
                             onChange={(value) => setModel(value)}
                             options={modelOptions}
+                            searchable
+                            searchPlaceholder="Search models…"
                             buttonClassName={selectButtonClasses}
                             menuClassName={selectMenuClasses}
                           />

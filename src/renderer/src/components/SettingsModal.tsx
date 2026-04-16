@@ -181,6 +181,8 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                     value={settings.model}
                     onChange={(value) => updateSettings({ model: value })}
                     options={modelOptions}
+                    searchable
+                    searchPlaceholder="Search models…"
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />
