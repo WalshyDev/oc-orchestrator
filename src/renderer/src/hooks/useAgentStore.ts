@@ -1253,7 +1253,10 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   const existingMsgs = state.messages.get(payload.sessionId)
   console.debug(`[handleAgentLaunched] id=${payload.id} session=${payload.sessionId.slice(-8)} existingMsgs=${existingMsgs?.length ?? 'none'} agentExists=${state.agents.has(payload.id)}`)
   upsertAgent(payload)
-  emit({ agents: true })
+  // Emit messages alongside agents so any SSE events that arrived before the
+  // agent was registered (race between IPC broadcast and SSE delivery) are
+  // picked up by the selectedMessages memo in the same render pass.
+  emit({ agents: true, messages: true })
 
   if (window.api) {
     // Fetch historical messages so resumed sessions aren't blank.
@@ -1665,7 +1668,7 @@ function dispatchPendingMessage(agentId: string): void {
     }
   }
 
-  emit({ agents: true, questions: true })
+  emit({ agents: true, messages: true, questions: true })
 
   void window.api.sendMessage(agentId, text, agentConfig, attachments).then((result) => {
     if (result && !result.ok) {
@@ -1997,7 +2000,7 @@ export function useAgentStore() {
       }
     }
 
-    emit({ agents: true, questions: true })
+    emit({ agents: true, messages: true, questions: true })
 
     const result = await window.api.sendMessage(agentId, text, agentConfig, attachments)
 
