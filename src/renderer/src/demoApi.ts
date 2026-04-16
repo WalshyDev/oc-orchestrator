@@ -384,6 +384,7 @@ export function createDemoApi(): OrchestratorApi {
     onEventError: noopListener,
     onUpdateAvailable: noopListener,
     onNotificationSelectAgent: noopListener,
-    onAgentsRestored: noopListener
+    onAgentsRestored: noopListener,
+    onMenuOpenSettings: noopListener
   }
 }

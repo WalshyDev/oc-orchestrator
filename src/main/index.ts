@@ -6,6 +6,11 @@ import { database } from './services/database'
 import { runtimeManager } from './services/runtime-manager'
 import { startUpdateChecker, stopUpdateChecker } from './services/update-checker'
 
+// Pin userData path before setName — otherwise it shifts to ~/Library/Application Support/Orchestrator/
+const userDataPath = app.getPath('userData')
+app.setName('Orchestrator')
+app.setPath('userData', userDataPath)
+
 let mainWindowRef: BrowserWindow | null = null
 
 const WINDOW_BOUNDS_KEY = 'window_bounds'
@@ -99,9 +104,31 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  // Explicit menu suppresses macOS representedObject warnings from Electron's default
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { role: 'appMenu' },
+    {
+      label: 'Orchestrator',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        {
+          label: 'Settings…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            for (const win of BrowserWindow.getAllWindows()) {
+              win.webContents.send('menu:open-settings')
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ]
+    },
     { role: 'editMenu' },
     { role: 'windowMenu' },
   ]))

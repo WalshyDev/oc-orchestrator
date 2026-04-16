@@ -106,6 +106,7 @@ export interface OrchestratorApi {
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => () => void
   onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => () => void
   onAgentsRestored: (callback: () => void) => () => void
+  onMenuOpenSettings: (callback: () => void) => () => void
 }
 
 export interface WorktreeListEntry {
