@@ -1,15 +1,21 @@
 import { GitPullRequest } from '@phosphor-icons/react'
 import { Tooltip } from './Tooltip'
-import { PrTooltipContent } from './PrTooltip'
+import { PrTooltipContent, type PrTooltipActions } from './PrTooltip'
 
 interface PrBadgeProps {
   url: string
   stopPropagation?: boolean
+  actions?: PrTooltipActions
 }
 
-export function PrBadge({ url, stopPropagation }: PrBadgeProps) {
+export function PrBadge({ url, stopPropagation, actions }: PrBadgeProps) {
+  const hasActions = actions && (actions.onOpen || actions.onEdit || actions.onRemove)
   return (
-    <Tooltip content={<PrTooltipContent url={url} />} position="top">
+    <Tooltip
+      content={<PrTooltipContent url={url} actions={actions} />}
+      position="top"
+      interactive={!!hasActions}
+    >
       <button
         onClick={(event) => {
           if (stopPropagation) event.stopPropagation()
