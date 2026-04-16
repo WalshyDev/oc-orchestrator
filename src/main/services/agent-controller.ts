@@ -109,9 +109,11 @@ const DEFAULT_RUNTIME_IDLE_TIMEOUT_MS = 15 * 60_000
 class AgentController {
   private agents = new Map<string, AgentHandle>()
   private bridges = new Map<string, EventBridge>()
+  private pendingBridge = new Map<string, Promise<RuntimeInfo>>()
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
+  restored = false
 
   async restorePersistedAgents(): Promise<void> {
     const persistedAgents = this.loadPersistedAgents()
@@ -156,6 +158,7 @@ class AgentController {
     }
 
     this.persistAgents()
+    this.restored = true
   }
 
   /**

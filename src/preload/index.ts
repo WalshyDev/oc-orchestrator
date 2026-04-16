@@ -90,6 +90,9 @@ const api = {
   listAgents: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list'),
 
+  isAgentsRestored: (): Promise<IpcResult<boolean>> =>
+    ipcRenderer.invoke('agent:restored'),
+
   updateAgentMeta: (agentId: string, meta: { displayName?: string; taskSummary?: string; persistedStatus?: string; labelIds?: string[] }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:update-meta', agentId, meta),
 
@@ -278,6 +281,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('notification:select-agent', handler)
     return () => ipcRenderer.removeListener('notification:select-agent', handler)
+  },
+
+  onAgentsRestored: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('agents:restored', handler)
+    return () => ipcRenderer.removeListener('agents:restored', handler)
   }
 }
 
