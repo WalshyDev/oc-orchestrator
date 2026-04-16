@@ -7,7 +7,7 @@ import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
 import { LaunchModal, type FreshWorktreeConfig, type ImportSessionConfig } from './components/LaunchModal'
 import { SessionBrowser } from './components/SessionBrowser'
-import { SettingsModal } from './components/SettingsModal'
+import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
@@ -17,7 +17,7 @@ import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type C
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
-import { loadSettings } from './data/settings'
+import { loadSettings, type QuickAction } from './data/settings'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -72,6 +72,7 @@ export function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId>('general')
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showSessionBrowser, setShowSessionBrowser] = useState(false)
 
@@ -863,6 +864,11 @@ export function App() {
     await storeSendMessage(selectedAgentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
   }, [selectedAgentId, storeSendMessage])
 
+  const handleQuickAction = useCallback(async (action: QuickAction) => {
+    if (!selectedAgentId) return
+    await storeSendMessage(selectedAgentId, action.prompt, undefined, undefined, action.label)
+  }, [selectedAgentId, storeSendMessage])
+
   const handleOpenInEditor = useCallback(() => {
     if (!selectedAgentId) return
     const liveAgent = findLiveAgent(selectedAgentId)
@@ -881,6 +887,10 @@ export function App() {
 
   const handleCreatePrForAgent = useCallback(async (agentId: string) => {
     await store.sendMessage(agentId, loadSettings().createPrPrompt, undefined, undefined, 'Create PR')
+  }, [store])
+
+  const handleQuickActionForAgent = useCallback(async (agentId: string, action: QuickAction) => {
+    await store.sendMessage(agentId, action.prompt, undefined, undefined, action.label)
   }, [store])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
@@ -1338,6 +1348,7 @@ export function App() {
           onOpenTerminal={handleOpenTerminal}
           onOpenInEditor={handleOpenInEditorForAgent}
           onCreatePr={handleCreatePrForAgent}
+          onQuickAction={handleQuickActionForAgent}
           onSetPrUrl={storeSetPrUrl}
           onChangeModel={(agentId) => {
             setModelPickerAgentId(agentId)
@@ -1383,6 +1394,8 @@ export function App() {
           onAbort={handleAbort}
           onRemove={handleDrawerRemove}
            onCreatePr={handleCreatePr}
+           onQuickAction={handleQuickAction}
+           onOpenQuickActionSettings={() => { setSettingsTab('quick-actions'); setShowSettings(true) }}
            onSetPrUrl={handleDrawerSetPrUrl}
            onOpenInEditor={handleOpenInEditor}
           onChangeModel={handleDrawerChangeModel}
@@ -1428,7 +1441,7 @@ export function App() {
       )}
 
       {showSettings && (
-        <SettingsModal onClose={() => setShowSettings(false)} />
+        <SettingsModal onClose={() => { setShowSettings(false); setSettingsTab('general') }} initialTab={settingsTab} commands={agentCommands} />
       )}
 
       {showModelPicker && modelPickerAgentId && (

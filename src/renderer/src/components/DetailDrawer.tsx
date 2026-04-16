@@ -17,12 +17,17 @@ import {
   PaperPlaneTilt,
   Paperclip,
   ArrowLineUpRight,
-  Link
+  Link,
+  Plus,
+  Rocket,
+  Lightning,
+  Code,
+  CheckCircle,
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
-import { loadSettings, SETTINGS_CHANGED_EVENT } from '../data/settings'
+import { loadSettings, SETTINGS_CHANGED_EVENT, MAX_QUICK_ACTIONS, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
@@ -38,13 +43,24 @@ import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
 
+const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
+  'git-pull-request': GitPullRequest,
+  'rocket': Rocket,
+  'lightning': Lightning,
+  'terminal': Terminal,
+  'code': Code,
+  'check-circle': CheckCircle,
+  'paper-plane': PaperPlaneTilt,
+  'wrench': Wrench,
+}
+
 const DRAWER_WIDTH_KEY = 'oc-orchestrator:drawer-width'
 const DEFAULT_DRAWER_WIDTH = 600
 const MIN_DRAWER_WIDTH = 400
 const MAX_DRAWER_WIDTH = 1000
 const INPUT_HEIGHT_KEY = 'oc-orchestrator:input-height'
-const DEFAULT_INPUT_HEIGHT = 120
-const MIN_INPUT_HEIGHT = 80
+const DEFAULT_INPUT_HEIGHT_RATIO = 0.3 // 30% of window height
+const MIN_INPUT_HEIGHT = 100
 const MAX_INPUT_HEIGHT = 500
 const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
@@ -78,7 +94,7 @@ function loadInputHeight(): number {
       if (height >= MIN_INPUT_HEIGHT && height <= MAX_INPUT_HEIGHT) return height
     }
   } catch { /* ignore */ }
-  return DEFAULT_INPUT_HEIGHT
+  return Math.max(MIN_INPUT_HEIGHT, Math.round(window.innerHeight * DEFAULT_INPUT_HEIGHT_RATIO))
 }
 
 type TabKey = 'transcript' | 'files' | 'tools' | 'events'
@@ -113,6 +129,8 @@ interface DetailDrawerProps {
   onAbort?: () => void
   onRemove?: () => void
   onCreatePr?: () => void
+  onQuickAction?: (action: QuickAction) => void
+  onOpenQuickActionSettings?: () => void
   onSetPrUrl?: (prUrl: string | null) => void
   onOpenInEditor?: () => void
   onChangeModel?: () => void
@@ -144,6 +162,8 @@ export const DetailDrawer = memo(function DetailDrawer({
   onAbort,
   onRemove,
   onCreatePr,
+  onQuickAction,
+  onOpenQuickActionSettings,
   onSetPrUrl,
   onOpenInEditor,
   onChangeModel,
@@ -199,10 +219,15 @@ export const DetailDrawer = memo(function DetailDrawer({
     setVisibleMessageCount((prev) => prev + LOAD_MORE_INCREMENT)
   }, [])
 
-  // Verbose mode: global setting, reactive to changes from SettingsModal
+  // Settings: reactive to changes from SettingsModal
   const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
+  const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
   useEffect(() => {
-    const onSettingsChanged = () => setIsVerbose(loadSettings().verboseMode)
+    const onSettingsChanged = () => {
+      const s = loadSettings()
+      setIsVerbose(s.verboseMode)
+      setQuickActions(s.quickActions)
+    }
     window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
     return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
   }, [])
@@ -607,10 +632,21 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap">
-              {agent.model}
-              {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
-            </span>
+            {onChangeModel ? (
+              <button
+                onClick={onChangeModel}
+                className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap hover:text-kumo-default transition-colors"
+                title="Change model"
+              >
+                {agent.model}
+                {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
+              </button>
+            ) : (
+              <span className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap">
+                {agent.model}
+                {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
+              </span>
+            )}
             <StatusBadge status={agent.status} />
             {onRemove && (
               <button
@@ -778,8 +814,8 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail */}
-        <div className="flex gap-1 px-3 py-1.5 border-t border-kumo-line shrink-0">
+        {/* Action Rail — single row */}
+        <div className="flex gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
           )}
@@ -800,10 +836,27 @@ export const DetailDrawer = memo(function DetailDrawer({
               variant="action"
             />
           )}
+          {/* Custom quick action buttons + placeholder slots */}
+          {quickActions.filter(isQuickActionValid).map((qa) => (
+            <QuickActionButton
+              key={qa.id}
+              action={qa}
+              onClick={onQuickAction ? () => onQuickAction(qa) : undefined}
+            />
+          ))}
+          {Array.from({ length: MAX_QUICK_ACTIONS - quickActions.filter(isQuickActionValid).length }, (_, i) => (
+            <button
+              key={`placeholder-${i}`}
+              type="button"
+              onClick={onOpenQuickActionSettings}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
+              title="Configure in Settings → Quick Actions"
+            >
+              <Plus size={10} />
+              Custom
+            </button>
+          ))}
           <div className="flex-1" />
-          {onChangeModel && (
-            <ActionButton icon={<Brain size={12} />} label="Model" onClick={onChangeModel} />
-          )}
           <ActionDropdownButton
             icon={<GitPullRequest size={12} />}
             label="PR"
@@ -1426,6 +1479,17 @@ function ActionButton({
       {icon}
       {label}
     </button>
+  )
+}
+
+function QuickActionButton({ action, onClick }: { action: QuickAction; onClick?: () => void }) {
+  const Icon = quickActionIconMap[action.icon] ?? Lightning
+  return (
+    <ActionButton
+      icon={<Icon size={12} />}
+      label={action.label}
+      onClick={onClick}
+    />
   )
 }
 
