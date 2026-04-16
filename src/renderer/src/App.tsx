@@ -866,8 +866,9 @@ export function App() {
 
   const handleQuickAction = useCallback(async (action: QuickAction) => {
     if (!selectedAgentId) return
-    await storeSendMessage(selectedAgentId, action.prompt, undefined, undefined, action.label)
-  }, [selectedAgentId, storeSendMessage])
+    // Route through handleSendMessage so slash commands are executed properly
+    await handleSendMessage(action.prompt)
+  }, [selectedAgentId, handleSendMessage])
 
   const handleOpenInEditor = useCallback(() => {
     if (!selectedAgentId) return
@@ -890,8 +891,19 @@ export function App() {
   }, [store])
 
   const handleQuickActionForAgent = useCallback(async (agentId: string, action: QuickAction) => {
-    await store.sendMessage(agentId, action.prompt, undefined, undefined, action.label)
-  }, [store])
+    const trimmed = action.prompt.trim()
+    if (trimmed.startsWith('/')) {
+      const spaceIndex = trimmed.indexOf(' ')
+      const commandName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
+      const commandArgs = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim()
+      const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
+      if (isKnownCommand) {
+        await storeExecuteCommand(agentId, commandName, commandArgs)
+        return
+      }
+    }
+    await store.sendMessage(agentId, trimmed, undefined, undefined, action.label)
+  }, [store, agentCommands, storeExecuteCommand])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)

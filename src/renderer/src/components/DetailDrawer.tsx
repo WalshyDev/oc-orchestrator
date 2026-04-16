@@ -814,8 +814,8 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail — single row */}
-        <div className="flex gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
+        {/* Action Rail — single row, scrollable */}
+        <div className="flex gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0 overflow-x-auto">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
           )}
@@ -849,7 +849,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               key={`placeholder-${i}`}
               type="button"
               onClick={onOpenQuickActionSettings}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed whitespace-nowrap border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
               title="Configure in Settings → Quick Actions"
             >
               <Plus size={10} />
@@ -1474,7 +1474,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
     >
       {icon}
       {label}
@@ -1530,7 +1530,7 @@ function ActionDropdownButton({
     <div ref={containerRef} className="relative inline-flex">
       <button
         onClick={toggle}
-        className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
+        className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
       >
         {icon}
         {label}
