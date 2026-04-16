@@ -815,7 +815,7 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail — quick actions + approve/deny */}
+        {/* Action Rail */}
         <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
