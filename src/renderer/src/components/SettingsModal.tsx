@@ -15,6 +15,7 @@ import {
   Plus,
   Trash,
   CaretDown,
+  DotsSixVertical,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import {
@@ -454,9 +455,10 @@ function QuickActionsTab({
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dropTarget, setDropTarget] = useState<number | null>(null)
   const labelInputRef = useRef<HTMLInputElement>(null)
 
-  // Auto-focus + select the label input when a new action is created
   useEffect(() => {
     if (autoFocusIndex !== null && expandedIndex === autoFocusIndex && labelInputRef.current) {
       labelInputRef.current.focus()
@@ -494,6 +496,54 @@ function QuickActionsTab({
     if (expandedIndex === index) setExpandedIndex(null)
   }
 
+  const swapSlots = (from: number, to: number) => {
+    if (from === to) return
+    const updated = [...quickActions]
+    updated[from] = quickActions[to]
+    updated[to] = quickActions[from]
+    onChange(updated)
+    if (expandedIndex === from) setExpandedIndex(to)
+    else if (expandedIndex === to) setExpandedIndex(from)
+  }
+
+  const resetDrag = () => {
+    setDragIndex(null)
+    setDropTarget(null)
+  }
+
+  const dragPropsFor = (index: number) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      setDragIndex(index)
+      setExpandedIndex(null)
+      e.dataTransfer.effectAllowed = 'move' as const
+      e.dataTransfer.setData('text/plain', String(index))
+    },
+    onDragOver: (e: React.DragEvent) => {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move' as const
+      if (dragIndex !== null && dragIndex !== index) {
+        setDropTarget(index)
+      }
+    },
+    onDragLeave: () => setDropTarget(null),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      if (dragIndex !== null) swapSlots(dragIndex, index)
+      resetDrag()
+    },
+    onDragEnd: resetDrag,
+  })
+
+  const dragHandleClasses = 'cursor-grab active:cursor-grabbing text-kumo-subtle/40 hover:text-kumo-subtle transition-colors shrink-0'
+
+  const slotBorderClass = (index: number, isValid: boolean): string => {
+    if (dropTarget === index && dragIndex !== index) return 'border-kumo-brand ring-1 ring-kumo-brand/30'
+    if (dragIndex === index) return 'opacity-40 border-kumo-line'
+    if (!isValid) return 'border-kumo-danger/30'
+    return 'border-kumo-line'
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -508,17 +558,24 @@ function QuickActionsTab({
       <div className="flex flex-col gap-2">
         {quickActions.map((qa, index) => {
           if (!qa) {
-            // Empty slot — show "Add" placeholder
             return (
-              <button
+              <div
                 key={`slot-${index}`}
-                type="button"
-                onClick={() => addActionAtSlot(index)}
-                className="flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-kumo-subtle border border-dashed border-kumo-line rounded-lg hover:text-kumo-default hover:border-kumo-subtle hover:bg-kumo-fill/50 transition-colors"
+                {...dragPropsFor(index)}
+                className={`flex items-center gap-2 rounded-lg border border-dashed transition-all ${slotBorderClass(index, true)}`}
               >
-                <Plus size={12} />
-                Slot {index + 1} — Add Quick Action
-              </button>
+                <div className={`pl-2.5 py-2.5 ${dragHandleClasses}`}>
+                  <DotsSixVertical size={14} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => addActionAtSlot(index)}
+                  className="flex items-center gap-1.5 flex-1 py-2.5 pr-3 text-xs font-medium text-kumo-subtle hover:text-kumo-default transition-colors"
+                >
+                  <Plus size={12} />
+                  Slot {index + 1} — Add Quick Action
+                </button>
+              </div>
             )
           }
 
@@ -529,10 +586,14 @@ function QuickActionsTab({
           return (
             <div
               key={qa.id}
-              className={`border rounded-lg overflow-hidden bg-kumo-control/30 ${isValid ? 'border-kumo-line' : 'border-kumo-danger/30'}`}
+              {...dragPropsFor(index)}
+              className={`border rounded-lg overflow-hidden bg-kumo-control/30 transition-all ${slotBorderClass(index, isValid)}`}
             >
-              {/* Header with expand toggle + remove */}
-              <div className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-kumo-fill/50 transition-colors">
+              {/* Header with drag handle + expand toggle + remove */}
+              <div className="flex items-center gap-1.5 px-2 py-2.5 hover:bg-kumo-fill/50 transition-colors">
+                <div className={dragHandleClasses}>
+                  <DotsSixVertical size={14} />
+                </div>
                 <span className="text-[10px] text-kumo-subtle font-mono shrink-0 w-3">{index + 1}</span>
                 <button
                   type="button"
@@ -562,7 +623,6 @@ function QuickActionsTab({
               {/* Expanded editor */}
               {isExpanded && (
                 <div className="px-3 pb-3 flex flex-col gap-3 border-t border-kumo-line pt-3">
-                  {/* Label + Icon row */}
                   <div className="flex gap-2">
                     <div className="flex-1 flex flex-col gap-1">
                       <label className="text-[11px] font-medium text-kumo-subtle uppercase tracking-wide">
@@ -605,7 +665,6 @@ function QuickActionsTab({
                     </div>
                   </div>
 
-                  {/* Prompt with slash command autocomplete */}
                   <PromptTextarea
                     value={qa.prompt}
                     onChange={(v) => updateAction(index, { prompt: v })}
