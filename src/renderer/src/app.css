@@ -232,6 +232,12 @@ body {
   border-radius: 6px;
 }
 
+/* ── Tooltip ── */
+@keyframes tooltip-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Selection ── */
 ::selection {
   background: rgba(37, 99, 235, 0.3);

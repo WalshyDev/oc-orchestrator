@@ -23,6 +23,8 @@ import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_C
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
+import { Tooltip } from './Tooltip'
+import { PrTooltipContent } from './PrTooltip'
 import { useDismiss } from '../hooks/useDismiss'
 
 interface FleetTableProps {
@@ -822,13 +824,14 @@ function AgentRow({
             onRemove={onRemove}
           />
           {agent.prUrl ? (
-            <button
-              onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
-              className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
-              title={agent.prUrl}
-            >
-              <GitPullRequest size={13} weight="bold" />
-            </button>
+            <Tooltip content={<PrTooltipContent url={agent.prUrl} />} position="top">
+              <button
+                onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
+                className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
+              >
+                <GitPullRequest size={13} weight="bold" />
+              </button>
+            </Tooltip>
           ) : (
             <button
               onClick={(event) => { event.stopPropagation(); onEditPrLink?.() }}
