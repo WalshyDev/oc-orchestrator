@@ -794,6 +794,12 @@ export function App() {
 
       const handled = await handleBuiltInCommand(selectedAgentId, commandName, commandArgs)
       if (handled) return
+
+      // Not a built-in or cached command — try executing via the runtime anyway.
+      // The runtime may know about commands (custom slash commands, skills) that
+      // haven't been fetched into agentCommands yet.
+      await storeExecuteCommand(selectedAgentId, commandName, commandArgs)
+      return
     }
 
     // Check for @agentname mentions — extract agent name and strip from text
@@ -809,7 +815,7 @@ export function App() {
     }
 
     await storeSendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeReplyToQuestion, storeResetSession])
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeExecuteCommand, storeReplyToQuestion, storeResetSession])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -904,14 +910,11 @@ export function App() {
       const spaceIndex = trimmed.indexOf(' ')
       const commandName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex)
       const commandArgs = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim()
-      const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
-      if (isKnownCommand) {
-        await storeExecuteCommand(agentId, commandName, commandArgs)
-        return
-      }
+      await storeExecuteCommand(agentId, commandName, commandArgs)
+      return
     }
     await store.sendMessage(agentId, trimmed, undefined, undefined, action.label)
-  }, [store, agentCommands, storeExecuteCommand])
+  }, [store, storeExecuteCommand])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
