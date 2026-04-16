@@ -496,14 +496,13 @@ function QuickActionsTab({
     if (expandedIndex === index) setExpandedIndex(null)
   }
 
-  const swapSlots = (from: number, to: number) => {
+  const moveSlot = (from: number, to: number) => {
     if (from === to) return
     const updated = [...quickActions]
-    updated[from] = quickActions[to]
-    updated[to] = quickActions[from]
+    const [item] = updated.splice(from, 1)
+    updated.splice(to, 0, item)
     onChange(updated)
     if (expandedIndex === from) setExpandedIndex(to)
-    else if (expandedIndex === to) setExpandedIndex(from)
   }
 
   const resetDrag = () => {
@@ -529,7 +528,7 @@ function QuickActionsTab({
     onDragLeave: () => setDropTarget(null),
     onDrop: (e: React.DragEvent) => {
       e.preventDefault()
-      if (dragIndex !== null) swapSlots(dragIndex, index)
+      if (dragIndex !== null) moveSlot(dragIndex, index)
       resetDrag()
     },
     onDragEnd: resetDrag,
