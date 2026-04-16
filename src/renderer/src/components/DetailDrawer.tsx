@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   X,
-  Square,
   Check,
   XCircle,
   ArrowSquareOut,
@@ -15,6 +14,8 @@ import {
   ChatCircleDots,
   Brain,
   PaperPlaneTilt,
+  ArrowUp,
+  Stop,
   Paperclip,
   ArrowLineUpRight,
   Link,
@@ -822,9 +823,7 @@ export const DetailDrawer = memo(function DetailDrawer({
           {onDeny && (
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />
           )}
-          {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') && (
-            <ActionButton icon={<Square size={12} weight="fill" />} label={agent.status === 'stopping' ? 'Stopping…' : 'Stop'} onClick={onAbort} disabled={agent.status === 'stopping'} />
-          )}
+          {/* Stop button moved to input area — renders as the Send/Stop toggle */}
           {onToggleLabel && onClearLabels && (
             <LabelDropdown
               current={agent.labelIds}
@@ -903,107 +902,114 @@ export const DetailDrawer = memo(function DetailDrawer({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {attachments.length > 0 && (
-            <div className="flex gap-2 px-1 py-1.5 overflow-x-auto">
-              {attachments.map((att) => (
-                <div key={att.id} className="relative group shrink-0">
-                  <img
-                    src={att.dataUrl}
-                    alt={att.filename ?? 'attachment'}
-                    className="h-16 w-16 rounded-md border border-kumo-line object-cover"
-                  />
+          {/* Single unified input container */}
+          <div className={`relative flex flex-col flex-1 min-h-0 rounded-lg border bg-kumo-control transition-colors ${
+            isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus-within:border-kumo-ring'
+          }`}>
+            {/* Autocomplete popups */}
+            {showCommandAutocomplete && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                {matchingCommands.map((item, index) => (
                   <button
+                    key={item.command}
                     type="button"
-                    onClick={() => removeAttachment(att.id!)}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      setInputText(`${item.command} `)
+                    }}
+                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                      index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                    }`}
                   >
-                    <X size={8} weight="bold" />
+                    <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                    <span className="text-[11px] text-kumo-subtle">{item.description}</span>
                   </button>
-                  {att.filename && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
-                      {att.filename}
-                    </div>
-                  )}
+                ))}
+                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
                 </div>
-              ))}
-            </div>
-          )}
+              </div>
+            )}
+            {showAgentPicker && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
+                <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
+                  Agents
+                </div>
+                {matchingAgents.map((cfg, index) => (
+                  <button
+                    key={cfg.name}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      insertAgentMention(cfg.name)
+                    }}
+                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                      index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                    }`}
+                  >
+                    <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                    {cfg.description && (
+                      <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
+                    )}
+                  </button>
+                ))}
+                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                </div>
+              </div>
+            )}
 
-          <div className="flex gap-2 flex-1 min-h-0">
-            <div className="relative flex-1 flex flex-col gap-1 min-h-0">
-              {showCommandAutocomplete && (
-                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                  {matchingCommands.map((item, index) => (
+            {/* Attachment thumbnails inside the container */}
+            {attachments.length > 0 && (
+              <div className="flex gap-2 px-3 pt-2 overflow-x-auto">
+                {attachments.map((att) => (
+                  <div key={att.id} className="relative group shrink-0">
+                    <img
+                      src={att.dataUrl}
+                      alt={att.filename ?? 'attachment'}
+                      className="h-14 w-14 rounded-md border border-kumo-line object-cover"
+                    />
                     <button
-                      key={item.command}
                       type="button"
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        setInputText(`${item.command} `)
-                      }}
-                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                        index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                      }`}
+                      onClick={() => removeAttachment(att.id!)}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
                     >
-                      <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
-                      <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                      <X size={8} weight="bold" />
                     </button>
-                  ))}
-                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+                    {att.filename && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
+                        {att.filename}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
-              {showAgentPicker && (
-                <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                  <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
-                    Agents
-                  </div>
-                  {matchingAgents.map((cfg, index) => (
-                    <button
-                      key={cfg.name}
-                      type="button"
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        insertAgentMention(cfg.name)
-                      }}
-                      className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                        index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                      }`}
-                    >
-                      <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
-                      {cfg.description && (
-                        <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
-                      )}
-                    </button>
-                  ))}
-                  <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                    Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                  </div>
-                </div>
-              )}
-              <textarea
-                ref={textareaRef}
-                value={inputText}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
-                onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
-                onPaste={handlePaste}
-                placeholder={inputPlaceholder}
-                className={`w-full flex-1 min-h-0 px-3 py-2 bg-kumo-control border rounded-md text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none transition-colors ${
-                  isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus:border-kumo-ring'
-                }`}
-              />
-              <div className="flex items-center gap-2 px-1">
+                ))}
+              </div>
+            )}
+
+            {/* Textarea */}
+            <textarea
+              ref={textareaRef}
+              value={inputText}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              onPaste={handlePaste}
+              placeholder={inputPlaceholder}
+              className="w-full flex-1 min-h-0 px-3 py-2.5 bg-transparent text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none"
+            />
+
+            {/* Bottom row: hints left, send/stop button right */}
+            <div className="flex items-center justify-between px-2 pb-1.5 shrink-0">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors"
+                  className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors px-1 py-0.5 rounded"
                   title="Attach image"
                 >
-                  <Paperclip size={11} />
-                  <span>Attach image</span>
+                  <Paperclip size={12} />
+                  <span>Attach</span>
                 </button>
                 <input
                   ref={fileInputRef}
@@ -1013,21 +1019,37 @@ export const DetailDrawer = memo(function DetailDrawer({
                   className="hidden"
                   onChange={handleFileInputChange}
                 />
-                <span className="text-[10px] text-kumo-subtle">
-                  Enter to send. Shift+Enter for new line. Paste or drag images.
+                <span className="text-[10px] text-kumo-subtle/60">
+                  ↵ send · ⇧↵ newline
                 </span>
               </div>
+
+              {/* Send / Stop toggle button */}
+              {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') ? (
+                <button
+                  onClick={onAbort}
+                  disabled={agent.status === 'stopping'}
+                  className="flex items-center gap-1.5 px-2.5 h-7 rounded-lg bg-kumo-danger/90 text-white text-xs font-medium transition-colors hover:bg-kumo-danger disabled:opacity-50"
+                  title={agent.status === 'stopping' ? 'Stopping…' : 'Stop agent'}
+                >
+                  <Stop size={12} weight="fill" />
+                  {agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={!inputText.trim() && attachments.length === 0}
+                  className={`flex items-center gap-1.5 px-2.5 h-7 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-30 ${
+                    canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
+                  }`}
+                  title={canReplyViaChat ? 'Reply' : 'Send message'}
+                >
+                  <ArrowUp size={12} weight="bold" />
+                  {canReplyViaChat ? 'Reply' : 'Send'}
+                </button>
+              )}
             </div>
-            <button
-              onClick={handleSend}
-              disabled={!inputText.trim() && attachments.length === 0}
-              className={`self-end px-3 py-2 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-40 ${
-                canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
-              }`}
-            >
-              {canReplyViaChat ? 'Reply' : 'Send'}
-            </button>
-           </div>
+          </div>
         </div>
         </div>{/* end bottom pane */}
       </div>
