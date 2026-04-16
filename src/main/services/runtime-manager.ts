@@ -31,6 +31,7 @@ class RuntimeManager {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null
   private consecutiveFailures = new Map<string, number>()
   private lastAutoRestart = new Map<string, number>()
+  private pendingEnsure = new Map<string, Promise<RuntimeInfo>>()
 
   /**
    * Start (or reuse) an OpenCode server for a project directory.
@@ -40,6 +41,21 @@ class RuntimeManager {
     const existing = this.findByDirectory(directory)
     if (existing) return existing
 
+    // Deduplicate concurrent calls for the same directory.
+    const pending = this.pendingEnsure.get(directory)
+    if (pending) return pending
+
+    const promise = this.spawnRuntime(directory)
+    this.pendingEnsure.set(directory, promise)
+
+    try {
+      return await promise
+    } finally {
+      this.pendingEnsure.delete(directory)
+    }
+  }
+
+  private async spawnRuntime(directory: string): Promise<RuntimeInfo> {
     console.log(`[RuntimeManager] Starting server for ${directory}`)
 
     const port = await this.getAvailablePort()
@@ -105,59 +121,63 @@ class RuntimeManager {
   }
 
   private async runHealthChecks(): Promise<void> {
-    for (const [runtimeId, runtime] of this.runtimes) {
-      // Skip runtimes that were removed while we were iterating
-      if (!this.runtimes.has(runtimeId)) continue
+    const entries = Array.from(this.runtimes.entries())
 
-      try {
-        await this.checkHealth(runtime)
+    await Promise.all(
+      entries.map(async ([runtimeId, runtime]) => {
+        // Skip runtimes that were removed while we were iterating
+        if (!this.runtimes.has(runtimeId)) return
 
-        // Reset failure count on success
-        this.consecutiveFailures.set(runtimeId, 0)
+        try {
+          await this.checkHealth(runtime)
 
-        if (!runtime.healthy) {
-          runtime.healthy = true
-          console.log(`[RuntimeManager] Runtime ${runtimeId} is healthy again`)
-          this.broadcastToRenderer('runtime:healthy', { id: runtimeId })
-        }
-      } catch (error) {
-        const failures = (this.consecutiveFailures.get(runtimeId) ?? 0) + 1
-        this.consecutiveFailures.set(runtimeId, failures)
+          // Reset failure count on success
+          this.consecutiveFailures.set(runtimeId, 0)
 
-        runtime.healthy = false
+          if (!runtime.healthy) {
+            runtime.healthy = true
+            console.log(`[RuntimeManager] Runtime ${runtimeId} is healthy again`)
+            this.broadcastToRenderer('runtime:healthy', { id: runtimeId })
+          }
+        } catch (error) {
+          const failures = (this.consecutiveFailures.get(runtimeId) ?? 0) + 1
+          this.consecutiveFailures.set(runtimeId, failures)
 
-        // Diagnose whether the port is still open (process alive but slow)
-        // or nothing is listening (process dead)
-        const portOpen = await this.isPortOpen(runtime.port)
-        const uptimeSeconds = Math.round((Date.now() - runtime.startedAt) / 1000)
+          runtime.healthy = false
 
-        console.warn(
-          `[RuntimeManager] Health check failed for ${runtimeId} (${failures}/${MAX_CONSECUTIVE_FAILURES}):`,
-          `port=${runtime.port} portOpen=${portOpen} uptime=${uptimeSeconds}s dir=${runtime.directory}`,
-          error
-        )
+          // Diagnose whether the port is still open (process alive but slow)
+          // or nothing is listening (process dead)
+          const portOpen = await this.isPortOpen(runtime.port)
+          const uptimeSeconds = Math.round((Date.now() - runtime.startedAt) / 1000)
 
-        this.broadcastToRenderer('runtime:unhealthy', {
-          id: runtimeId,
-          consecutiveFailures: failures
-        })
-
-        if (failures >= MAX_CONSECUTIVE_FAILURES) {
-          console.error(
-            `[RuntimeManager] Runtime ${runtimeId} disconnected after ${failures} consecutive failures` +
-              ` (port=${runtime.port} portOpen=${portOpen})`
+          console.warn(
+            `[RuntimeManager] Health check failed for ${runtimeId} (${failures}/${MAX_CONSECUTIVE_FAILURES}):`,
+            `port=${runtime.port} portOpen=${portOpen} uptime=${uptimeSeconds}s dir=${runtime.directory}`,
+            error
           )
-          this.broadcastToRenderer('runtime:disconnected', {
+
+          this.broadcastToRenderer('runtime:unhealthy', {
             id: runtimeId,
-            reason: 'health_check_failures',
             consecutiveFailures: failures
           })
 
-          // Auto-restart if no active sessions and not recently restarted
-          await this.tryAutoRestart(runtimeId, runtime, portOpen)
+          if (failures >= MAX_CONSECUTIVE_FAILURES) {
+            console.error(
+              `[RuntimeManager] Runtime ${runtimeId} disconnected after ${failures} consecutive failures` +
+                ` (port=${runtime.port} portOpen=${portOpen})`
+            )
+            this.broadcastToRenderer('runtime:disconnected', {
+              id: runtimeId,
+              reason: 'health_check_failures',
+              consecutiveFailures: failures
+            })
+
+            // Auto-restart if no active sessions and not recently restarted
+            await this.tryAutoRestart(runtimeId, runtime, portOpen)
+          }
         }
-      }
-    }
+      })
+    )
   }
 
   /**

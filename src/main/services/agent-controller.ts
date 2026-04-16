@@ -117,34 +117,42 @@ class AgentController {
     const persistedAgents = this.loadPersistedAgents()
     if (persistedAgents.length === 0) return
 
-    for (const persistedAgent of persistedAgents) {
-      try {
+    const results = await Promise.allSettled(
+      persistedAgents.map(async (persistedAgent) => {
         const runtime = await this.ensureBridgeForDirectory(persistedAgent.directory)
         const directoryContext = workspaceManager.getDirectoryContext(persistedAgent.directory)
-        const handle: AgentHandle = {
-          id: persistedAgent.id,
-          runtimeId: runtime.id,
-          sessionId: persistedAgent.sessionId,
-          directory: persistedAgent.directory,
-          projectName: directoryContext.repoName,
-          branchName: directoryContext.branchName,
-          isWorktree: directoryContext.isWorktree,
-          workspaceName: directoryContext.workspaceName,
-          prompt: persistedAgent.prompt,
-          title: persistedAgent.title,
-          displayName: persistedAgent.displayName ?? '',
-          taskSummary: persistedAgent.taskSummary ?? '',
-          persistedStatus: persistedAgent.persistedStatus,
-          labelIds: persistedAgent.labelIds ?? (persistedAgent.labelId ? [persistedAgent.labelId] : []),
-          prUrl: persistedAgent.prUrl,
-          bridge: this.bridges.get(runtime.id)!
-        }
+        return { persistedAgent, runtime, directoryContext }
+      })
+    )
 
-        this.agents.set(handle.id, handle)
-        this.bumpNextId(handle.id)
-      } catch (error) {
-        console.error(`[AgentController] Failed to restore agent ${persistedAgent.id}:`, error)
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error('[AgentController] Failed to restore agent:', result.reason)
+        continue
       }
+
+      const { persistedAgent, runtime, directoryContext } = result.value
+      const handle: AgentHandle = {
+        id: persistedAgent.id,
+        runtimeId: runtime.id,
+        sessionId: persistedAgent.sessionId,
+        directory: persistedAgent.directory,
+        projectName: directoryContext.repoName,
+        branchName: directoryContext.branchName,
+        isWorktree: directoryContext.isWorktree,
+        workspaceName: directoryContext.workspaceName,
+        prompt: persistedAgent.prompt,
+        title: persistedAgent.title,
+        displayName: persistedAgent.displayName ?? '',
+        taskSummary: persistedAgent.taskSummary ?? '',
+        persistedStatus: persistedAgent.persistedStatus,
+        labelIds: persistedAgent.labelIds ?? (persistedAgent.labelId ? [persistedAgent.labelId] : []),
+        prUrl: persistedAgent.prUrl,
+        bridge: this.bridges.get(runtime.id)!
+      }
+
+      this.agents.set(handle.id, handle)
+      this.bumpNextId(handle.id)
     }
 
     this.persistAgents()
@@ -1185,16 +1193,18 @@ class AgentController {
       if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return
 
       const now = Date.now()
+      const idleRuntimes = runtimeManager
+        .getAllRuntimes()
+        .filter((runtime) => now - runtime.lastActivityAt >= idleTimeoutMs)
 
-      for (const runtime of runtimeManager.getAllRuntimes()) {
-        const idleForMs = now - runtime.lastActivityAt
-        if (idleForMs < idleTimeoutMs) continue
-
-        console.log(
-          `[AgentController] Stopping idle runtime ${runtime.id} after ${Math.round(idleForMs / 1000)}s of inactivity`
-        )
-        await this.stopRuntime(runtime.id)
-      }
+      await Promise.all(
+        idleRuntimes.map(async (runtime) => {
+          console.log(
+            `[AgentController] Stopping idle runtime ${runtime.id} after ${Math.round((now - runtime.lastActivityAt) / 1000)}s of inactivity`
+          )
+          await this.stopRuntime(runtime.id)
+        })
+      )
     } finally {
       this.stoppingIdleRuntimes = false
     }
