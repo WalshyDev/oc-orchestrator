@@ -334,6 +334,15 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
                   <X size={10} />
                 </button>
               )}
+              {isSelected && !onDeleteLabel && (
+                <button
+                  onClick={(event) => { event.stopPropagation(); onToggle(label.id) }}
+                  className="shrink-0 p-1 mr-1 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors opacity-0 group-hover/label:opacity-100"
+                  title={`Remove ${label.name}`}
+                >
+                  <X size={10} />
+                </button>
+              )}
             </div>
           )
         })}
