@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 interface TooltipProps {
   content: ReactNode
@@ -7,14 +8,15 @@ interface TooltipProps {
   position?: 'top' | 'bottom'
 }
 
-const positionStyles = {
-  top: 'bottom-full left-1/2 -translate-x-1/2 mb-2',
-  bottom: 'top-full left-1/2 -translate-x-1/2 mt-2',
-} as const
+const GAP = 8
+const VIEWPORT_PADDING = 8
 
 export function Tooltip({ content, children, delay = 1000, position = 'top' }: TooltipProps) {
-  const [visible, setVisible] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [finalCoords, setFinalCoords] = useState<{ top: number; left: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const anchorRef = useRef<{ centerX: number; anchorY: number } | null>(null)
 
   const clearTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -23,25 +25,70 @@ export function Tooltip({ content, children, delay = 1000, position = 'top' }: T
 
   useEffect(() => clearTimer, [])
 
+  const measureAndPlace = useCallback((node: HTMLDivElement | null) => {
+    if (!node || !anchorRef.current) return
+    const { centerX, anchorY } = anchorRef.current
+    const tooltipRect = node.getBoundingClientRect()
+    const tooltipW = tooltipRect.width
+    const tooltipH = tooltipRect.height
+
+    let left = centerX - tooltipW / 2
+    left = Math.max(VIEWPORT_PADDING, Math.min(left, window.innerWidth - tooltipW - VIEWPORT_PADDING))
+
+    const top = position === 'top' ? anchorY - tooltipH : anchorY
+
+    setFinalCoords({ top, left })
+  }, [position])
+
+  const showTooltip = () => {
+    timerRef.current = setTimeout(() => {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      anchorRef.current = {
+        centerX: rect.left + rect.width / 2,
+        anchorY: position === 'top' ? rect.top - GAP : rect.bottom + GAP,
+      }
+      setPending(true)
+    }, delay)
+  }
+
+  const hideTooltip = () => {
+    clearTimer()
+    setPending(false)
+    setFinalCoords(null)
+    anchorRef.current = null
+  }
+
   return (
     <div
-      className="relative inline-flex"
-      onMouseEnter={() => {
-        timerRef.current = setTimeout(() => setVisible(true), delay)
-      }}
-      onMouseLeave={() => {
-        clearTimer()
-        setVisible(false)
-      }}
+      ref={triggerRef}
+      className="inline-flex"
+      onMouseEnter={showTooltip}
+      onMouseLeave={hideTooltip}
     >
       {children}
-      {visible && (
+      {pending && !finalCoords && createPortal(
         <div
-          className={`absolute ${positionStyles[position]} z-[200] pointer-events-none`}
-          style={{ animation: 'tooltip-fade-in 150ms ease-out' }}
+          ref={measureAndPlace}
+          className="fixed z-[200] pointer-events-none"
+          style={{ opacity: 0, top: 0, left: 0 }}
         >
           {content}
-        </div>
+        </div>,
+        document.body,
+      )}
+      {finalCoords && createPortal(
+        <div
+          className="fixed z-[200] pointer-events-none"
+          style={{
+            top: finalCoords.top,
+            left: finalCoords.left,
+            animation: 'tooltip-fade-in 150ms ease-out',
+          }}
+        >
+          {content}
+        </div>,
+        document.body,
       )}
     </div>
   )
