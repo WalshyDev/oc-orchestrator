@@ -815,25 +815,13 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail */}
+        {/* Action Rail — quick actions + approve/deny */}
         <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
           )}
           {onDeny && (
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />
-          )}
-          {/* Stop button moved to input area — renders as the Send/Stop toggle */}
-          {onToggleLabel && onClearLabels && (
-            <LabelDropdown
-              current={agent.labelIds}
-              onToggle={onToggleLabel}
-              onClear={onClearLabels}
-              allLabels={allLabels}
-              onCreateLabel={onCreateLabel}
-              onDeleteLabel={onDeleteLabel}
-              variant="action"
-            />
           )}
           {/* Custom quick action buttons + placeholder slots */}
           {quickActions.filter(isQuickActionValid).map((qa) => (
@@ -855,46 +843,11 @@ export const DetailDrawer = memo(function DetailDrawer({
               Custom
             </button>
           ))}
-          <div className="flex-1" />
-          <ActionDropdownButton
-            icon={<GitPullRequest size={12} />}
-            label="PR"
-            items={[
-              {
-                icon: <ArrowLineUpRight size={12} />,
-                label: 'View PR',
-                onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined
-              },
-              {
-                icon: <Link size={12} />,
-                label: agent.prUrl ? 'Edit PR Link' : 'Add PR Link',
-                onClick: onSetPrUrl ? () => setShowPrLinkModal(true) : undefined
-              },
-              {
-                icon: <Trash size={12} />,
-                label: 'Remove PR Link',
-                onClick: agent.prUrl && onSetPrUrl ? () => onSetPrUrl(null) : undefined
-              },
-              {
-                icon: <GitPullRequest size={12} />,
-                label: 'Create PR',
-                onClick: onCreatePr
-              }
-            ]}
-          />
-          <ActionDropdownButton
-            icon={<ArrowSquareOut size={12} />}
-            label="Open In"
-            items={[
-              { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
-              { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
-            ]}
-          />
         </div>
 
-        {/* Input */}
+        {/* Input row: text input left, action buttons + send right */}
         <div
-          className={`flex flex-col gap-0 px-3 py-2 border-t flex-1 min-h-0 transition-colors ${
+          className={`flex gap-2 px-3 py-2 border-t flex-1 min-h-0 transition-colors ${
             isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line'
           }`}
           onDragOver={handleDragOver}
@@ -902,7 +855,7 @@ export const DetailDrawer = memo(function DetailDrawer({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {/* Single unified input container */}
+          {/* Input container */}
           <div className={`relative flex flex-col flex-1 min-h-0 rounded-lg border bg-kumo-control transition-colors ${
             isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus-within:border-kumo-ring'
           }`}>
@@ -999,56 +952,105 @@ export const DetailDrawer = memo(function DetailDrawer({
               className="w-full flex-1 min-h-0 px-3 py-2.5 bg-transparent text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none"
             />
 
-            {/* Bottom row: hints left, send/stop button right */}
-            <div className="flex items-center justify-between px-2 pb-1.5 shrink-0">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors px-1 py-0.5 rounded"
-                  title="Attach image"
-                >
-                  <Paperclip size={12} />
-                  <span>Attach</span>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/gif,image/webp"
-                  multiple
-                  className="hidden"
-                  onChange={handleFileInputChange}
-                />
-                <span className="text-[10px] text-kumo-subtle/60">
-                  ↵ send · ⇧↵ newline
-                </span>
-              </div>
-
-              {/* Send / Stop toggle button */}
-              {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') ? (
-                <button
-                  onClick={onAbort}
-                  disabled={agent.status === 'stopping'}
-                  className="flex items-center gap-1.5 px-2.5 h-7 rounded-lg bg-kumo-danger/90 text-white text-xs font-medium transition-colors hover:bg-kumo-danger disabled:opacity-50"
-                  title={agent.status === 'stopping' ? 'Stopping…' : 'Stop agent'}
-                >
-                  <Stop size={12} weight="fill" />
-                  {agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
-                </button>
-              ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={!inputText.trim() && attachments.length === 0}
-                  className={`flex items-center gap-1.5 px-2.5 h-7 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-30 ${
-                    canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
-                  }`}
-                  title={canReplyViaChat ? 'Reply' : 'Send message'}
-                >
-                  <ArrowUp size={12} weight="bold" />
-                  {canReplyViaChat ? 'Reply' : 'Send'}
-                </button>
-              )}
+            {/* Bottom row: hints */}
+            <div className="flex items-center px-2 pb-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors px-1 py-0.5 rounded"
+                title="Attach image"
+              >
+                <Paperclip size={12} />
+                <span>Attach</span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+              <span className="text-[10px] text-kumo-subtle/60 ml-2">
+                ↵ send · ⇧↵ newline
+              </span>
             </div>
+          </div>
+
+          {/* Right column: Label, PR, Open In + Send/Stop at bottom */}
+          <div className="flex flex-col gap-1 shrink-0 justify-end w-[88px]">
+            {onToggleLabel && onClearLabels && (
+              <LabelDropdown
+                current={agent.labelIds}
+                onToggle={onToggleLabel}
+                onClear={onClearLabels}
+                allLabels={allLabels}
+                onCreateLabel={onCreateLabel}
+                onDeleteLabel={onDeleteLabel}
+                variant="action"
+                className="w-full"
+              />
+            )}
+            <ActionDropdownButton
+              icon={<GitPullRequest size={12} />}
+              label="PR"
+              className="w-full"
+              items={[
+                {
+                  icon: <ArrowLineUpRight size={12} />,
+                  label: 'View PR',
+                  onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined
+                },
+                {
+                  icon: <Link size={12} />,
+                  label: agent.prUrl ? 'Edit PR Link' : 'Add PR Link',
+                  onClick: onSetPrUrl ? () => setShowPrLinkModal(true) : undefined
+                },
+                {
+                  icon: <Trash size={12} />,
+                  label: 'Remove PR Link',
+                  onClick: agent.prUrl && onSetPrUrl ? () => onSetPrUrl(null) : undefined
+                },
+                {
+                  icon: <GitPullRequest size={12} />,
+                  label: 'Create PR',
+                  onClick: onCreatePr
+                }
+              ]}
+            />
+            <ActionDropdownButton
+              icon={<ArrowSquareOut size={12} />}
+              label="Open In"
+              className="w-full"
+              items={[
+                { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
+                { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
+              ]}
+            />
+            {/* Send / Stop toggle button */}
+            {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') ? (
+              <button
+                onClick={onAbort}
+                disabled={agent.status === 'stopping'}
+                className="flex items-center justify-center gap-1.5 w-full h-7 rounded-lg bg-kumo-danger/90 text-white text-xs font-medium transition-colors hover:bg-kumo-danger disabled:opacity-50"
+                title={agent.status === 'stopping' ? 'Stopping…' : 'Stop agent'}
+              >
+                <Stop size={12} weight="fill" />
+                {agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!inputText.trim() && attachments.length === 0}
+                className={`flex items-center justify-center gap-1.5 w-full h-7 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-30 ${
+                  canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
+                }`}
+                title={canReplyViaChat ? 'Reply' : 'Send message'}
+              >
+                <ArrowUp size={12} weight="bold" />
+                {canReplyViaChat ? 'Reply' : 'Send'}
+              </button>
+            )}
           </div>
         </div>
         </div>{/* end bottom pane */}
@@ -1478,13 +1480,15 @@ function ActionButton({
   label,
   variant = 'default',
   disabled = false,
-  onClick
+  onClick,
+  className: extraClass
 }: {
   icon: React.ReactNode
   label: string
   variant?: 'default' | 'approve' | 'deny'
   disabled?: boolean
   onClick?: () => void
+  className?: string
 }) {
   const styles = {
     default: 'bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill',
@@ -1496,7 +1500,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${extraClass ?? ''}`}
     >
       {icon}
       {label}
@@ -1525,11 +1529,13 @@ interface DropdownItem {
 function ActionDropdownButton({
   icon,
   label,
-  items
+  items,
+  className: extraClass
 }: {
   icon: React.ReactNode
   label: string
   items: DropdownItem[]
+  className?: string
 }) {
   const { open, toggle, close, containerRef } = useDismiss()
 
@@ -1544,15 +1550,16 @@ function ActionDropdownButton({
         label={item.label}
         onClick={item.onClick}
         disabled={item.disabled}
+        className={extraClass}
       />
     )
   }
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div ref={containerRef} className={`relative inline-flex ${extraClass ?? ''}`}>
       <button
         onClick={toggle}
-        className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
+        className="flex items-center gap-1 w-full px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
       >
         {icon}
         {label}
