@@ -814,8 +814,8 @@ export const DetailDrawer = memo(function DetailDrawer({
 
         {/* Bottom pane — action rail + input, resizable height */}
         <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
-        {/* Action Rail — single row, scrollable */}
-        <div className="flex gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0 overflow-x-auto">
+        {/* Action Rail */}
+        <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
           )}
@@ -1537,7 +1537,7 @@ function ActionDropdownButton({
         <CaretDown size={10} className="ml-0.5" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+        <div className="absolute bottom-full right-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
           {visibleItems.map((item) => (
             <button
               key={item.label}
