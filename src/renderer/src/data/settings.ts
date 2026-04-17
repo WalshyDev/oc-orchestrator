@@ -42,7 +42,7 @@ export const SETTINGS_STORAGE_KEY = 'oc-orchestrator:settings'
 
 export const DEFAULT_CREATE_PR_PROMPT = `Prepare this work for review.
 
-1. Check the current git branch name. If it looks auto-generated (e.g. project/next-feature-1234567890 or project/some-slug-1234567890), rename it to something descriptive based on the actual changes, using the format "username/short-description" (e.g. "walshy/fix-agent-workflow-bug"). Use \`git branch -m <new-name>\` to rename before pushing. If the branch already has a sensible name, keep it.
+1. Check the current git branch name. If it looks auto-generated (e.g. project/next-feature-1234567890 or project/some-slug-1234567890), rename it to something descriptive based on the actual changes, using the format "$USER/short-description" (e.g. "johndoe/fix-agent-workflow-bug"). Use \`git branch -m <new-name>\` to rename before pushing. If the branch already has a sensible name, keep it.
 2. Review the working tree, then create a concise but informative commit message. Do not list changed files in the commit message.
 3. Commit the relevant changes.
 4. Push the branch.
