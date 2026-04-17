@@ -374,6 +374,8 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    console.log(`[AgentController] sendMessage for ${agentId} modelOverride:`, JSON.stringify(handle.modelOverride))
+
     await handle.bridge.ensureStreaming()
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
@@ -535,6 +537,7 @@ class AgentController {
     // uses the selected model instead of relying on directory-level config.
     if (typeof config.model === 'string') {
       handle.modelOverride = parseModelString(config.model)
+      console.log(`[AgentController] updateConfig stored modelOverride for ${agentId}:`, JSON.stringify(handle.modelOverride), 'from raw:', config.model)
     }
 
     const result = await runtime.client.config.update({
