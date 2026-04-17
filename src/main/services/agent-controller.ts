@@ -50,6 +50,15 @@ function buildMessageParts(text: string, attachments?: Attachment[]): Array<Text
   return parts
 }
 
+// Bare model IDs (no slash) get an empty providerID so the server resolves the provider.
+function parseModelString(model: string): { providerID: string; modelID: string } {
+  const slashIdx = model.indexOf('/')
+  if (slashIdx > 0) {
+    return { providerID: model.slice(0, slashIdx), modelID: model.slice(slashIdx + 1) }
+  }
+  return { providerID: '', modelID: model }
+}
+
 function sanitizeSlug(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -217,7 +226,11 @@ class AgentController {
     this.persistAgents()
 
     // Apply model override if one was selected at launch
-    if (model && model !== 'auto') {
+    const modelOverride = model && model !== 'auto'
+      ? parseModelString(model)
+      : undefined
+
+    if (modelOverride) {
       await client.config.update({
         directory,
         config: { model }
@@ -242,14 +255,14 @@ class AgentController {
 
     // Only send the initial prompt if one was provided
     if (prompt && prompt.trim()) {
-      // The server may have disposed between session.create and now
-      // (server.instance.disposed closes the SSE stream). Re-establish
-      // the stream before sending the prompt so response events aren't lost.
+      // Re-establish the SSE stream in case the server disposed between
+      // session.create and now, so response events aren't lost.
       await handle.bridge.ensureStreaming()
       await client.session.promptAsync({
         sessionID: session.id,
         directory,
-        parts: buildMessageParts(prompt, attachments)
+        parts: buildMessageParts(prompt, attachments),
+        ...(modelOverride && { model: modelOverride })
       })
     }
 
