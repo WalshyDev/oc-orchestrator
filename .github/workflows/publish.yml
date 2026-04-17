@@ -1,0 +1,166 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: publish-npm-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - id: release
+        name: Detect release state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          before_sha='${{ github.event.before }}'
+          package_name=$(node -p "require('./package.json').name")
+          current_version=$(node -p "require('./package.json').version")
+          expected_tag="v${current_version}"
+          version_changed=false
+
+          echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
+          echo "expected_tag=$expected_tag" >> "$GITHUB_OUTPUT"
+
+          if [ "$before_sha" = "0000000000000000000000000000000000000000" ]; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            echo "No previous commit to compare against; treating this push as a release candidate."
+            exit 0
+          fi
+
+          if ! git cat-file -e "${before_sha}:package.json" 2>/dev/null; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to read previous package.json; treating this push as a release candidate."
+            exit 0
+          fi
+
+          previous_version=$(
+            git show "${before_sha}:package.json" | node -e "const fs = require('fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).version)"
+          )
+
+          echo "previous_version=$previous_version" >> "$GITHUB_OUTPUT"
+
+          if [ "$current_version" != "$previous_version" ]; then
+            version_changed=true
+          fi
+
+          echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
+          echo "Current main version is $current_version; version_changed=$version_changed."
+
+      - id: state
+        name: Check npm registry and tag state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag='${{ steps.release.outputs.expected_tag }}'
+          published_version=$(npm view "${{ steps.release.outputs.package_name }}" version 2>/dev/null || true)
+          tag_commit=''
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_commit=$(git rev-list -n 1 "$tag")
+          fi
+
+          echo "published_version=$published_version" >> "$GITHUB_OUTPUT"
+          echo "tag_commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+          if [ "$published_version" != "${{ steps.release.outputs.current_version }}" ]; then
+            if [ -n "$tag_commit" ]; then
+              echo "action=fail" >> "$GITHUB_OUTPUT"
+              echo "Tag ${tag} already exists on ${tag_commit}, but npm does not have version ${{ steps.release.outputs.current_version }}."
+              exit 0
+            fi
+
+            echo "action=publish" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.release.outputs.current_version }} is not on npm; publish is required."
+            exit 0
+          fi
+
+          if [ "$tag_commit" = "$GITHUB_SHA" ]; then
+            echo "action=skip" >> "$GITHUB_OUTPUT"
+            echo "Version $published_version is already published and tagged on this commit."
+            exit 0
+          fi
+
+          if [ "${{ steps.release.outputs.version_changed }}" = 'true' ] && [ -z "$tag_commit" ]; then
+            echo "action=tag_only" >> "$GITHUB_OUTPUT"
+            echo "Version $published_version is already published; creating the missing tag on this release commit."
+            exit 0
+          fi
+
+          echo "action=fail" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag_commit" ]; then
+            echo "Published version $published_version has no repository tag. Refusing to tag commit ${GITHUB_SHA} automatically."
+          else
+            echo "Published version $published_version is tagged on ${tag_commit}, not ${GITHUB_SHA}. Refusing to retag automatically."
+          fi
+
+      - name: Stop on inconsistent published state
+        if: steps.state.outputs.action == 'fail'
+        shell: bash
+        run: |
+          echo "Release state is inconsistent. Fix the tag manually or bump to a new version." >&2
+          exit 1
+
+      - name: Create release tag
+        if: steps.state.outputs.action == 'tag_only'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag='${{ steps.release.outputs.expected_tag }}'
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/${tag}"
+
+      - name: Install dependencies
+        if: steps.state.outputs.action == 'publish'
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.state.outputs.action == 'publish'
+        run: npm run typecheck
+
+      - name: Test
+        if: steps.state.outputs.action == 'publish'
+        run: npm test
+
+      - name: Publish package
+        if: steps.state.outputs.action == 'publish'
+        run: npm publish
+
+      - name: Tag successful release
+        if: steps.state.outputs.action == 'publish'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag='${{ steps.release.outputs.expected_tag }}'
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/${tag}"

@@ -2,6 +2,10 @@
   "name": "oc-orchestrator",
   "version": "0.7.0",
   "description": "OpenCode Orchestrator — supervise concurrent coding agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WalshyDev/oc-orchestrator.git"
+  },
   "main": "./out/main/index.js",
   "bin": {
     "oc-orchestrator": "./bin/oc-orchestrator.js"
@@ -26,9 +30,9 @@
     "test": "vitest run",
     "test:integration": "OPENCODE_INTEGRATION=1 vitest run integration",
     "prepublishOnly": "npm run build",
-    "release": "npm run typecheck && npm run test && npm version patch && npm publish",
-    "release:minor": "npm run typecheck && npm run test && npm version minor && npm publish",
-    "release:major": "npm run typecheck && npm run test && npm version major && npm publish"
+    "release": "node scripts/release.js patch",
+    "release:minor": "node scripts/release.js minor",
+    "release:major": "node scripts/release.js major"
   },
   "engines": {
     "node": "24.14.0"
