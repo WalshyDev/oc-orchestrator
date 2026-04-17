@@ -58,6 +58,25 @@ npm run dev
 | `npm run typecheck` | Type check both main and renderer |
 | `npm test` | Run unit tests |
 
+### Releases
+
+Release scripts now prepare the version bump locally and publishing happens automatically from GitHub Actions when that version lands on `main`.
+
+```bash
+npm run release        # patch
+npm run release:minor  # minor
+npm run release:major  # major
+git push origin <branch>
+```
+
+Each release script requires a clean git working tree, runs typecheck and tests, updates the version files, and creates the release commit locally without creating a git tag on your branch.
+
+Open a PR and merge it into `main` to publish that version to npm. The publish workflow runs only after the change lands on `main`, not on the PR itself. It publishes when the current `main` version is not yet on npm, so a failed publish can be retried by merging a follow-up fix without bumping the version again.
+
+After a successful publish, GitHub Actions creates the matching `vX.Y.Z` tag on the resulting `main` commit. This works with rebase merges because the tag is created after the rewritten commit exists on `main`.
+
+Configure a trusted publisher for this package on npm using repository `WalshyDev/oc-orchestrator` and workflow filename `publish.yml`. No `NPM_TOKEN` secret is needed for publishing.
+
 ### Environment Variables
 
 | Variable | Default | Description |
