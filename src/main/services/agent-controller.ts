@@ -89,6 +89,7 @@ export interface AgentHandle {
   /** @deprecated Use labelIds instead. Kept for reading legacy persisted data. */
   labelId?: string
   prUrl?: string
+  modelOverride?: { providerID: string; modelID: string }
   bridge: EventBridge
 }
 
@@ -206,6 +207,10 @@ class AgentController {
     }
 
     const agentId = `agent-${this.nextId++}`
+    const modelOverride = model && model !== 'auto'
+      ? parseModelString(model)
+      : undefined
+
     const handle: AgentHandle = {
       id: agentId,
       runtimeId: runtime.id,
@@ -219,18 +224,15 @@ class AgentController {
       title: sessionTitle,
       displayName: '',
       taskSummary: '',
+      modelOverride,
       bridge: this.bridges.get(runtime.id)!
     }
 
     this.agents.set(agentId, handle)
     this.persistAgents()
 
-    // Apply model override if one was selected at launch
-    const modelOverride = model && model !== 'auto'
-      ? parseModelString(model)
-      : undefined
-
-    if (modelOverride) {
+    // Also set directory-level config so the OpenCode UI reflects the choice
+    if (handle.modelOverride) {
       await client.config.update({
         directory,
         config: { model }
@@ -262,7 +264,7 @@ class AgentController {
         sessionID: session.id,
         directory,
         parts: buildMessageParts(prompt, attachments),
-        ...(modelOverride && { model: modelOverride })
+        ...(handle.modelOverride && { model: handle.modelOverride })
       })
     }
 
@@ -322,7 +324,8 @@ class AgentController {
       await runtime.client.session.promptAsync({
         sessionID: session.id,
         directory: handle.directory,
-        parts: [{ type: 'text', text: prompt }]
+        parts: [{ type: 'text', text: prompt }],
+        ...(handle.modelOverride && { model: handle.modelOverride })
       })
     }
 
@@ -376,7 +379,8 @@ class AgentController {
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
-      ...(agent ? { agent } : {})
+      ...(agent ? { agent } : {}),
+      ...(handle.modelOverride && { model: handle.modelOverride })
     })
   }
 
@@ -526,6 +530,12 @@ class AgentController {
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
+
+    // Track model changes on the handle so every subsequent promptAsync
+    // uses the selected model instead of relying on directory-level config.
+    if (typeof config.model === 'string') {
+      handle.modelOverride = parseModelString(config.model)
+    }
 
     const result = await runtime.client.config.update({
       directory: handle.directory,
@@ -764,6 +774,8 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
+    handle.modelOverride = { providerID, modelID }
+
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
@@ -772,7 +784,7 @@ class AgentController {
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
-      model: { providerID, modelID }
+      model: handle.modelOverride
     })
   }
 
