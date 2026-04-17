@@ -77,6 +77,8 @@ After a successful publish, GitHub Actions creates the matching `vX.Y.Z` tag on 
 
 Configure a trusted publisher for this package on npm using repository `WalshyDev/oc-orchestrator` and workflow filename `publish.yml`. No `NPM_TOKEN` secret is needed for publishing.
 
+This repo currently installs dependencies with `legacy-peer-deps=true` via `.npmrc` because `@typescript-eslint/parser@8.57.2` does not accept TypeScript 6 peer ranges yet.
+
 ### Environment Variables
 
 | Variable | Default | Description |
