@@ -106,6 +106,7 @@ interface PersistedAgentHandle {
   /** @deprecated Use labelIds instead. Kept for reading legacy persisted data. */
   labelId?: string
   prUrl?: string
+  modelOverride?: { providerID: string; modelID: string }
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -160,6 +161,7 @@ class AgentController {
         persistedStatus: persistedAgent.persistedStatus,
         labelIds: persistedAgent.labelIds ?? (persistedAgent.labelId ? [persistedAgent.labelId] : []),
         prUrl: persistedAgent.prUrl,
+        modelOverride: persistedAgent.modelOverride,
         bridge: this.bridges.get(runtime.id)!
       }
 
@@ -535,6 +537,7 @@ class AgentController {
     // uses the selected model instead of relying on directory-level config.
     if (typeof config.model === 'string') {
       handle.modelOverride = parseModelString(config.model)
+      this.persistAgents()
     }
 
     const result = await runtime.client.config.update({
@@ -775,6 +778,7 @@ class AgentController {
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
     handle.modelOverride = { providerID, modelID }
+    this.persistAgents()
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -1290,7 +1294,8 @@ class AgentController {
       taskSummary: agent.taskSummary,
       persistedStatus: agent.persistedStatus,
       labelIds: agent.labelIds,
-      prUrl: agent.prUrl
+      prUrl: agent.prUrl,
+      modelOverride: agent.modelOverride
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))
