@@ -792,9 +792,11 @@ export function App() {
       const handled = await handleBuiltInCommand(selectedAgentId, parsed.name, parsed.args)
       if (handled) return
 
-      // Not a built-in — try the runtime directly (custom slash commands, skills)
-      await storeExecuteCommand(selectedAgentId, parsed.name, parsed.args)
-      return
+      // Not a built-in — unknown commands fall through as plain messages
+      if (agentCommands.some((cmd) => cmd.command === `/${parsed.name}`)) {
+        await storeExecuteCommand(selectedAgentId, parsed.name, parsed.args)
+        return
+      }
     }
 
     // Check for @agentname mentions — extract agent name and strip from text
@@ -810,7 +812,7 @@ export function App() {
     }
 
     await storeSendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeExecuteCommand, storeReplyToQuestion, storeResetSession])
+  }, [agentCommands, agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeExecuteCommand, storeReplyToQuestion, storeResetSession])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return

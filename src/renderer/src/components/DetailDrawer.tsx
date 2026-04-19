@@ -536,16 +536,16 @@ export const DetailDrawer = memo(function DetailDrawer({
     }
 
     // ── Input history cycling (ArrowUp/ArrowDown) ──
-    // Only activates on single-line input, or when cursor is at the boundary.
     const history = inputHistories.get(agent.id)
     if (history && history.length > 0) {
       const textarea = event.currentTarget as HTMLTextAreaElement
-      const singleLine = !textarea.value.includes('\n')
-      const atStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
-      const atEnd = textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length
+      const { value, selectionStart, selectionEnd } = textarea
+      const noSelection = selectionStart === selectionEnd
+      const onFirstLine = noSelection && !value.slice(0, selectionStart).includes('\n')
+      const onLastLine = noSelection && !value.slice(selectionEnd).includes('\n')
       const fromEnd = (i: number) => history[history.length - 1 - i]
 
-      if (event.key === 'ArrowUp' && (singleLine || atStart)) {
+      if (event.key === 'ArrowUp' && onFirstLine) {
         const next = historyIndexRef.current + 1
         if (next < history.length) {
           event.preventDefault()
@@ -556,7 +556,7 @@ export const DetailDrawer = memo(function DetailDrawer({
         return
       }
 
-      if (event.key === 'ArrowDown' && (singleLine || atEnd) && historyIndexRef.current >= 0) {
+      if (event.key === 'ArrowDown' && onLastLine && historyIndexRef.current >= 0) {
         event.preventDefault()
         historyIndexRef.current -= 1
         setInputText(historyIndexRef.current < 0 ? savedDraftRef.current : fromEnd(historyIndexRef.current))
