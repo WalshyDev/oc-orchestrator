@@ -78,6 +78,7 @@ export interface AgentRuntime {
   status: AgentStatus
   labelIds: string[]
   model: string
+  variant?: string
   prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number

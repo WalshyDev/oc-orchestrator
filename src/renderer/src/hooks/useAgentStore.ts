@@ -67,6 +67,8 @@ export interface LiveAgent {
    *  Used to restore the displayed model after an invoked agent
    *  (which may use a different model) finishes. */
   configuredModel?: string
+  /** The currently selected model variant (thinking level). */
+  variant?: string
   lastActivityAt: number
   blockedSince?: number
   prUrl: string | null
@@ -2313,12 +2315,13 @@ export function useAgentStore() {
     return extractToolCallsFromMessages(messages)
   }, [messagesVersion])
 
-  const setAgentModel = useCallback((agentId: string, modelPath: string) => {
+  const setAgentModel = useCallback((agentId: string, modelPath: string, variant?: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
     const formatted = formatModelName(modelPath)
     agent.model = formatted
     agent.configuredModel = formatted
+    agent.variant = variant
     emit({ agents: true })
   }, [])
 

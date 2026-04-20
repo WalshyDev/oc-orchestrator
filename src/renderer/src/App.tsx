@@ -319,6 +319,7 @@ export function App() {
         status: agent.status,
         labelIds: agent.labelIds,
         model: agent.model,
+        variant: agent.variant,
         prUrl: agent.prUrl,
         lastActivityAt: formatTimeAgo(agent.lastActivityAt),
         lastActivityAtMs: agent.lastActivityAt,
@@ -715,6 +716,7 @@ export function App() {
     switch (commandName) {
       case 'model': {
         if (!commandArgs) {
+          setModelPickerAgentId(agentId)
           setShowModelPicker(true)
           return true
         }
@@ -1466,12 +1468,13 @@ export function App() {
           agentId={modelPickerAgentId}
           currentModel={displayAgents.find((a) => a.id === modelPickerAgentId)?.model
             ?? liveAgentsAsRuntimes.find((a) => a.id === modelPickerAgentId)?.model}
+          currentVariant={store.agents.find((a) => a.id === modelPickerAgentId)?.variant}
           onClose={() => { setShowModelPicker(false); setModelPickerAgentId(null) }}
-          onSelect={async (modelPath) => {
+          onSelect={async (modelPath, variant) => {
             if (!modelPickerAgentId) return
-            const result = await window.api.updateConfig(modelPickerAgentId, { model: modelPath })
+            const result = await window.api.updateConfig(modelPickerAgentId, { model: modelPath, variant: variant ?? null })
             if (result.ok) {
-              store.setAgentModel(modelPickerAgentId, modelPath)
+              store.setAgentModel(modelPickerAgentId, modelPath, variant)
               setShowModelPicker(false)
               setModelPickerAgentId(null)
             } else {

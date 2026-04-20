@@ -90,6 +90,7 @@ export interface AgentHandle {
   labelId?: string
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
+  variantOverride?: string
   bridge: EventBridge
 }
 
@@ -107,6 +108,7 @@ interface PersistedAgentHandle {
   labelId?: string
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
+  variantOverride?: string
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -162,6 +164,7 @@ class AgentController {
         labelIds: persistedAgent.labelIds ?? (persistedAgent.labelId ? [persistedAgent.labelId] : []),
         prUrl: persistedAgent.prUrl,
         modelOverride: persistedAgent.modelOverride,
+        variantOverride: persistedAgent.variantOverride,
         bridge: this.bridges.get(runtime.id)!
       }
 
@@ -266,7 +269,8 @@ class AgentController {
         sessionID: session.id,
         directory,
         parts: buildMessageParts(prompt, attachments),
-        ...(handle.modelOverride && { model: handle.modelOverride })
+        ...(handle.modelOverride && { model: handle.modelOverride }),
+        ...(handle.variantOverride && { variant: handle.variantOverride })
       })
     }
 
@@ -327,7 +331,8 @@ class AgentController {
         sessionID: session.id,
         directory: handle.directory,
         parts: [{ type: 'text', text: prompt }],
-        ...(handle.modelOverride && { model: handle.modelOverride })
+        ...(handle.modelOverride && { model: handle.modelOverride }),
+        ...(handle.variantOverride && { variant: handle.variantOverride })
       })
     }
 
@@ -382,7 +387,8 @@ class AgentController {
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
       ...(agent ? { agent } : {}),
-      ...(handle.modelOverride && { model: handle.modelOverride })
+      ...(handle.modelOverride && { model: handle.modelOverride }),
+      ...(handle.variantOverride && { variant: handle.variantOverride })
     })
   }
 
@@ -540,9 +546,20 @@ class AgentController {
       this.persistAgents()
     }
 
+    // Track variant changes on the handle so every subsequent promptAsync
+    // uses the selected variant (thinking level).
+    if ('variant' in config) {
+      handle.variantOverride = typeof config.variant === 'string' ? config.variant : undefined
+      this.persistAgents()
+    }
+
+    // Strip variant from the config before forwarding — it's not a top-level
+    // opencode config key; we handle it locally via promptAsync params.
+    const { variant: _variant, ...forwardConfig } = config
+
     const result = await runtime.client.config.update({
       directory: handle.directory,
-      config: config as never
+      config: forwardConfig as never
     })
 
     return result.data
@@ -788,7 +805,8 @@ class AgentController {
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
-      model: handle.modelOverride
+      model: handle.modelOverride,
+      ...(handle.variantOverride && { variant: handle.variantOverride })
     })
   }
 
@@ -1295,7 +1313,8 @@ class AgentController {
       persistedStatus: agent.persistedStatus,
       labelIds: agent.labelIds,
       prUrl: agent.prUrl,
-      modelOverride: agent.modelOverride
+      modelOverride: agent.modelOverride,
+      variantOverride: agent.variantOverride
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))

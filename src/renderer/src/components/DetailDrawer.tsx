@@ -640,11 +640,13 @@ export const DetailDrawer = memo(function DetailDrawer({
                 title="Change model"
               >
                 {agent.model}
+                {agent.variant && <span className="text-kumo-subtle/70"> ({agent.variant})</span>}
                 {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
               </button>
             ) : (
               <span className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap">
                 {agent.model}
+                {agent.variant && <span className="text-kumo-subtle/70"> ({agent.variant})</span>}
                 {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
               </span>
             )}

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { X, Check, CircleNotch, MagnifyingGlass } from '@phosphor-icons/react'
+import { X, Check, CircleNotch, MagnifyingGlass, CaretDown, CaretRight } from '@phosphor-icons/react'
 
 interface ProviderModel {
   id: string
   name: string
   providerID: string
+  variants?: Record<string, Record<string, unknown>>
 }
 
 interface ProviderGroup {
@@ -16,15 +17,21 @@ interface ProviderGroup {
 interface ModelPickerModalProps {
   agentId: string
   currentModel?: string
+  currentVariant?: string
   onClose: () => void
-  onSelect: (modelPath: string) => void
+  onSelect: (modelPath: string, variant?: string) => void
 }
 
-export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: ModelPickerModalProps) {
+function formatVariantLabel(key: string): string {
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+export function ModelPickerModal({ agentId, currentModel, currentVariant, onClose, onSelect }: ModelPickerModalProps) {
   const [providers, setProviders] = useState<ProviderGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selecting, setSelecting] = useState<string | null>(null)
+  const [expandedModel, setExpandedModel] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -39,7 +46,12 @@ export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: M
             providers: Array<{
               id: string
               name: string
-              models: Record<string, { id: string; name: string; providerID: string }>
+              models: Record<string, {
+                id: string
+                name: string
+                providerID: string
+                variants?: Record<string, Record<string, unknown>>
+              }>
             }>
           }
 
@@ -50,7 +62,8 @@ export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: M
               models: Object.values(provider.models).map((model) => ({
                 id: model.id,
                 name: model.name,
-                providerID: model.providerID
+                providerID: model.providerID,
+                variants: model.variants
               }))
             }))
             .filter((group) => group.models.length > 0)
@@ -69,10 +82,24 @@ export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: M
     return () => { cancelled = true }
   }, [agentId])
 
-  const handleSelect = async (providerID: string, modelID: string): Promise<void> => {
+  const handleSelect = async (providerID: string, modelID: string, variant?: string): Promise<void> => {
     const modelPath = `${providerID}/${modelID}`
-    setSelecting(modelPath)
-    onSelect(modelPath)
+    const selectKey = variant ? `${modelPath}:${variant}` : modelPath
+    setSelecting(selectKey)
+    onSelect(modelPath, variant)
+  }
+
+  const handleModelClick = (providerID: string, modelID: string, variants?: Record<string, Record<string, unknown>>): void => {
+    const modelPath = `${providerID}/${modelID}`
+    const variantKeys = variants ? Object.keys(variants) : []
+
+    if (variantKeys.length > 0) {
+      // Toggle expansion for models with variants
+      setExpandedModel(expandedModel === modelPath ? null : modelPath)
+    } else {
+      // No variants — select immediately
+      void handleSelect(providerID, modelID)
+    }
   }
 
   const query = search.toLowerCase()
@@ -100,6 +127,9 @@ export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: M
             {currentModel && (
               <p className="text-[11px] text-kumo-subtle mt-0.5">
                 Current: <span className="font-mono text-kumo-default">{currentModel}</span>
+                {currentVariant && (
+                  <span className="text-kumo-default"> ({formatVariantLabel(currentVariant)})</span>
+                )}
               </p>
             )}
           </div>
@@ -147,26 +177,85 @@ export function ModelPickerModal({ agentId, currentModel, onClose, onSelect }: M
                   {provider.models.map((model) => {
                     const modelPath = `${provider.id}/${model.id}`
                     const isCurrent = currentModel === modelPath
-                    const isSelecting = selecting === modelPath
+                    const variantKeys = model.variants ? Object.keys(model.variants) : []
+                    const hasVariants = variantKeys.length > 0
+                    const isExpanded = expandedModel === modelPath
 
                     return (
-                      <button
-                        key={model.id}
-                        onClick={() => void handleSelect(provider.id, model.id)}
-                        disabled={isSelecting}
-                        className={`flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${
-                          isCurrent
-                            ? 'bg-kumo-brand/10 border border-kumo-brand/25 text-kumo-strong'
-                            : 'hover:bg-kumo-fill text-kumo-default'
-                        }`}
-                      >
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <span className="font-medium truncate">{model.name}</span>
-                          <span className="font-mono text-[10px] text-kumo-subtle truncate">{model.id}</span>
-                        </div>
-                        {isCurrent && <Check size={14} className="text-kumo-brand shrink-0 ml-2" />}
-                        {isSelecting && <CircleNotch size={14} className="animate-spin text-kumo-brand shrink-0 ml-2" />}
-                      </button>
+                      <div key={model.id}>
+                        <button
+                          onClick={() => handleModelClick(provider.id, model.id, model.variants)}
+                          disabled={selecting === modelPath}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${
+                            isCurrent && !currentVariant
+                              ? 'bg-kumo-brand/10 border border-kumo-brand/25 text-kumo-strong'
+                              : isCurrent && currentVariant
+                                ? 'bg-kumo-brand/5 text-kumo-strong'
+                                : 'hover:bg-kumo-fill text-kumo-default'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {hasVariants && (
+                              isExpanded
+                                ? <CaretDown size={12} className="text-kumo-subtle shrink-0" />
+                                : <CaretRight size={12} className="text-kumo-subtle shrink-0" />
+                            )}
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                              <span className="font-medium truncate">{model.name}</span>
+                              <span className="font-mono text-[10px] text-kumo-subtle truncate">{model.id}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            {hasVariants && !isExpanded && (
+                              <span className="text-[10px] text-kumo-subtle">{variantKeys.length} variant{variantKeys.length > 1 ? 's' : ''}</span>
+                            )}
+                            {isCurrent && !currentVariant && <Check size={14} className="text-kumo-brand" />}
+                            {selecting === modelPath && <CircleNotch size={14} className="animate-spin text-kumo-brand" />}
+                          </div>
+                        </button>
+
+                        {/* Variant sub-items */}
+                        {hasVariants && isExpanded && (
+                          <div className="ml-5 mt-0.5 flex flex-col gap-0.5">
+                            {/* Default (no variant) option */}
+                            <button
+                              onClick={() => void handleSelect(provider.id, model.id)}
+                              disabled={selecting === modelPath}
+                              className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-left text-sm transition-colors ${
+                                isCurrent && !currentVariant
+                                  ? 'bg-kumo-brand/10 border border-kumo-brand/25 text-kumo-strong'
+                                  : 'hover:bg-kumo-fill text-kumo-default'
+                              }`}
+                            >
+                              <span className="text-[12px]">Default</span>
+                              {isCurrent && !currentVariant && <Check size={12} className="text-kumo-brand shrink-0 ml-2" />}
+                              {selecting === modelPath && <CircleNotch size={12} className="animate-spin text-kumo-brand shrink-0 ml-2" />}
+                            </button>
+
+                            {variantKeys.map((variantKey) => {
+                              const selectKey = `${modelPath}:${variantKey}`
+                              const isCurrentVariant = isCurrent && currentVariant === variantKey
+
+                              return (
+                                <button
+                                  key={variantKey}
+                                  onClick={() => void handleSelect(provider.id, model.id, variantKey)}
+                                  disabled={selecting === selectKey}
+                                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-left text-sm transition-colors ${
+                                    isCurrentVariant
+                                      ? 'bg-kumo-brand/10 border border-kumo-brand/25 text-kumo-strong'
+                                      : 'hover:bg-kumo-fill text-kumo-default'
+                                  }`}
+                                >
+                                  <span className="text-[12px]">{formatVariantLabel(variantKey)}</span>
+                                  {isCurrentVariant && <Check size={12} className="text-kumo-brand shrink-0 ml-2" />}
+                                  {selecting === selectKey && <CircleNotch size={12} className="animate-spin text-kumo-brand shrink-0 ml-2" />}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
