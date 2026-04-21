@@ -1800,6 +1800,11 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   // picked up by the selectedMessages memo in the same render pass.
   emit({ agents: true, messages: true })
 
+  // A launch means a runtime is now attached. If the initial provider fetch
+  // raced with restoration and came back empty (no runtimes yet), retry now
+  // that a runtime exists. No-op if providers were already loaded.
+  void ensureProvidersLoaded()
+
   if (window.api) {
     // Fetch historical messages so resumed sessions aren't blank.
     // Fire-and-forget — the initial upsert already emitted.
