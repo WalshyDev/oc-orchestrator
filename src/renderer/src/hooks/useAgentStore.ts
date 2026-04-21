@@ -4,7 +4,8 @@ import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
   AgentStatusesPayload,
-  MessageAttachment
+  MessageAttachment,
+  PermissionRequest as PermissionRequestPayload
 } from '../types/api'
 
 interface HistoricalMessageInfo {
@@ -343,8 +344,8 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
       }
       return `Message part updated (${partType ?? 'unknown'})`
     }
-    case 'permission.updated':
-      return `Permission requested: ${props.title ?? props.type ?? 'unknown'}`
+    case 'permission.asked':
+      return `Permission requested: ${props.permission ?? props.title ?? props.type ?? 'unknown'}`
     case 'permission.replied':
       return 'Permission resolved'
     case 'question.asked': {
@@ -361,6 +362,24 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
       return `File created: ${props.file ?? props.path ?? 'unknown'}`
     case 'file.deleted':
       return `File deleted: ${props.file ?? props.path ?? 'unknown'}`
+    case 'session.compacted':
+      return 'Session context compacted'
+    case 'message.removed':
+      return `Message removed: ${props.messageID ?? 'unknown'}`
+    case 'message.part.removed':
+      return `Message part removed: ${props.partID ?? 'unknown'}`
+    case 'server.instance.disposed':
+      return `Server instance disposed: ${props.directory ?? 'unknown'}`
+    case 'global.disposed':
+      return 'Server process shutting down'
+    case 'session.deleted':
+      return 'Session deleted'
+    case 'workspace.failed':
+      return `Workspace failed: ${props.message ?? 'unknown error'}`
+    case 'worktree.failed':
+      return `Worktree failed: ${props.message ?? 'unknown error'}`
+    case 'mcp.browser.open.failed':
+      return `MCP auth failed to open browser for ${props.mcpName ?? 'unknown'}`
     case 'server.heartbeat':
       return 'Server heartbeat'
     default:
@@ -1028,14 +1047,21 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
-    case 'permission.updated': {
+    case 'permission.asked': {
       const permissionId = props.id as string
       const sessionId = props.sessionID as string
-      const permType = props.type as string
-      const title = props.title as string
-      const pattern = props.pattern as string | string[] | undefined
+      // v2 SDK sends 'permission' (e.g. "read", "write", "bash"), fall back to legacy 'type'
+      const permType = (props.permission ?? props.type) as string
+      const patterns = props.patterns as string[] | undefined
+      const metadata = props.metadata as Record<string, unknown> | undefined
 
-      const agent = findAgentBySession(sessionId)
+      // Derive a human-readable title from the permission type + patterns
+      const title = (metadata?.title as string | undefined)
+        ?? (patterns?.length ? `${permType}: ${patterns.join(', ')}` : permType)
+
+      // Try session-based lookup first, fall back to runtime-based lookup
+      // in case the sessionID doesn't match (e.g. event ordering race)
+      const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
       if (agent) {
         notifyIfNeeded(agent, 'needs_approval')
 
@@ -1052,7 +1078,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           sessionId,
           type: permType,
           title,
-          pattern,
+          pattern: patterns,
           createdAt: Date.now()
         })
 
@@ -1062,7 +1088,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
     }
 
     case 'permission.replied': {
-      const permissionId = props.permissionID as string
+      const permissionId = (props.requestID ?? props.permissionID) as string
       state.permissions.delete(permissionId)
 
       const sessionId = props.sessionID as string
@@ -1231,6 +1257,187 @@ function processEvent(payload: OpenCodeEventPayload): void {
         trackFileChange(agent.sessionId, filePath, 'deleted')
         emit({ agents: true })
       }
+      break
+    }
+
+    case 'session.compacted': {
+      // The server compacted the session's context window — old messages and
+      // parts were pruned server-side. Clear local messages so the UI doesn't
+      // show ghost messages that the agent can no longer reference.
+      const sessionId = props.sessionID as string
+      const agent = findAgentBySession(sessionId)
+      if (agent) {
+        state.messages.delete(sessionId)
+        agent.lastActivityAt = Date.now()
+
+        // Re-fetch the current messages so the drawer shows the post-compaction state
+        if (window.api) {
+          void window.api.getMessages(agent.id).then((result) => {
+            if (!result.ok || !result.data) return
+            const entries = result.data as HistoricalSessionMessage[]
+            if (Array.isArray(entries) && entries.length > 0) {
+              hydrateHistoricalMessages(entries)
+              emit({ messages: true })
+            }
+          })
+        }
+
+        emit({ agents: true, messages: true })
+      }
+      break
+    }
+
+    case 'message.removed': {
+      // A message was deleted from the session (compaction, revert, undo).
+      // Remove it from local state so the UI stays in sync.
+      const sessionId = props.sessionID as string
+      const messageId = props.messageID as string
+      const messages = state.messages.get(sessionId)
+      if (messages) {
+        const index = messages.findIndex((msg) => msg.id === messageId)
+        if (index !== -1) {
+          messages.splice(index, 1)
+          emit({ messages: true })
+        }
+      }
+      break
+    }
+
+    case 'message.part.removed': {
+      // A specific part (tool call, text block, etc.) was removed from a message.
+      // Remove it from local state so reverted/deleted parts disappear from the UI.
+      const sessionId = props.sessionID as string
+      const messageId = props.messageID as string
+      const partId = props.partID as string
+      const messages = state.messages.get(sessionId)
+      if (messages) {
+        const message = messages.find((msg) => msg.id === messageId)
+        if (message) {
+          const partIndex = message.parts.findIndex((part) => part.id === partId)
+          if (partIndex !== -1) {
+            message.parts.splice(partIndex, 1)
+            emit({ messages: true })
+          }
+        }
+      }
+      break
+    }
+
+    case 'server.instance.disposed': {
+      // The OpenCode server for a specific project directory is shutting down.
+      // Mark all agents on this runtime as disconnected so the user knows the
+      // server went away (EventBridge will attempt reconnection).
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId) {
+          // Don't override terminal states — if the agent already completed
+          // before the server shut down, leave it as completed.
+          if (agent.status === 'completed' || agent.status === 'errored') continue
+          agent.status = 'disconnected'
+          agent.lastActivityAt = Date.now()
+          agent.blockedSince = undefined
+          agent.respondedAt = undefined
+        }
+      }
+      state.healthy = false
+      emit({ agents: true })
+      break
+    }
+
+    case 'global.disposed': {
+      // The entire OpenCode process is shutting down — all agents on this
+      // runtime should transition to disconnected.
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId) {
+          if (agent.status === 'completed' || agent.status === 'errored') continue
+          agent.status = 'disconnected'
+          agent.lastActivityAt = Date.now()
+          agent.blockedSince = undefined
+          agent.respondedAt = undefined
+        }
+      }
+      state.healthy = false
+      emit({ agents: true })
+      break
+    }
+
+    case 'session.deleted': {
+      // A session was deleted (from another client, or server cleanup).
+      // Transition the bound agent to errored so the user knows the session
+      // is gone and any further interaction would fail.
+      const sessionId = props.sessionID as string
+      const agent = findAgentBySession(sessionId)
+      if (agent) {
+        agent.status = 'errored'
+        agent.taskSummary = 'Session deleted externally'
+        agent.lastActivityAt = Date.now()
+        agent.blockedSince = undefined
+        agent.respondedAt = undefined
+
+        // Clean up any pending questions/permissions for this session
+        for (const [questionId, question] of state.questions) {
+          if (question.sessionId === sessionId) state.questions.delete(questionId)
+        }
+        for (const [permissionId, permission] of state.permissions) {
+          if (permission.sessionId === sessionId) state.permissions.delete(permissionId)
+        }
+
+        state.messages.delete(sessionId)
+        persistAgentMeta(agent.id, { persistedStatus: 'errored' })
+        emit({ agents: true, messages: true, questions: true, permissions: true })
+      }
+      break
+    }
+
+    case 'workspace.failed': {
+      // A workspace (sandbox) failed to initialize. Any agent that was being
+      // launched into this runtime and is still in 'starting' should show an
+      // error so the user doesn't see a perpetually-starting agent.
+      const errorMessage = props.message as string | undefined
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId && agent.status === 'starting') {
+          notifyIfNeeded(agent, 'errored')
+          agent.status = 'errored'
+          agent.taskSummary = `Workspace failed: ${errorMessage ?? 'unknown error'}`
+          agent.lastActivityAt = Date.now()
+          persistAgentMeta(agent.id, { persistedStatus: 'errored' })
+        }
+      }
+      emit({ agents: true })
+      break
+    }
+
+    case 'worktree.failed': {
+      // Git worktree creation failed. Same treatment as workspace.failed —
+      // agents still in 'starting' on this runtime should show an error.
+      const errorMessage = props.message as string | undefined
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId && agent.status === 'starting') {
+          notifyIfNeeded(agent, 'errored')
+          agent.status = 'errored'
+          agent.taskSummary = `Worktree failed: ${errorMessage ?? 'unknown error'}`
+          agent.lastActivityAt = Date.now()
+          persistAgentMeta(agent.id, { persistedStatus: 'errored' })
+        }
+      }
+      emit({ agents: true })
+      break
+    }
+
+    case 'mcp.browser.open.failed': {
+      // MCP OAuth flow couldn't open the browser — surface this to the user
+      // so they know why MCP tools are stalling. Log it to the event log of
+      // any agent on this runtime.
+      const mcpName = props.mcpName as string | undefined
+      const url = props.url as string | undefined
+      console.warn(`[AgentStore] MCP browser open failed for "${mcpName}": ${url}`)
+
+      // Notify via desktop notification so the user can act on it
+      for (const agent of state.agents.values()) {
+        if (agent.runtimeId === runtimeId && (agent.status === 'running' || agent.status === 'starting')) {
+          agent.lastActivityAt = Date.now()
+        }
+      }
+      emit({ agents: true })
       break
     }
 
@@ -1582,6 +1789,95 @@ function reconcileQuestions(
   if (changed) emit({ agents: true, questions: true })
 }
 
+/**
+ * Reconcile pending permissions from the server with local state.
+ * - Adds any permissions we missed (SSE gap for permission.asked)
+ * - Removes stale local permissions the server no longer reports (SSE gap for permission.replied)
+ * - Ensures agents with pending permissions are in 'needs_approval' status
+ */
+function reconcilePermissions(
+  serverPermissions: Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>
+): void {
+  let changed = false
+
+  // Build a set of all server-reported permission IDs and which agents were queried
+  const serverPermissionIds = new Set<string>()
+  const reconciledAgentIds = new Set<string>()
+  for (const entry of serverPermissions) {
+    reconciledAgentIds.add(entry.agentId)
+    for (const perm of entry.permissions) {
+      serverPermissionIds.add(perm.id)
+    }
+  }
+
+  // Add permissions the server has that we missed
+  for (const entry of serverPermissions) {
+    for (const perm of entry.permissions) {
+      if (!state.permissions.has(perm.id)) {
+        console.warn(
+          `[AgentStore] Reconciliation: recovered missed permission ${perm.id} for agent ${entry.agentId}`
+        )
+        const permType = perm.permission ?? 'unknown'
+        const title = perm.patterns?.length
+          ? `${permType}: ${perm.patterns.join(', ')}`
+          : permType
+
+        state.permissions.set(perm.id, {
+          id: perm.id,
+          agentId: entry.agentId,
+          sessionId: perm.sessionID,
+          type: permType,
+          title,
+          pattern: perm.patterns,
+          createdAt: Date.now()
+        })
+        changed = true
+      }
+    }
+
+    // If we have pending permissions for this agent, ensure it shows needs_approval
+    const agent = state.agents.get(entry.agentId)
+    if (agent && entry.permissions.length > 0 && agent.status !== 'needs_approval' && agent.status !== 'stopping') {
+      console.warn(
+        `[AgentStore] Reconciliation: agent ${agent.id} has pending permissions but status is ${agent.status}, correcting to needs_approval`
+      )
+
+      agent.status = 'needs_approval'
+      agent.blockedSince = agent.blockedSince ?? Date.now()
+      agent.lastActivityAt = Date.now()
+      changed = true
+    }
+  }
+
+  // Remove stale local permissions that the server no longer reports.
+  // Only prune for agents that appeared in the server response.
+  for (const [localId, localPerm] of state.permissions) {
+    if (reconciledAgentIds.has(localPerm.agentId) && !serverPermissionIds.has(localId)) {
+      console.warn(
+        `[AgentStore] Reconciliation: removing stale permission ${localId} for agent ${localPerm.agentId}`
+      )
+      state.permissions.delete(localId)
+      changed = true
+    }
+  }
+
+  // For agents whose permissions were all cleaned up, clear blocked state
+  // so the interrupt guard doesn't permanently lock them in needs_approval
+  for (const agentId of reconciledAgentIds) {
+    const agent = state.agents.get(agentId)
+    if (!agent) continue
+    if (agent.status === 'needs_approval' && !agentHasPendingInterrupts(agentId)) {
+      agent.status = 'running'
+      agent.blockedSince = undefined
+      agent.lastActivityAt = Date.now()
+
+      changed = true
+    }
+  }
+
+  if (changed) emit({ agents: true, permissions: true })
+}
+
 // ── Helpers ──
 
 /** How long (ms) after a user response we ignore stale blocked-status events.
@@ -1854,6 +2150,34 @@ export function useAgentStore() {
         // Questions API may not be available on older servers
       }
 
+      // Fetch pending permissions for agents that are in needs_approval state
+      try {
+        const permissionsResult = await window.api.listPermissions()
+        if (!cancelled && permissionsResult.ok && permissionsResult.data) {
+          for (const entry of permissionsResult.data as Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>) {
+            for (const perm of entry.permissions) {
+              const permType = perm.permission ?? 'unknown'
+              const title = perm.patterns?.length
+                ? `${permType}: ${perm.patterns.join(', ')}`
+                : permType
+
+              state.permissions.set(perm.id, {
+                id: perm.id,
+                agentId: entry.agentId,
+                sessionId: perm.sessionID,
+                type: permType,
+                title,
+                pattern: perm.patterns,
+                createdAt: Date.now()
+              })
+            }
+          }
+          emit({ permissions: true })
+        }
+      } catch {
+        // Permissions API may not be available on older servers
+      }
+
     }
 
     const cleanups = [
@@ -1909,6 +2233,14 @@ export function useAgentStore() {
         if (cancelled) return
         if (questionsResult.ok && questionsResult.data) {
           reconcileQuestions(questionsResult.data as Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>)
+        }
+
+        // Same for permissions — if a permission.asked SSE event was missed,
+        // the agent would be stuck with no permission card in the UI.
+        const permissionsResult = await window.api.listPermissions()
+        if (cancelled) return
+        if (permissionsResult.ok && permissionsResult.data) {
+          reconcilePermissions(permissionsResult.data as Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>)
         }
       } catch {
         // Silently ignore — next interval will retry

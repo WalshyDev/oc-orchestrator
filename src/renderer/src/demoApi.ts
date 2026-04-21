@@ -311,6 +311,7 @@ export function createDemoApi(): OrchestratorApi {
     replyToQuestion: noop,
     rejectQuestion: noop,
     listQuestions: () => ok([]),
+    listPermissions: () => ok([]),
 
     // ── Runtime Operations ──
     listRuntimes: () => ok([]),

@@ -137,7 +137,7 @@ function applyUserResponse(agent: MinimalAgent): void {
 }
 
 /**
- * Mirrors the logic in processEvent 'permission.updated' handler.
+ * Mirrors the logic in processEvent 'permission.asked' handler.
  * A new permission means the server has moved on, so the guard is cleared.
  */
 function applyPermissionUpdate(agent: MinimalAgent): void {
@@ -425,10 +425,10 @@ describe('event sequence: question flow (session.status → message.part.updated
     expect(agent.blockedSince).toBeDefined()
   })
 
-  it('preserves needs_approval when message.part.updated arrives after permission.updated', () => {
+  it('preserves needs_approval when message.part.updated arrives after permission.asked', () => {
     const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
 
-    // Step 1: permission.updated arrives
+    // Step 1: permission.asked arrives
     applyPermissionUpdate(agent)
     expect(agent.status).toBe('needs_approval')
     expect(agent.blockedSince).toBeDefined()
@@ -620,7 +620,7 @@ describe('optimistic guard: stale blocked events after user response', () => {
     expect(agent.status).toBe('needs_input')
   })
 
-  it('permission.updated clears the guard so subsequent events are not suppressed', () => {
+  it('permission.asked clears the guard so subsequent events are not suppressed', () => {
     const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
 
     applyUserResponse(agent)

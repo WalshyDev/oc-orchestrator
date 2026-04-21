@@ -43,6 +43,7 @@ export interface OrchestratorApi {
   replyToQuestion: (agentId: string, requestId: string, answers: string[][]) => Promise<IpcResult>
   rejectQuestion: (agentId: string, requestId: string) => Promise<IpcResult>
   listQuestions: () => Promise<IpcResult<PendingQuestionsPayload>>
+  listPermissions: () => Promise<IpcResult<PendingPermissionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
   listAllProviders: () => Promise<IpcResult>
@@ -240,6 +241,24 @@ export interface QuestionRequest {
 export type PendingQuestionsPayload = Array<{
   agentId: string
   questions: QuestionRequest[]
+}>
+
+export interface PermissionRequest {
+  id: string
+  sessionID: string
+  permission: string
+  patterns: string[]
+  metadata: Record<string, unknown>
+  always: string[]
+  tool?: {
+    messageID: string
+    callID: string
+  }
+}
+
+export type PendingPermissionsPayload = Array<{
+  agentId: string
+  permissions: PermissionRequest[]
 }>
 
 export interface RuntimeStartedPayload {
