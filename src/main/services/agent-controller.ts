@@ -873,6 +873,45 @@ class AgentController {
   }
 
   /**
+   * Fetch all pending permissions across all agents.
+   */
+  async getAllPendingPermissions(): Promise<Array<{ agentId: string; permissions: unknown[] }>> {
+    const result: Array<{ agentId: string; permissions: unknown[] }> = []
+
+    const byRuntime = new Map<string, AgentHandle[]>()
+    for (const handle of this.agents.values()) {
+      const existing = byRuntime.get(handle.runtimeId) ?? []
+      existing.push(handle)
+      byRuntime.set(handle.runtimeId, existing)
+    }
+
+    for (const [runtimeId, handles] of byRuntime) {
+      const runtime = runtimeManager.getRuntime(runtimeId)
+      if (!runtime) continue
+
+      try {
+        const directory = handles[0].directory
+        const permissionsResult = await runtime.client.permission.list({
+          directory
+        })
+
+        if (permissionsResult.data && Array.isArray(permissionsResult.data)) {
+          for (const perm of permissionsResult.data as Array<{ id: string; sessionID: string }>) {
+            const agent = handles.find((h) => h.sessionId === perm.sessionID)
+            if (agent) {
+              result.push({ agentId: agent.id, permissions: [perm] })
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`[AgentController] Failed to get permissions for runtime ${runtimeId}:`, error)
+      }
+    }
+
+    return result
+  }
+
+  /**
    * Fetch all pending questions across all agents.
    */
   async getAllPendingQuestions(): Promise<Array<{ agentId: string; questions: unknown[] }>> {

@@ -108,6 +108,9 @@ const api = {
   listQuestions: (): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list-questions'),
 
+  listPermissions: (): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:list-permissions'),
+
   // ── Runtime Operations ──
   listRuntimes: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:list'),

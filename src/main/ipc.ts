@@ -101,6 +101,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:list-permissions', async () => {
+    try {
+      const permissions = await agentController.getAllPendingPermissions()
+      return { ok: true, data: permissions }
+    } catch (error) {
+      console.error('[IPC] agent:list-permissions failed:', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:abort', async (_event, agentId: string) => {
     try {
       await agentController.abortAgent(agentId)
