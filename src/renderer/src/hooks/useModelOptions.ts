@@ -32,6 +32,12 @@ const contextLimitObservers = new Set<() => void>()
 
 export function subscribeToContextLimits(listener: () => void): () => void {
   contextLimitObservers.add(listener)
+  // Fire immediately if the cache is already populated. Without this, a
+  // listener that mounts after the initial provider fetch (e.g. React strict
+  // mode's double-mount, HMR reloads, or any code path where the fetch
+  // finishes before the agent store's useEffect runs) would never backfill
+  // limits on its agents.
+  if (contextLimitCache.size > 0) listener()
   return () => contextLimitObservers.delete(listener)
 }
 
