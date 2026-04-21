@@ -37,10 +37,12 @@ export function subscribeToContextLimits(listener: () => void): () => void {
 
 export function recordContextLimitsFromProviders(data: ProviderData): void {
   let changed = false
+  let recorded = 0
+  let skipped = 0
   for (const provider of data.providers) {
     for (const model of Object.values(provider.models)) {
       const limit = model.limit?.context
-      if (typeof limit !== 'number' || limit <= 0) continue
+      if (typeof limit !== 'number' || limit <= 0) { skipped++; continue }
       const key = `${provider.id}/${model.id}`
       if (contextLimitCache.get(key) !== limit) {
         contextLimitCache.set(key, limit)
@@ -52,8 +54,15 @@ export function recordContextLimitsFromProviders(data: ProviderData): void {
         contextLimitCache.set(model.id, limit)
         changed = true
       }
+      recorded++
     }
   }
+  console.log('[recordContextLimitsFromProviders] populated cache', {
+    recorded,
+    skipped,
+    totalEntries: contextLimitCache.size,
+    sample: [...contextLimitCache.entries()].slice(0, 3)
+  })
   if (changed) {
     for (const listener of contextLimitObservers) listener()
   }

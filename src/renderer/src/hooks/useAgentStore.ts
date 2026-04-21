@@ -322,16 +322,29 @@ function cancelCompactingWatchdog(agentId: string): void {
  * formatModelName.
  */
 function backfillContextLimits(): void {
-  let changed = false
+  let filled = 0
+  let missing = 0
+  const missingModels: string[] = []
   for (const agent of state.agents.values()) {
-    if (agent.contextLimit !== undefined || !agent.rawModelId) continue
+    if (agent.contextLimit !== undefined) continue
+    if (!agent.rawModelId) {
+      missing++
+      continue
+    }
     const limit = lookupContextLimit(agent.rawModelId)
     if (limit !== undefined) {
       agent.contextLimit = limit
-      changed = true
+      filled++
+    } else {
+      missingModels.push(agent.rawModelId)
     }
   }
-  if (changed) emit({ agents: true })
+  console.log('[backfillContextLimits]', {
+    filled,
+    missingRawModelId: missing,
+    modelsNotInCache: [...new Set(missingModels)]
+  })
+  if (filled > 0) emit({ agents: true })
 }
 
 // Tracks how many step-start parts (invoked sub-agents) are currently active
@@ -810,7 +823,16 @@ function hydrateHistoricalMessages(entries: unknown): void {
         agent.model = formatted
         agent.rawModelId = entry.info.modelID
         const limit = lookupContextLimit(entry.info.modelID)
-        if (limit !== undefined) agent.contextLimit = limit
+        if (limit !== undefined) {
+          agent.contextLimit = limit
+        } else {
+          console.debug('[hydrate] no context limit found in cache', {
+            agentId: agent.id,
+            modelId: entry.info.modelID,
+            hasTokens: !!entry.info.tokens,
+            contextTokens: agent.contextTokens
+          })
+        }
         // Only seed configuredModel if not already set by a config fetch or
         // prior setAgentModel call, so the authoritative config value wins.
         if (!agent.configuredModel) {
