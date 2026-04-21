@@ -104,7 +104,7 @@ export interface AgentRuntimeError {
 
 // ── Column visibility ──
 
-export type ColumnKey = 'agent' | 'status' | 'label' | 'task' | 'branch' | 'model' | 'lastMessage'
+export type ColumnKey = 'agent' | 'status' | 'label' | 'task' | 'branch' | 'model' | 'lastMessage' | 'context'
 
 export interface ColumnDef {
   key: ColumnKey
@@ -122,6 +122,9 @@ export const ALL_COLUMNS: ColumnDef[] = [
   { key: 'lastMessage', label: 'Last Message', defaultVisible: true,  flex: 4 },
   { key: 'branch',      label: 'Branch',       defaultVisible: true,  flex: 2 },
   { key: 'model',       label: 'Model',        defaultVisible: true,  flex: 2 },
+  // Context usage is hidden by default to keep the table compact; power users
+  // can enable it via the column picker when they care about compaction timing.
+  { key: 'context',     label: 'Context',      defaultVisible: false, flex: 2 },
 ]
 
 const COLUMN_VIS_KEY = 'oc-orchestrator:column-visibility'
