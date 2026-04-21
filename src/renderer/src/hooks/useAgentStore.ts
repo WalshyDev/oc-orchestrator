@@ -4,9 +4,11 @@ import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
   AgentStatusesPayload,
+  IpcResult,
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
+import { lookupContextLimit } from './useModelOptions'
 
 interface HistoricalMessageInfo {
   id: string
@@ -16,12 +18,26 @@ interface HistoricalMessageInfo {
   parentID?: string
   time?: {
     created?: number
+    completed?: number
   }
   modelID?: string
   cost?: number
   tokens?: {
+    total?: number
     input: number
     output: number
+    reasoning?: number
+    cache?: {
+      read?: number
+      write?: number
+    }
+  }
+  /** Present on AssistantMessage when the provider rejected or errored on the turn
+   *  (e.g. ContextOverflowError, ProviderAuthError). */
+  error?: {
+    name?: string
+    message?: string
+    data?: unknown
   }
 }
 
@@ -75,11 +91,41 @@ export interface LiveAgent {
   prUrl: string | null
   cost: number
   tokens: { input: number; output: number }
+  /** Approximate tokens consumed in the current context window — the number
+   *  the provider will re-send on the next turn. Opencode reports tokens.total
+   *  when available; we fall back to input + cache.read otherwise. Used with
+   *  contextLimit to drive the ≥80% usage warning in the UI. */
+  contextTokens?: number
+  /** Provider-reported context window limit for the agent's current model.
+   *  Populated from assistant message metadata; cleared when the model changes. */
+  contextLimit?: number
+  /** Raw modelID from the latest assistant message (e.g. "claude-sonnet-4-20250514").
+   *  Used to look up the context limit from the provider cache. Separate from
+   *  `model` (the formatted display name) and `configuredModel` (the setting). */
+  rawModelId?: string
   /** Whether the name was auto-generated and should be replaced by the first prompt */
   autoNamed?: boolean
   /** Timestamp of last user response (sendMessage/replyToQuestion/respondToPermission).
    *  Used to guard against stale SSE events that would re-block the agent. */
   respondedAt?: number
+  /** Most recent session-level error surfaced by the server (e.g. ContextOverflowError).
+   *  Presence drives an error banner in the detail drawer; cleared by user dismiss
+   *  or by a new successful assistant turn. */
+  lastError?: LiveAgentError
+  /** True while a compactSession RPC is in flight or the server has acknowledged
+   *  compaction but session.compacted hasn't arrived yet. Drives the spinner and
+   *  disabled states on the Compact buttons so the user can see progress. */
+  compacting?: boolean
+}
+
+export interface LiveAgentError {
+  /** Error name from the server (e.g. 'ContextOverflowError', 'ProviderAuthError'). */
+  name: string
+  message?: string
+  /** Raw data payload from the server, surfaced for diagnostics. */
+  data?: unknown
+  sessionId: string
+  occurredAt: number
 }
 
 export interface LivePermission {
@@ -123,7 +169,7 @@ export interface LiveMessage {
 
 export interface LiveMessagePart {
   id: string
-  type: 'text' | 'tool' | 'reasoning' | 'step-start' | 'step-finish' | 'file' | string
+  type: 'text' | 'tool' | 'reasoning' | 'step-start' | 'step-finish' | 'file' | 'compaction' | string
   text?: string
   toolName?: string
   toolState?: string
@@ -131,6 +177,10 @@ export interface LiveMessagePart {
   fileMime?: string
   fileUrl?: string
   fileName?: string
+  /** For compaction parts — whether the compaction was auto-triggered by the server. */
+  compactionAuto?: boolean
+  /** For compaction parts — whether the compaction was triggered by a context overflow. */
+  compactionOverflow?: boolean
 }
 
 export interface FileChangeRecord {
@@ -202,6 +252,66 @@ interface PendingMessage {
   taskSummaryOverride?: string
 }
 const pendingMessages = new Map<string, PendingMessage>()
+
+// Safety timers for the `compacting` flag. We set a short "kickoff" watchdog
+// (30s): if the server doesn't produce a compaction part or set
+// session.time.compacting within that window, the RPC effectively did
+// nothing — clear the flag and surface an error so the user isn't staring at
+// a spinner forever. Once real server evidence arrives (see below), the
+// watchdog is cancelled because the session.compacted event will clear the
+// flag authoritatively.
+const compactingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const COMPACTING_KICKOFF_TIMEOUT_MS = 30_000
+
+/**
+ * Fired when the kickoff watchdog expires without any server activity: the
+ * RPC returned 200 but no compaction part or session.time.compacting update
+ * arrived. Clears the spinner flag and surfaces an actionable banner error.
+ */
+function onCompactingWatchdogExpired(agentId: string): void {
+  compactingTimers.delete(agentId)
+  const agent = state.agents.get(agentId)
+  if (!agent?.compacting) return
+  console.warn('[compacting] kickoff watchdog fired — no server activity', agentId)
+  agent.compacting = undefined
+  agent.lastError = {
+    name: 'CompactionNoResponse',
+    message: 'Compaction request was accepted but the server hasn\'t produced any activity within 30 seconds. Try again, check the npm dev console for errors, or switch models.',
+    sessionId: agent.sessionId,
+    occurredAt: Date.now()
+  }
+  emit({ agents: true })
+}
+
+/**
+ * Set or clear the agent's compacting flag. When setting true, also starts a
+ * kickoff watchdog (see onCompactingWatchdogExpired). The watchdog is
+ * cancelled by cancelCompactingWatchdog() once real server evidence arrives;
+ * at that point the flag is authoritative and will be cleared by
+ * session.compacted.
+ */
+function setCompacting(agentId: string, compacting: boolean): void {
+  const agent = state.agents.get(agentId)
+  if (!agent) return
+  if (agent.compacting === compacting) return
+  agent.compacting = compacting || undefined
+
+  cancelCompactingWatchdog(agentId)
+
+  if (compacting) {
+    const timer = setTimeout(() => onCompactingWatchdogExpired(agentId), COMPACTING_KICKOFF_TIMEOUT_MS)
+    compactingTimers.set(agentId, timer)
+  }
+  emit({ agents: true })
+}
+
+function cancelCompactingWatchdog(agentId: string): void {
+  const existing = compactingTimers.get(agentId)
+  if (existing) {
+    clearTimeout(existing)
+    compactingTimers.delete(agentId)
+  }
+}
 
 // Tracks how many step-start parts (invoked sub-agents) are currently active
 // per session. When depth > 0, message.updated model changes come from an
@@ -598,12 +708,38 @@ function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<stri
   return subAgentIds
 }
 
+/**
+ * Compute the number of tokens currently in the context window for a turn.
+ * Prefers tokens.total when the provider reports it; otherwise approximates
+ * with input + cache.read (what gets re-sent on the next request). Returns
+ * undefined when we don't have enough data to estimate.
+ */
+function computeContextTokens(tokens: {
+  total?: number
+  input?: number
+  cache?: { read?: number }
+} | undefined): number | undefined {
+  if (!tokens) return undefined
+  if (typeof tokens.total === 'number') return tokens.total
+  const input = tokens.input ?? 0
+  const cacheRead = tokens.cache?.read ?? 0
+  const sum = input + cacheRead
+  return sum > 0 ? sum : undefined
+}
+
 function hydrateHistoricalMessages(entries: unknown): void {
   if (!Array.isArray(entries)) return
 
   const typed = entries as HistoricalSessionMessage[]
   const subAgentAssistantIds = identifySubAgentMessages(typed)
   const optimisticsCleaned = new Set<string>()
+
+  // Track the last assistant entry per session so we can lift a persisted
+  // error (e.g. ContextOverflowError) onto the agent after hydration. This
+  // makes the error banner survive across app restarts — without it, the
+  // user has to send another message to re-trigger the overflow just to see
+  // the warning.
+  const lastAssistantBySession = new Map<string, HistoricalMessageInfo>()
 
   for (const entry of typed) {
     if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
@@ -643,12 +779,17 @@ function hydrateHistoricalMessages(entries: unknown): void {
           input: entry.info.tokens.input,
           output: entry.info.tokens.output
         }
+        const ctx = computeContextTokens(entry.info.tokens)
+        if (ctx !== undefined) agent.contextTokens = ctx
       }
 
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
         const formatted = formatModelName(entry.info.modelID)
         agent.model = formatted
+        agent.rawModelId = entry.info.modelID
+        const limit = lookupContextLimit(entry.info.modelID)
+        if (limit !== undefined) agent.contextLimit = limit
         // Only seed configuredModel if not already set by a config fetch or
         // prior setAgentModel call, so the authoritative config value wins.
         if (!agent.configuredModel) {
@@ -659,6 +800,35 @@ function hydrateHistoricalMessages(entries: unknown): void {
       // PR URLs are only extracted during the live "Create PR" flow and
       // persisted to preferences, so historical messages are not scanned.
       // This avoids picking up URLs the user pasted in their own prompts.
+
+      // Track latest assistant message per session for post-hydration error
+      // surfacing (see loop below).
+      const prev = lastAssistantBySession.get(entry.info.sessionID)
+      if (!prev || getMessageCreatedAt(entry.info) > getMessageCreatedAt(prev)) {
+        lastAssistantBySession.set(entry.info.sessionID, entry.info)
+      }
+    }
+  }
+
+  // Surface persisted errors on the most recent assistant message as the
+  // agent's lastError. Only when the user hasn't already seen/dismissed it
+  // (agent.lastError empty) and when there's no later successful user
+  // message that would supersede it.
+  for (const [sessionId, info] of lastAssistantBySession) {
+    if (!info.error?.name) continue
+    const agent = findAgentBySession(sessionId)
+    if (!agent || agent.lastError) continue
+    console.log('[hydrateHistoricalMessages] surfacing persisted error on agent', {
+      agentId: agent.id,
+      errorName: info.error.name,
+      errorMessage: info.error.message
+    })
+    agent.lastError = {
+      name: info.error.name,
+      message: info.error.message,
+      data: info.error.data,
+      sessionId,
+      occurredAt: info.time?.completed ?? info.time?.created ?? Date.now()
     }
   }
 }
@@ -723,15 +893,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
   const resolvedSessionId = resolveSessionIdForEvent(props, runtimeId)
   if (resolvedSessionId && type !== 'server.heartbeat') {
     logEvent(resolvedSessionId, type, props)
-  }
-
-  // DEBUG: trace event delivery for new sessions
-  if (type === 'message.updated' || type === 'message.part.updated') {
-    const dbgSession = (props.info as Record<string, unknown>)?.sessionID ?? (props.part as Record<string, unknown>)?.sessionID
-    const hasAgent = !!findAgentBySession(dbgSession as string)
-    const hasMsgs = state.messages.has(dbgSession as string)
-    const msgCount = state.messages.get(dbgSession as string)?.length ?? 0
-    console.debug(`[processEvent] ${type} session=${(dbgSession as string)?.slice(-8)} agent=${hasAgent} msgs=${hasMsgs}(${msgCount})`)
   }
 
   switch (type) {
@@ -799,6 +960,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
         prExtractEnabled.delete(agent.id)
         resetStepDepthAndRestoreModel(sessionId, agent)
 
+        // Deliberately DO NOT clear lastError or lastDispatchedMessage here.
+        // The opencode server emits session.error immediately followed by
+        // session.idle, and if we wiped the recovery state on idle the error
+        // banner would flash and disappear before the user could act on it.
+        // These are cleared on successful assistant output or explicit user
+        // action (dismiss, new send, compact-and-retry).
+
         persistAgentMeta(agent.id, { persistedStatus: 'idle' })
         emit({ agents: true })
         dispatchPendingMessage(agent.id)
@@ -808,6 +976,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
     case 'session.error': {
       const sessionId = props.sessionID as string
+      const errorProp = props.error as { name?: string; message?: string; data?: unknown } | undefined
+      console.error('[session.error]', { sessionId, error: errorProp, fullProps: props })
       const agent = findAgentBySession(sessionId)
       if (agent) {
         notifyIfNeeded(agent, 'errored')
@@ -816,6 +986,17 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
         resetStepDepthAndRestoreModel(sessionId, agent)
+
+        // Surface the error so the UI can render a banner.
+        if (errorProp?.name) {
+          agent.lastError = {
+            name: errorProp.name,
+            message: errorProp.message,
+            data: errorProp.data,
+            sessionId,
+            occurredAt: Date.now()
+          }
+        }
 
         persistAgentMeta(agent.id, { persistedStatus: 'errored' })
         emit({ agents: true })
@@ -842,14 +1023,74 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
+    case 'tui.toast.show': {
+      // Opencode's TUI toasts are the canonical channel for provider and
+      // compactor errors. Surface error-variant toasts on the best-guess
+      // agent for the runtime (toasts don't carry a sessionID).
+      const toast = props as { title?: string; message?: string; variant?: string }
+      console.log('[tui.toast.show]', { runtimeId, variant: toast.variant, title: toast.title, message: toast.message })
+
+      if (toast.variant !== 'error' && toast.variant !== 'warning') break
+
+      const target = pickToastTargetAgent(runtimeId)
+      if (!target) {
+        console.warn('[tui.toast.show] no agent for runtime', { runtimeId })
+        break
+      }
+
+      if (toast.variant === 'error') {
+        console.error('[tui.toast.show error]', {
+          runtimeId,
+          targetAgent: target.id,
+          wasCompacting: !!target.compacting,
+          toast
+        })
+        target.lastError = {
+          name: toast.title || 'Server error',
+          message: toast.message,
+          sessionId: target.sessionId,
+          occurredAt: Date.now()
+        }
+        target.lastActivityAt = Date.now()
+        // Compactor errors (e.g. "prompt is too long") arrive here. Stop the
+        // spinner so the banner flips from "Compacting…" to the error state.
+        if (target.compacting) setCompacting(target.id, false)
+        emit({ agents: true })
+      } else {
+        // Warnings: log only — we don't want to hijack the banner for a warning.
+        console.warn('[tui.toast.show warning]', { runtimeId, targetAgent: target.id, toast })
+      }
+      break
+    }
+
     case 'session.updated': {
       const info = props.info as Record<string, unknown> | undefined
       const sessionId = info?.id as string | undefined
       if (!sessionId) break
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        const time = info?.time as { updated?: number } | undefined
+        const time = info?.time as { updated?: number; compacting?: number } | undefined
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
+
+        // The server sets session.time.compacting to a timestamp while
+        // compaction is in progress and clears it when done. This is the
+        // authoritative signal — cancel the kickoff watchdog when the server
+        // takes ownership of the flag.
+        const serverIsCompacting = typeof time?.compacting === 'number'
+        if (serverIsCompacting) {
+          if (!agent.compacting) {
+            console.log('[session.updated] server started compacting', { agentId: agent.id, at: time?.compacting })
+          }
+          cancelCompactingWatchdog(agent.id)
+          if (!agent.compacting) setCompacting(agent.id, true)
+        } else if (agent.compacting && !compactingTimers.has(agent.id)) {
+          // Server has explicitly cleared its compacting timestamp and we're
+          // past the kickoff window — compaction finished (or was cancelled)
+          // but session.compacted didn't fire. Clear our flag to match.
+          console.log('[session.updated] server cleared compacting without session.compacted event', { agentId: agent.id })
+          setCompacting(agent.id, false)
+        }
+
         const title = info?.title as string | undefined
         // Only use the server-generated session title for the initial summary
         // (when taskSummary is still a placeholder). Once the user has sent a
@@ -884,9 +1125,19 @@ function processEvent(payload: OpenCodeEventPayload): void {
         // Update cost/tokens from assistant messages
         if (role === 'assistant') {
           const cost = info.cost as number | undefined
-          const tokens = info.tokens as { input: number; output: number } | undefined
+          const tokens = info.tokens as {
+            total?: number
+            input: number
+            output: number
+            cache?: { read?: number; write?: number }
+          } | undefined
           if (cost !== undefined) { agent.cost = cost; agentChanged = true }
-          if (tokens) { agent.tokens = { input: tokens.input, output: tokens.output }; agentChanged = true }
+          if (tokens) {
+            agent.tokens = { input: tokens.input, output: tokens.output }
+            const ctx = computeContextTokens(tokens)
+            if (ctx !== undefined) agent.contextTokens = ctx
+            agentChanged = true
+          }
 
           // Only update model from top-level (non-invoked) assistant messages
           const modelId = info.modelID as string | undefined
@@ -895,6 +1146,45 @@ function processEvent(payload: OpenCodeEventPayload): void {
             const formatted = formatModelName(modelId)
             agent.model = formatted
             agent.configuredModel = formatted
+            agent.rawModelId = modelId
+            const limit = lookupContextLimit(modelId)
+            if (limit !== undefined) agent.contextLimit = limit
+            agentChanged = true
+          }
+
+          // Opencode reports provider errors on the assistant message itself via
+          // the `error` field. Capture that here — it's the canonical place for
+          // ContextOverflowError and similar — since the separate session.error
+          // event doesn't always fire reliably.
+          const msgError = info.error as { name?: string; message?: string; data?: unknown } | undefined
+          if (msgError?.name) {
+            console.error('[message.updated] assistant message carries error', {
+              agentId: agent.id,
+              sessionId,
+              messageId,
+              errorName: msgError.name,
+              errorMessage: msgError.message,
+              errorData: msgError.data
+            })
+            agent.lastError = {
+              name: msgError.name,
+              message: msgError.message,
+              data: msgError.data,
+              sessionId,
+              occurredAt: Date.now()
+            }
+            agentChanged = true
+          }
+
+          // Only clear a sticky error when we see a truly completed assistant
+          // message with no error attached. `message.updated` also fires for the
+          // placeholder shell before the provider responds, which is when the
+          // overflow error lands — clearing on every update would erase the
+          // banner before the user sees it.
+          const time = info.time as { completed?: number } | undefined
+          const messageComplete = typeof time?.completed === 'number' && !msgError
+          if (messageComplete && agent.lastError) {
+            agent.lastError = undefined
             agentChanged = true
           }
         }
@@ -933,6 +1223,19 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const messageId = part.messageID as string
       const partId = part.id as string
       const partType = part.type as string
+
+      // A `compaction` part is the server's authoritative signal that the
+      // compactor is actively running for this session. Cancel the kickoff
+      // watchdog (compaction has demonstrably started) and set the spinner
+      // flag for auto-compactions that the user didn't initiate.
+      if (partType === 'compaction') {
+        const agent = findAgentBySession(sessionId)
+        if (agent) {
+          console.log('[compaction part] server acknowledged compaction', { agentId: agent.id, auto: part.auto })
+          cancelCompactingWatchdog(agent.id)
+          if (!agent.compacting) setCompacting(agent.id, true)
+        }
+      }
 
       // Track invoked-agent nesting depth so model updates from sub-agents
       // don't overwrite the parent agent's displayed model.
@@ -993,6 +1296,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
             newPart.fileMime = part.mime as string | undefined
             newPart.fileUrl = part.url as string | undefined
             newPart.fileName = part.filename as string | undefined
+          }
+          if (partType === 'compaction') {
+            newPart.compactionAuto = part.auto as boolean | undefined
+            newPart.compactionOverflow = part.overflow as boolean | undefined
           }
           message.parts.push(newPart)
         }
@@ -1263,26 +1570,22 @@ function processEvent(payload: OpenCodeEventPayload): void {
     case 'session.compacted': {
       // The server compacted the session's context window — old messages and
       // parts were pruned server-side. Clear local messages so the UI doesn't
-      // show ghost messages that the agent can no longer reference.
+      // show ghost messages that the agent can no longer reference, then
+      // re-fetch the post-compaction transcript.
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
+      console.log('[session.compacted] received', { sessionId, agentId: agent?.id })
       if (agent) {
         state.messages.delete(sessionId)
         agent.lastActivityAt = Date.now()
-
-        // Re-fetch the current messages so the drawer shows the post-compaction state
-        if (window.api) {
-          void window.api.getMessages(agent.id).then((result) => {
-            if (!result.ok || !result.data) return
-            const entries = result.data as HistoricalSessionMessage[]
-            if (Array.isArray(entries) && entries.length > 0) {
-              hydrateHistoricalMessages(entries)
-              emit({ messages: true })
-            }
-          })
+        // Compaction resolves ContextOverflowError — the context window now
+        // has room for the replayed transcript, so clear the banner.
+        if (agent.lastError?.name === 'ContextOverflowError') {
+          agent.lastError = undefined
         }
-
+        setCompacting(agent.id, false)
         emit({ agents: true, messages: true })
+        void refetchSessionMessages(agent.id)
       }
       break
     }
@@ -1527,7 +1830,11 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   agent.prUrl = null
   agent.cost = 0
   agent.tokens = { input: 0, output: 0 }
+  agent.contextTokens = undefined
+  agent.rawModelId = undefined
+  // contextLimit stays cached — the model doesn't change on reset.
   agent.lastActivityAt = Date.now()
+  agent.lastError = undefined
   taskSummaryLocked.delete(payload.id)
   prExtractEnabled.delete(payload.id)
 
@@ -1552,6 +1859,11 @@ function removeAgentState(agentId: string): void {
   taskSummaryLocked.delete(agentId)
   prExtractEnabled.delete(agentId)
   pendingMessages.delete(agentId)
+  const compactingTimer = compactingTimers.get(agentId)
+  if (compactingTimer) {
+    clearTimeout(compactingTimer)
+    compactingTimers.delete(agentId)
+  }
   sessionStepDepth.delete(agent.sessionId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
@@ -1904,6 +2216,25 @@ function findAgentByRuntime(runtimeId: string): LiveAgent | undefined {
 }
 
 /**
+ * Pick the most likely target agent for a runtime-scoped event (e.g. a TUI
+ * toast) when multiple agents share the runtime. Prefers agents that look
+ * actively engaged: compacting, then running, then any. Returns undefined
+ * only when the runtime has no agents attached.
+ */
+function pickToastTargetAgent(runtimeId: string): LiveAgent | undefined {
+  let compacting: LiveAgent | undefined
+  let busy: LiveAgent | undefined
+  let fallback: LiveAgent | undefined
+  for (const agent of state.agents.values()) {
+    if (agent.runtimeId !== runtimeId) continue
+    if (agent.compacting) { compacting = compacting ?? agent; continue }
+    if (agent.status === 'running') { busy = busy ?? agent; continue }
+    fallback = fallback ?? agent
+  }
+  return compacting ?? busy ?? fallback
+}
+
+/**
  * Check whether an agent has pending questions or permissions in the store.
  * Used to prevent session.status events from clobbering blocked states
  * when the server sends a 'busy' status while questions/permissions are still pending.
@@ -1981,6 +2312,50 @@ function dispatchPendingMessage(agentId: string): void {
       emit({ agents: true })
     }
   })
+}
+
+/**
+ * Resolve once an agent transitions to a non-busy status (idle, errored,
+ * completed) or the timeout elapses. Polls the in-memory store rather than
+ * subscribing to events so callers don't have to deal with subscription
+ * lifecycles. The store state is updated synchronously by processEvent, so
+ * a short poll interval is sufficient.
+ */
+function waitForAgentSettled(agentId: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    const poll = () => {
+      const agent = state.agents.get(agentId)
+      if (!agent) return resolve()
+      const isSettled = agent.status === 'idle' || agent.status === 'errored' || agent.status === 'completed'
+      if (isSettled) return resolve()
+      if (Date.now() - start >= timeoutMs) {
+        console.warn('[waitForAgentSettled] timed out', { agentId, lastStatus: agent.status })
+        return resolve()
+      }
+      setTimeout(poll, 100)
+    }
+    poll()
+  })
+}
+
+/**
+ * Re-fetch the session transcript from the server after compaction, since
+ * compaction prunes messages server-side and our local cache needs to be
+ * replaced with the post-compaction state.
+ */
+async function refetchSessionMessages(agentId: string): Promise<void> {
+  const agent = state.agents.get(agentId)
+  if (!agent || !window.api) return
+
+  const result = await window.api.getMessages(agentId)
+  if (result.ok && result.data) {
+    const entries = result.data as HistoricalSessionMessage[]
+    if (Array.isArray(entries) && entries.length > 0) {
+      hydrateHistoricalMessages(entries)
+      emit({ messages: true })
+    }
+  }
 }
 
 function mapSessionStatus(statusType: string): AgentStatus {
@@ -2316,6 +2691,11 @@ export function useAgentStore() {
       return { ok: true, queued: true }
     }
 
+    // Sending a new message supersedes any stale error banner.
+    if (agent?.lastError) {
+      agent.lastError = undefined
+    }
+
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
@@ -2340,6 +2720,7 @@ export function useAgentStore() {
 
     // Rollback optimistic state if the send failed
     if (result && !result.ok) {
+      console.error('[sendMessage] send failed, rolling back optimistic state', { agentId, error: result.error })
       prExtractEnabled.delete(agentId)
       const agentAfter = state.agents.get(agentId)
       if (agentAfter && agentAfter.status === 'running') {
@@ -2696,6 +3077,70 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
+  /**
+   * Dismiss the current error banner without any corrective action. The user
+   * decides when (and whether) to compact, switch models, or retry.
+   */
+  const dismissAgentError = useCallback((agentId: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent?.lastError) return
+    agent.lastError = undefined
+    emit({ agents: true })
+  }, [])
+
+  /**
+   * Trigger server-side compaction on the user's behalf. Aborts any running
+   * turn first — compactSession 400s on a busy session. Shows a spinner while
+   * the RPC and the provider-side summarization run; cleared when the server
+   * emits session.compacted (success), the RPC fails, or the watchdog fires.
+   */
+  const compactSession = useCallback(async (agentId: string): Promise<IpcResult | undefined> => {
+    if (!window.api) return
+    const agent = state.agents.get(agentId)
+    if (!agent) {
+      console.error('[compactSession] agent not found', agentId)
+      return
+    }
+
+    console.log('[compactSession] requested', { agentId, sessionId: agent.sessionId, status: agent.status })
+
+    const isBusy = agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping'
+    if (isBusy) {
+      console.log('[compactSession] aborting busy session first', { agentId, status: agent.status })
+      const abortResult = await window.api.abortAgent(agentId)
+      if (!abortResult.ok) {
+        console.error('[compactSession] abort failed', { agentId, error: abortResult.error })
+        return abortResult
+      }
+      await waitForAgentSettled(agentId, 10_000)
+    }
+
+    setCompacting(agentId, true)
+    agent.lastActivityAt = Date.now()
+
+    const result = await window.api.compactSession(agentId)
+    if (result?.ok) {
+      console.log('[compactSession] RPC accepted, waiting for server activity', { agentId })
+    } else {
+      console.error('[compactSession] RPC failed', { agentId, error: result?.error })
+      setCompacting(agentId, false)
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter) {
+        // Surface the real error in the banner so the user sees why compaction
+        // failed (e.g. provider auth, rate limit, session too large).
+        agentAfter.lastError = {
+          name: 'CompactionFailed',
+          message: result?.error ?? 'Compaction request was rejected by the server.',
+          sessionId: agentAfter.sessionId,
+          occurredAt: Date.now()
+        }
+        agentAfter.lastActivityAt = Date.now()
+        emit({ agents: true })
+      }
+    }
+    return result
+  }, [])
+
   const setPrUrl = useCallback((agentId: string, prUrl: string | null) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
@@ -2728,6 +3173,8 @@ export function useAgentStore() {
     clearLabels,
     replaceLabel,
     setPrUrl,
+    dismissAgentError,
+    compactSession,
     selectDirectory,
     getMessagesForSession,
     getFileChangesForSession,
@@ -2739,7 +3186,8 @@ export function useAgentStore() {
     executeCommand, prepareFreshAgent, resetSession,
     respondToPermission, replyToQuestion, rejectQuestion,
     abortAgent, removeAgent, renameAgent, setAgentModel,
-    toggleLabel, clearLabels, setPrUrl, selectDirectory,
+    toggleLabel, clearLabels, setPrUrl,
+    dismissAgentError, compactSession, selectDirectory,
     getMessagesForSession, getFileChangesForSession,
     getEventsForSession, getToolCallsForSession
   ])

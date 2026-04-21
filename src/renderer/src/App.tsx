@@ -151,7 +151,9 @@ export function App() {
     clearLabels: storeClearLabels,
     replaceLabel: storeReplaceLabel,
     renameAgent: storeRenameAgent,
-    setPrUrl: storeSetPrUrl
+    setPrUrl: storeSetPrUrl,
+    dismissAgentError: storeDismissAgentError,
+    compactSession: storeCompactSession
   } = store
 
   useEffect(() => {
@@ -316,6 +318,13 @@ export function App() {
     return store.agents.map((agent): AgentRuntime => {
       const lastMessage = extractLastAssistantMessage(getMessagesForSession(agent.sessionId))
 
+      // 'compacting' is a UI-level status: the agent's underlying server status
+      // is whatever it is (often 'idle' once compaction is queued), but the
+      // more useful thing to show is what the agent is actually doing. We also
+      // swap the task summary so the fleet table doesn't show a stale prompt.
+      const displayStatus = agent.compacting ? 'compacting' : agent.status
+      const displayTaskSummary = agent.compacting ? 'Compacting session…' : agent.taskSummary
+
       return {
         id: agent.id,
         name: agent.name,
@@ -324,8 +333,8 @@ export function App() {
         branchName: agent.branchName,
         isWorktree: agent.isWorktree,
         workspaceName: agent.workspaceName,
-        taskSummary: agent.taskSummary,
-        status: agent.status,
+        taskSummary: displayTaskSummary,
+        status: displayStatus,
         labelIds: agent.labelIds,
         model: agent.model,
         variant: agent.variant,
@@ -334,7 +343,15 @@ export function App() {
         lastActivityAtMs: agent.lastActivityAt,
         blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
         blockedSinceMs: agent.blockedSince,
-        lastMessage
+        lastMessage,
+        lastError: agent.lastError ? {
+          name: agent.lastError.name,
+          message: agent.lastError.message,
+          occurredAt: agent.lastError.occurredAt
+        } : undefined,
+        compacting: agent.compacting,
+        contextTokens: agent.contextTokens,
+        contextLimit: agent.contextLimit
       }
     })
   }, [store.agents, tick, getMessagesForSession])
@@ -508,6 +525,7 @@ export function App() {
       const textParts: string[] = []
       const toolCalls: ToolCall[] = []
       const images: Array<{ mime: string; url: string; filename?: string }> = []
+      let compactionPart: { id: string; auto?: boolean; overflow?: boolean } | null = null
 
       for (const part of msg.parts) {
         switch (part.type) {
@@ -535,7 +553,30 @@ export function App() {
               })
             }
             break
+          case 'compaction':
+            compactionPart = {
+              id: part.id,
+              auto: part.compactionAuto,
+              overflow: part.compactionOverflow
+            }
+            break
         }
+      }
+
+      if (compactionPart) {
+        flushPendingToolCalls(msg.id, msg.createdAt)
+        // A compaction part is still "active" while the session flag is set.
+        const liveAgentForCompaction = store.agents.find((a) => a.sessionId === msg.sessionId)
+        transcriptItems.push({
+          id: `${msg.id}-compaction-${compactionPart.id}`,
+          role: 'compaction',
+          content: compactionPart.auto
+            ? 'Session compacted automatically to free context window'
+            : 'Session compacted',
+          timestamp: formatTimeAgo(msg.createdAt),
+          compactionActive: !!liveAgentForCompaction?.compacting,
+          compactionAuto: compactionPart.auto
+        })
       }
 
       const textContent = textParts.join('\n')
@@ -740,7 +781,9 @@ export function App() {
       }
 
       case 'compact': {
-        await window.api.compactSession(agentId)
+        // Route through the store so /compact gets the same abort-if-busy,
+        // spinner, and error-surfacing behavior as the in-drawer Compact buttons.
+        await storeCompactSession(agentId)
         return true
       }
 
@@ -775,7 +818,7 @@ export function App() {
         return false
       }
     }
-  }, [agentCommands, storeSetAgentModel, storeExecuteCommand])
+  }, [agentCommands, storeSetAgentModel, storeExecuteCommand, storeCompactSession])
 
   // ── Detail drawer actions ──
   const handleSendMessage = useCallback(async (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => {
@@ -880,6 +923,33 @@ export function App() {
   const handleDrawerSetPrUrl = useCallback((prUrl: string | null) => {
     if (selectedAgentId) storeSetPrUrl(selectedAgentId, prUrl)
   }, [selectedAgentId, storeSetPrUrl])
+
+  const handleDismissError = useCallback(() => {
+    if (selectedAgentId) storeDismissAgentError(selectedAgentId)
+  }, [selectedAgentId, storeDismissAgentError])
+
+  const handleCompactSession = useCallback(() => {
+    if (selectedAgentId) void storeCompactSession(selectedAgentId)
+  }, [selectedAgentId, storeCompactSession])
+
+  // Recovery path for sessions too large to compact: start a fresh session in
+  // the same worktree and ask the new agent to reconstruct context from git.
+  // The worktree still has all the uncommitted work; only the chat transcript
+  // is reset.
+  const handleStartFreshSession = useCallback(async () => {
+    if (!selectedAgentId) return
+
+    const reconstructionPrompt = `The previous session in this worktree hit a context overflow and was closed. This is a fresh start with no prior conversation history.
+
+Please reconstruct the current state of the work by:
+1. Running \`git status\` and \`git diff\` to see uncommitted changes
+2. Running \`git log --oneline -20\` to see recent commits on this branch
+3. Reading any SCRATCHPAD.md, plan.md, or similar working notes at the repo root
+
+Then give me a brief summary of what the previous session was working on and where it left off. Don't start new work yet — just orient yourself and wait for my next instruction.`
+
+    await storeResetSession(selectedAgentId, reconstructionPrompt)
+  }, [selectedAgentId, storeResetSession])
 
   const handleCreatePr = useCallback(async () => {
     if (!selectedAgentId) return
@@ -1434,6 +1504,9 @@ export function App() {
           allLabels={allLabels}
           onCreateLabel={createLabel}
           onDeleteLabel={handleDeleteLabel}
+          onDismissError={handleDismissError}
+          onCompact={handleCompactSession}
+          onStartFreshSession={handleStartFreshSession}
         />
       )}
 

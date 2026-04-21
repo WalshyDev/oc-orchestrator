@@ -718,7 +718,9 @@ class AgentController {
   }
 
   /**
-   * Compact/summarize a session.
+   * Compact/summarize a session. Opencode's /session/{id}/summarize endpoint
+   * REQUIRES providerID + modelID in the body — without them the request
+   * returns 200 but no compaction runs, leaving the UI spinning forever.
    */
   async compactSession(agentId: string): Promise<unknown> {
     const handle = this.agents.get(agentId)
@@ -727,12 +729,61 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    const model = await this.resolveCompactionModel(handle, runtime.client)
+    if (!model) {
+      throw new Error('Cannot compact: no model configured for this agent. Use the Model button to pick one.')
+    }
+
+    console.log('[AgentController.compactSession] summarize request', {
+      agentId,
+      sessionId: handle.sessionId,
+      ...model
+    })
+
     const result = await runtime.client.session.summarize({
       sessionID: handle.sessionId,
-      directory: handle.directory
+      directory: handle.directory,
+      ...model
+    })
+
+    console.log('[AgentController.compactSession] summarize response', {
+      agentId,
+      sessionId: handle.sessionId,
+      data: result.data
     })
 
     return result.data
+  }
+
+  /**
+   * Resolve the provider/model pair to use for a compaction. Prefers the
+   * agent's explicit override; falls back to the runtime's system default.
+   * Returns null when neither is available so the caller can surface an
+   * actionable error.
+   */
+  private async resolveCompactionModel(
+    handle: AgentHandle,
+    client: OpencodeClient
+  ): Promise<{ providerID: string; modelID: string } | null> {
+    if (handle.modelOverride?.providerID && handle.modelOverride.modelID) {
+      return {
+        providerID: handle.modelOverride.providerID,
+        modelID: handle.modelOverride.modelID
+      }
+    }
+
+    try {
+      const configResult = await client.config.get({})
+      const configModel = (configResult.data as { model?: string })?.model
+      if (configModel?.includes('/')) {
+        const [providerID, modelID] = configModel.split('/', 2)
+        if (providerID && modelID) return { providerID, modelID }
+      }
+    } catch (err) {
+      console.warn('[compactSession] failed to resolve default model from config', err)
+    }
+
+    return null
   }
 
   /**

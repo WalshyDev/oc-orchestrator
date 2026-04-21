@@ -16,6 +16,39 @@ interface Attachment {
 }
 
 /**
+ * Log an IPC handler error with rich details.
+ *
+ * Node's default formatting of Error objects shows name/message/stack, but SDK
+ * errors from @opencode-ai/sdk often stash useful context on `.cause`,
+ * `.response.data`, or `.body` which isn't printed. Surface those too so the
+ * `npm run dev` terminal contains everything needed to diagnose the failure.
+ */
+function logIpcError(channel: string, error: unknown, context?: Record<string, unknown>): void {
+  const err = error as (Error & {
+    cause?: unknown
+    status?: number
+    statusText?: string
+    body?: unknown
+    response?: { status?: number; statusText?: string; data?: unknown }
+  }) | null | undefined
+
+  const details: Record<string, unknown> = {}
+  if (context) Object.assign(details, context)
+  if (err?.name) details.name = err.name
+  if (err?.message) details.message = err.message
+  const status = err?.status ?? err?.response?.status
+  if (status !== undefined) details.status = status
+  const statusText = err?.statusText ?? err?.response?.statusText
+  if (statusText !== undefined) details.statusText = statusText
+  const body = err?.body ?? err?.response?.data
+  if (body !== undefined) details.body = body
+  if (err?.cause !== undefined) details.cause = err.cause
+
+  console.error(`[IPC] ${channel} failed:`, details)
+  if (err?.stack) console.error(err.stack)
+}
+
+/**
  * Register all IPC handlers for renderer <-> main communication.
  */
 export function registerIpcHandlers(): void {
@@ -46,7 +79,7 @@ export function registerIpcHandlers(): void {
         }
       }
     } catch (error) {
-      console.error('[IPC] agent:launch failed:', error)
+      logIpcError('agent:launch', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -56,7 +89,7 @@ export function registerIpcHandlers(): void {
       await agentController.sendMessage(agentId, text, agent, attachments)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:send-message failed:', error)
+      logIpcError('agent:send-message', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -66,7 +99,7 @@ export function registerIpcHandlers(): void {
       await agentController.respondToPermission(agentId, permissionId, response)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:respond-permission failed:', error)
+      logIpcError('agent:respond-permission', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -76,7 +109,7 @@ export function registerIpcHandlers(): void {
       await agentController.replyToQuestion(agentId, requestId, answers)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:reply-question failed:', error)
+      logIpcError('agent:reply-question', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -86,7 +119,7 @@ export function registerIpcHandlers(): void {
       await agentController.rejectQuestion(agentId, requestId)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:reject-question failed:', error)
+      logIpcError('agent:reject-question', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -96,7 +129,7 @@ export function registerIpcHandlers(): void {
       const questions = await agentController.getAllPendingQuestions()
       return { ok: true, data: questions }
     } catch (error) {
-      console.error('[IPC] agent:list-questions failed:', error)
+      logIpcError('agent:list-questions', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -106,7 +139,7 @@ export function registerIpcHandlers(): void {
       const permissions = await agentController.getAllPendingPermissions()
       return { ok: true, data: permissions }
     } catch (error) {
-      console.error('[IPC] agent:list-permissions failed:', error)
+      logIpcError('agent:list-permissions', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -116,7 +149,7 @@ export function registerIpcHandlers(): void {
       await agentController.abortAgent(agentId)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:abort failed:', error)
+      logIpcError('agent:abort', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -126,7 +159,7 @@ export function registerIpcHandlers(): void {
       await agentController.removeAgent(agentId)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:remove failed:', error)
+      logIpcError('agent:remove', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -145,7 +178,7 @@ export function registerIpcHandlers(): void {
         }
       }
     } catch (error) {
-      console.error('[IPC] agent:reset-session failed:', error)
+      logIpcError('agent:reset-session', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -155,7 +188,7 @@ export function registerIpcHandlers(): void {
       const commands = await agentController.listCommands(agentId)
       return { ok: true, data: commands }
     } catch (error) {
-      console.error('[IPC] agent:list-commands failed:', error)
+      logIpcError('agent:list-commands', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -165,7 +198,7 @@ export function registerIpcHandlers(): void {
       const result = await agentController.executeCommand(agentId, command, args)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:execute-command failed:', error)
+      logIpcError('agent:execute-command', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -175,7 +208,7 @@ export function registerIpcHandlers(): void {
       const config = await agentController.getConfig(agentId)
       return { ok: true, data: config }
     } catch (error) {
-      console.error('[IPC] agent:get-config failed:', error)
+      logIpcError('agent:get-config', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -185,7 +218,7 @@ export function registerIpcHandlers(): void {
       const result = await agentController.updateConfig(agentId, config)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:update-config failed:', error)
+      logIpcError('agent:update-config', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -195,7 +228,7 @@ export function registerIpcHandlers(): void {
       const providers = await agentController.getProviders(agentId)
       return { ok: true, data: providers }
     } catch (error) {
-      console.error('[IPC] agent:get-providers failed:', error)
+      logIpcError('agent:get-providers', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -205,7 +238,7 @@ export function registerIpcHandlers(): void {
       const status = await agentController.getMcpStatus(agentId)
       return { ok: true, data: status }
     } catch (error) {
-      console.error('[IPC] agent:mcp-status failed:', error)
+      logIpcError('agent:mcp-status', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -215,7 +248,7 @@ export function registerIpcHandlers(): void {
       const result = await agentController.connectMcp(agentId, name)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:mcp-connect failed:', error)
+      logIpcError('agent:mcp-connect', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -225,17 +258,19 @@ export function registerIpcHandlers(): void {
       const result = await agentController.disconnectMcp(agentId, name)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:mcp-disconnect failed:', error)
+      logIpcError('agent:mcp-disconnect', error)
       return { ok: false, error: String(error) }
     }
   })
 
   ipcMain.handle('agent:compact', async (_event, agentId: string) => {
+    console.log('[IPC] agent:compact called', { agentId })
     try {
       const result = await agentController.compactSession(agentId)
+      console.log('[IPC] agent:compact succeeded', { agentId })
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:compact failed:', error)
+      logIpcError('agent:compact', error, { agentId })
       return { ok: false, error: String(error) }
     }
   })
@@ -245,7 +280,7 @@ export function registerIpcHandlers(): void {
       const result = await agentController.shareSession(agentId)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] agent:share failed:', error)
+      logIpcError('agent:share', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -255,7 +290,7 @@ export function registerIpcHandlers(): void {
       const agents = await agentController.listAgentConfigs(agentId)
       return { ok: true, data: agents }
     } catch (error) {
-      console.error('[IPC] agent:list-agent-configs failed:', error)
+      logIpcError('agent:list-agent-configs', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -265,7 +300,7 @@ export function registerIpcHandlers(): void {
       const tools = await agentController.listTools(agentId)
       return { ok: true, data: tools }
     } catch (error) {
-      console.error('[IPC] agent:list-tools failed:', error)
+      logIpcError('agent:list-tools', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -275,7 +310,7 @@ export function registerIpcHandlers(): void {
       await agentController.sendMessageWithModel(agentId, text, providerID, modelID, attachments)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:send-message-with-model failed:', error)
+      logIpcError('agent:send-message-with-model', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -285,7 +320,7 @@ export function registerIpcHandlers(): void {
       const messages = await agentController.getMessages(agentId)
       return { ok: true, data: messages }
     } catch (error) {
-      console.error('[IPC] agent:get-messages failed:', error)
+      logIpcError('agent:get-messages', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -295,7 +330,7 @@ export function registerIpcHandlers(): void {
       const sessions = await agentController.listSessions(directory)
       return { ok: true, data: sessions }
     } catch (error) {
-      console.error('[IPC] session:list failed:', error)
+      logIpcError('session:list', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -305,7 +340,7 @@ export function registerIpcHandlers(): void {
       const sessions = await agentController.listSessionsByProject(projectDirectory)
       return { ok: true, data: sessions }
     } catch (error) {
-      console.error('[IPC] session:list-by-project failed:', error)
+      logIpcError('session:list-by-project', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -318,7 +353,7 @@ export function registerIpcHandlers(): void {
       const result = await agentController.forkSession(options)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] session:fork failed:', error)
+      logIpcError('session:fork', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -346,7 +381,7 @@ export function registerIpcHandlers(): void {
         }
       }
     } catch (error) {
-      console.error('[IPC] agent:resume failed:', error)
+      logIpcError('agent:resume', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -384,7 +419,7 @@ export function registerIpcHandlers(): void {
       agentController.updateAgentMeta(agentId, meta)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:update-meta failed:', error)
+      logIpcError('agent:update-meta', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -394,7 +429,7 @@ export function registerIpcHandlers(): void {
       const statuses = await agentController.getSessionStatuses()
       return { ok: true, data: statuses }
     } catch (error) {
-      console.error('[IPC] agent:statuses failed:', error)
+      logIpcError('agent:statuses', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -427,7 +462,7 @@ export function registerIpcHandlers(): void {
       const data = await agentController.getProvidersFromAnyRuntime()
       return { ok: true, data }
     } catch (error) {
-      console.error('[IPC] runtime:providers failed:', error)
+      logIpcError('runtime:providers', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -437,7 +472,7 @@ export function registerIpcHandlers(): void {
       const data = await agentController.listCommandsFromAnyRuntime()
       return { ok: true, data }
     } catch (error) {
-      console.error('[IPC] runtime:commands failed:', error)
+      logIpcError('runtime:commands', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -447,7 +482,7 @@ export function registerIpcHandlers(): void {
       const data = await agentController.listAgentConfigsFromAnyRuntime()
       return { ok: true, data }
     } catch (error) {
-      console.error('[IPC] runtime:agent-configs failed:', error)
+      logIpcError('runtime:agent-configs', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -457,7 +492,7 @@ export function registerIpcHandlers(): void {
       const data = await agentController.getConfigFromAnyRuntime()
       return { ok: true, data }
     } catch (error) {
-      console.error('[IPC] runtime:config failed:', error)
+      logIpcError('runtime:config', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -484,7 +519,7 @@ export function registerIpcHandlers(): void {
       const isRepo = workspaceManager.isGitRepo(directory)
       return { ok: true, data: isRepo }
     } catch (error) {
-      console.error('[IPC] workspace:validate-git failed:', error)
+      logIpcError('workspace:validate-git', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -494,7 +529,7 @@ export function registerIpcHandlers(): void {
       const root = workspaceManager.getWorktreeRoot()
       return { ok: true, data: root }
     } catch (error) {
-      console.error('[IPC] workspace:root failed:', error)
+      logIpcError('workspace:root', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -504,7 +539,7 @@ export function registerIpcHandlers(): void {
       const repoRoot = workspaceManager.getRepoRoot(directory)
       return { ok: true, data: repoRoot }
     } catch (error) {
-      console.error('[IPC] workspace:repo-root failed:', error)
+      logIpcError('workspace:repo-root', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -514,7 +549,7 @@ export function registerIpcHandlers(): void {
       const repoRoot = await workspaceManager.getCommonRepoRoot(directory)
       return { ok: true, data: repoRoot }
     } catch (error) {
-      console.error('[IPC] workspace:common-repo-root failed:', error)
+      logIpcError('workspace:common-repo-root', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -528,7 +563,7 @@ export function registerIpcHandlers(): void {
       const result = workspaceManager.createWorktree(options.repoRoot, options.projectSlug, options.taskSlug)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] workspace:create failed:', error)
+      logIpcError('workspace:create', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -543,7 +578,7 @@ export function registerIpcHandlers(): void {
       const result = workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug, options.baseRef)
       return { ok: true, data: result }
     } catch (error) {
-      console.error('[IPC] workspace:create-fresh failed:', error)
+      logIpcError('workspace:create-fresh', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -553,7 +588,7 @@ export function registerIpcHandlers(): void {
       const branch = workspaceManager.getDefaultBranch(repoRoot)
       return { ok: true, data: branch }
     } catch (error) {
-      console.error('[IPC] workspace:default-branch failed:', error)
+      logIpcError('workspace:default-branch', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -566,7 +601,7 @@ export function registerIpcHandlers(): void {
       await workspaceManager.removeWorktree(options.repoRoot, options.worktreePath)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] workspace:remove failed:', error)
+      logIpcError('workspace:remove', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -576,7 +611,7 @@ export function registerIpcHandlers(): void {
       const worktrees = workspaceManager.listWorktrees(repoRoot)
       return { ok: true, data: worktrees }
     } catch (error) {
-      console.error('[IPC] workspace:list failed:', error)
+      logIpcError('workspace:list', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -586,7 +621,7 @@ export function registerIpcHandlers(): void {
       const status = workspaceManager.getWorktreeStatus(worktreePath)
       return { ok: true, data: status }
     } catch (error) {
-      console.error('[IPC] workspace:status failed:', error)
+      logIpcError('workspace:status', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -598,7 +633,7 @@ export function registerIpcHandlers(): void {
       const projects = database.getAllProjects()
       return { ok: true, data: projects }
     } catch (error) {
-      console.error('[IPC] db:projects:list failed:', error)
+      logIpcError('db:projects:list', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -611,7 +646,7 @@ export function registerIpcHandlers(): void {
       const project = database.createProject(options.name, options.repoRoot)
       return { ok: true, data: project }
     } catch (error) {
-      console.error('[IPC] db:projects:create failed:', error)
+      logIpcError('db:projects:create', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -624,7 +659,7 @@ export function registerIpcHandlers(): void {
       const project = database.ensureProject(options.name, options.repoRoot)
       return { ok: true, data: project }
     } catch (error) {
-      console.error('[IPC] db:projects:ensure failed:', error)
+      logIpcError('db:projects:ensure', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -634,7 +669,7 @@ export function registerIpcHandlers(): void {
       const deleted = database.deleteProject(projectId)
       return { ok: true, data: deleted }
     } catch (error) {
-      console.error('[IPC] db:projects:delete failed:', error)
+      logIpcError('db:projects:delete', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -650,7 +685,7 @@ export function registerIpcHandlers(): void {
       }
       return { ok: true, data: project }
     } catch (error) {
-      console.error('[IPC] db:projects:update-settings failed:', error)
+      logIpcError('db:projects:update-settings', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -662,7 +697,7 @@ export function registerIpcHandlers(): void {
       const value = database.getPreference(key)
       return { ok: true, data: value }
     } catch (error) {
-      console.error('[IPC] db:preferences:get failed:', error)
+      logIpcError('db:preferences:get', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -672,7 +707,7 @@ export function registerIpcHandlers(): void {
       database.setPreference(key, value)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] db:preferences:set failed:', error)
+      logIpcError('db:preferences:set', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -684,7 +719,7 @@ export function registerIpcHandlers(): void {
       const labels = database.getAllCustomLabels()
       return { ok: true, data: labels }
     } catch (error) {
-      console.error('[IPC] db:labels:list failed:', error)
+      logIpcError('db:labels:list', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -694,7 +729,7 @@ export function registerIpcHandlers(): void {
       const label = database.createCustomLabel(options.id, options.name, options.colorKey)
       return { ok: true, data: label }
     } catch (error) {
-      console.error('[IPC] db:labels:create failed:', error)
+      logIpcError('db:labels:create', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -704,7 +739,7 @@ export function registerIpcHandlers(): void {
       const label = database.updateCustomLabel(options.id, options.name, options.colorKey)
       return { ok: true, data: label }
     } catch (error) {
-      console.error('[IPC] db:labels:update failed:', error)
+      logIpcError('db:labels:update', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -714,7 +749,7 @@ export function registerIpcHandlers(): void {
       const deleted = database.deleteCustomLabel(labelId)
       return { ok: true, data: deleted }
     } catch (error) {
-      console.error('[IPC] db:labels:delete failed:', error)
+      logIpcError('db:labels:delete', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -729,7 +764,7 @@ export function registerIpcHandlers(): void {
       }
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] agent:notify-status failed:', error)
+      logIpcError('agent:notify-status', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -739,7 +774,7 @@ export function registerIpcHandlers(): void {
       const preferences = notificationService.getPreferences()
       return { ok: true, data: preferences }
     } catch (error) {
-      console.error('[IPC] notifications:get-preferences failed:', error)
+      logIpcError('notifications:get-preferences', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -749,7 +784,7 @@ export function registerIpcHandlers(): void {
       notificationService.setPreference(eventType, enabled)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] notifications:set-preference failed:', error)
+      logIpcError('notifications:set-preference', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -758,7 +793,7 @@ export function registerIpcHandlers(): void {
     try {
       return { ok: true, data: notificationService.getSoundEnabled() }
     } catch (error) {
-      console.error('[IPC] notifications:get-sound-enabled failed:', error)
+      logIpcError('notifications:get-sound-enabled', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -768,7 +803,7 @@ export function registerIpcHandlers(): void {
       notificationService.setSoundEnabled(enabled)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] notifications:set-sound-enabled failed:', error)
+      logIpcError('notifications:set-sound-enabled', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -778,7 +813,7 @@ export function registerIpcHandlers(): void {
       const agentId = notificationService.getPendingAgentId()
       return { ok: true, data: agentId }
     } catch (error) {
-      console.error('[IPC] notifications:get-pending-agent failed:', error)
+      logIpcError('notifications:get-pending-agent', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -819,7 +854,7 @@ export function registerIpcHandlers(): void {
       await run(cmd, [options.path])
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] shell:open-in-editor failed:', error)
+      logIpcError('shell:open-in-editor', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -837,7 +872,7 @@ export function registerIpcHandlers(): void {
 
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] shell:open-terminal failed:', error)
+      logIpcError('shell:open-terminal', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -847,7 +882,7 @@ export function registerIpcHandlers(): void {
       await shell.openExternal(url)
       return { ok: true }
     } catch (error) {
-      console.error('[IPC] shell:open-external failed:', error)
+      logIpcError('shell:open-external', error)
       return { ok: false, error: String(error) }
     }
   })
