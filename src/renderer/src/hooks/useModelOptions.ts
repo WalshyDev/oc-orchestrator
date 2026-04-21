@@ -32,6 +32,12 @@ const contextLimitObservers = new Set<() => void>()
 
 export function subscribeToContextLimits(listener: () => void): () => void {
   contextLimitObservers.add(listener)
+  // Fire immediately if the cache is already populated. Without this, a
+  // listener that mounts after the initial provider fetch (e.g. React strict
+  // mode's double-mount, HMR reloads, or any code path where the fetch
+  // finishes before the agent store's useEffect runs) would never backfill
+  // limits on its agents.
+  if (contextLimitCache.size > 0) listener()
   return () => contextLimitObservers.delete(listener)
 }
 
@@ -139,6 +145,32 @@ interface ProviderFetchResult {
 
 let providerFetchPromise: Promise<ProviderFetchResult> | null = null
 
+// Automatic retry for the common race where ensureProvidersLoaded runs before
+// any runtime exists. We back off exponentially but cap at 5 seconds so we
+// settle quickly once a runtime spins up, without hammering on a truly-empty
+// install. Max ~25s of total retries — after that we stop until something
+// explicit (like a new agent launch) triggers another fetch.
+let retryDelayMs = 500
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleProviderRetry(): void {
+  if (retryTimer) return // already scheduled
+  if (retryDelayMs > 5000) return // gave up; wait for explicit trigger
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    retryDelayMs = Math.min(retryDelayMs * 2, 5000)
+    void ensureProvidersLoaded()
+  }, retryDelayMs)
+}
+
+function resetProviderRetry(): void {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  retryDelayMs = 500
+}
+
 export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
   if (providerFetchPromise) return providerFetchPromise
 
@@ -153,7 +185,18 @@ export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
         ? providersResult.data as ProviderData
         : null
 
-      if (providerData) recordContextLimitsFromProviders(providerData)
+      if (providerData) {
+        resetProviderRetry()
+        recordContextLimitsFromProviders(providerData)
+      } else {
+        // Common cause: the fetch raced with agent restoration, so no runtime
+        // was attached yet and the main process returned ok:true with no data.
+        // Clear the cached promise so a future caller can retry, and schedule
+        // an automatic retry after a short delay so context limits populate
+        // even if nothing else triggers a re-fetch.
+        providerFetchPromise = null
+        scheduleProviderRetry()
+      }
 
       const configModel = configResult.ok && configResult.data
         ? (configResult.data as { model?: string }).model
