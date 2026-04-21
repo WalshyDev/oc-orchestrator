@@ -77,6 +77,10 @@ export function App() {
     setSelectedAgentIdRaw(id)
     if (id && scrollTarget) {
       setDrawerScrollRequest((prev) => ({ target: scrollTarget, seq: (prev?.seq ?? 0) + 1 }))
+    } else {
+      // Clear any stale scroll request so plain row clicks (or drawer close)
+      // don't trigger a jump when the drawer remounts for a new agent.
+      setDrawerScrollRequest(null)
     }
   }, [])
   const [showLaunchModal, setShowLaunchModal] = useState(false)
