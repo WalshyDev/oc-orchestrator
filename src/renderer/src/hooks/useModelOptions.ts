@@ -10,8 +10,37 @@ export interface ProviderData {
   providers: Array<{
     id: string
     name: string
-    models: Record<string, { id: string; name: string }>
+    models: Record<string, {
+      id: string
+      name: string
+      limit?: { context?: number; input?: number; output?: number }
+    }>
   }>
+}
+
+/**
+ * Global cache mapping `${providerId}/${modelId}` and bare `modelId` to the
+ * provider-reported context window. Populated from the provider fetch and
+ * queried by callers that need to compute "% of context used" for an agent.
+ */
+const contextLimitCache = new Map<string, number>()
+
+export function recordContextLimitsFromProviders(data: ProviderData): void {
+  for (const provider of data.providers) {
+    for (const model of Object.values(provider.models)) {
+      const limit = model.limit?.context
+      if (typeof limit !== 'number' || limit <= 0) continue
+      contextLimitCache.set(`${provider.id}/${model.id}`, limit)
+      // Also index by bare id so callers that don't carry the provider prefix
+      // can still look up a limit when it's unambiguous.
+      if (!contextLimitCache.has(model.id)) contextLimitCache.set(model.id, limit)
+    }
+  }
+}
+
+export function lookupContextLimit(modelKey: string | undefined): number | undefined {
+  if (!modelKey) return undefined
+  return contextLimitCache.get(modelKey)
 }
 
 export const STATIC_MODEL_OPTIONS: ModelOption[] = [
@@ -94,6 +123,8 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean } 
         const providerData = providersResult.ok && providersResult.data
           ? providersResult.data as ProviderData
           : null
+
+        if (providerData) recordContextLimitsFromProviders(providerData)
 
         const configModel = configResult.ok && configResult.data
           ? (configResult.data as { model?: string }).model

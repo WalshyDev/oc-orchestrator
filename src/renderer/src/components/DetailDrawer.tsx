@@ -24,6 +24,8 @@ import {
   Lightning,
   Code,
   CheckCircle,
+  Warning,
+  ArrowsInLineHorizontal,
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
@@ -147,6 +149,15 @@ interface DetailDrawerProps {
   allLabels?: LabelDefinition[]
   onCreateLabel?: (name: string, colorKey: LabelColorKey) => Promise<LabelDefinition | null>
   onDeleteLabel?: (id: string) => Promise<boolean>
+  /** Dismiss the error banner without any corrective action. */
+  onDismissError?: () => void
+  /** Trigger server-side compaction of the transcript. Used from the banner
+   *  (when a ContextOverflowError surfaces) and from the always-visible
+   *  Compact action button. */
+  onCompact?: () => void
+  /** Recovery for sessions too large to compact — reset to a fresh session
+   *  that re-orients itself from git history. */
+  onStartFreshSession?: () => void
 }
 
 export const DetailDrawer = memo(function DetailDrawer({
@@ -180,7 +191,10 @@ export const DetailDrawer = memo(function DetailDrawer({
   onClearLabels,
   allLabels = [],
   onCreateLabel,
-  onDeleteLabel
+  onDeleteLabel,
+  onDismissError,
+  onCompact,
+  onStartFreshSession
 }: DetailDrawerProps) {
   const [inputText, _setInputText] = useState(() => draftInputs.get(agent.id) ?? '')
   const setInputText = useCallback((text: string) => {
@@ -704,6 +718,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 {agent.lastActivityAtMs ? ` · ${formatRelativeTime(agent.lastActivityAtMs)}` : ''}
               </span>
             )}
+            <ContextUsageIndicator used={agent.contextTokens} limit={agent.contextLimit} />
             <StatusBadge status={agent.status} />
             {onRemove && (
               <button
@@ -910,6 +925,14 @@ export const DetailDrawer = memo(function DetailDrawer({
           })}
         </div>
 
+        {/* Status banner — shows compaction in progress or a session-level error. */}
+        <StatusBanner
+          agent={agent}
+          onCompact={onCompact}
+          onStartFreshSession={onStartFreshSession}
+          onDismissError={onDismissError}
+        />
+
         {/* Input row: text input left, action buttons + send right */}
         <div
           className={`flex gap-2 px-3 py-2 border-t flex-1 min-h-0 transition-colors ${
@@ -1042,81 +1065,112 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           </div>
 
-          {/* Right column: Label, PR, Open In at top · Send/Stop at bottom */}
-          <div className="flex flex-col gap-1 shrink-0 w-[88px]">
-            {onToggleLabel && onClearLabels && (
-              <LabelDropdown
-                current={agent.labelIds}
-                onToggle={onToggleLabel}
-                onClear={onClearLabels}
-                allLabels={allLabels}
-                onCreateLabel={onCreateLabel}
-                onDeleteLabel={onDeleteLabel}
-                variant="action"
+          {/* Right column: scrollable secondary actions · pinned primary button.
+              The inner scroll region gets flex-1 + min-h-0 so it absorbs the
+              column's free space and clips — otherwise the secondary buttons'
+              natural height pushes the primary button (Send/Stop) off-screen
+              when the bottom pane is resized small. */}
+          <div className="flex flex-col gap-1 shrink-0 w-[88px] min-h-0 h-full">
+            <div className="flex flex-col gap-1 flex-1 min-h-0 overflow-y-auto">
+              {onToggleLabel && onClearLabels && (
+                <LabelDropdown
+                  current={agent.labelIds}
+                  onToggle={onToggleLabel}
+                  onClear={onClearLabels}
+                  allLabels={allLabels}
+                  onCreateLabel={onCreateLabel}
+                  onDeleteLabel={onDeleteLabel}
+                  variant="action"
+                  className="w-full"
+                />
+              )}
+              <ActionDropdownButton
+                icon={<GitPullRequest size={12} />}
+                label="PR"
                 className="w-full"
+                items={[
+                  {
+                    icon: <ArrowLineUpRight size={12} />,
+                    label: 'View PR',
+                    onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined
+                  },
+                  {
+                    icon: <Link size={12} />,
+                    label: agent.prUrl ? 'Edit PR Link' : 'Add PR Link',
+                    onClick: onSetPrUrl ? () => setShowPrLinkModal(true) : undefined
+                  },
+                  {
+                    icon: <Trash size={12} />,
+                    label: 'Remove PR Link',
+                    onClick: agent.prUrl && onSetPrUrl ? () => onSetPrUrl(null) : undefined
+                  },
+                  {
+                    icon: <GitPullRequest size={12} />,
+                    label: 'Create PR',
+                    onClick: onCreatePr
+                  }
+                ]}
               />
-            )}
-            <ActionDropdownButton
-              icon={<GitPullRequest size={12} />}
-              label="PR"
-              className="w-full"
-              items={[
-                {
-                  icon: <ArrowLineUpRight size={12} />,
-                  label: 'View PR',
-                  onClick: agent.prUrl ? () => window.api?.openExternal(agent.prUrl!) : undefined
-                },
-                {
-                  icon: <Link size={12} />,
-                  label: agent.prUrl ? 'Edit PR Link' : 'Add PR Link',
-                  onClick: onSetPrUrl ? () => setShowPrLinkModal(true) : undefined
-                },
-                {
-                  icon: <Trash size={12} />,
-                  label: 'Remove PR Link',
-                  onClick: agent.prUrl && onSetPrUrl ? () => onSetPrUrl(null) : undefined
-                },
-                {
-                  icon: <GitPullRequest size={12} />,
-                  label: 'Create PR',
-                  onClick: onCreatePr
-                }
-              ]}
-            />
-            <ActionDropdownButton
-              icon={<ArrowSquareOut size={12} />}
-              label="Open In"
-              className="w-full"
-              items={[
-                { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
-                { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
-              ]}
-            />
-            <div className="flex-1" />
-            {/* Send / Stop toggle button */}
-            {onAbort && (agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping') ? (
-              <button
-                onClick={onAbort}
-                disabled={agent.status === 'stopping'}
-                className="flex items-center justify-center gap-1.5 w-full h-7 rounded-lg bg-kumo-danger/90 text-white text-xs font-medium transition-colors hover:bg-kumo-danger disabled:opacity-50"
-                title={agent.status === 'stopping' ? 'Stopping…' : 'Stop agent'}
-              >
-                <Stop size={12} weight="fill" />
-                {agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!inputText.trim() && attachments.length === 0}
-                className={`flex items-center justify-center gap-1.5 w-full h-7 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-30 ${
-                  canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
-                }`}
-                title={canReplyViaChat ? 'Reply' : 'Send message'}
-              >
-                <ArrowUp size={12} weight="bold" />
-                {canReplyViaChat ? 'Reply' : 'Send'}
-              </button>
-            )}
+              <ActionDropdownButton
+                icon={<ArrowSquareOut size={12} />}
+                label="Open In"
+                className="w-full"
+                items={[
+                  { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
+                  { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
+                ]}
+              />
+              {onChangeModel && (
+                <ActionButton
+                  icon={<Brain size={12} />}
+                  label="Model"
+                  onClick={onChangeModel}
+                  className="w-full"
+                />
+              )}
+              {onCompact && (
+                <ActionButton
+                  icon={agent.compacting ? <CircleNotch size={12} className="animate-spin" /> : <ArrowsInLineHorizontal size={12} />}
+                  label={agent.compacting ? 'Compacting…' : 'Compact'}
+                  onClick={onCompact}
+                  disabled={agent.compacting}
+                  className="w-full"
+                />
+              )}
+            </div>
+            {/* Primary action button sits directly below the scroll region so
+                it's always visible, no matter how tall the content is above. */}
+            {(() => {
+              const isRunningLike = agent.status === 'running' || agent.status === 'needs_approval' || agent.status === 'needs_input' || agent.status === 'stopping'
+
+              if (onAbort && isRunningLike) {
+                return (
+                  <button
+                    onClick={onAbort}
+                    disabled={agent.status === 'stopping'}
+                    className="shrink-0 flex items-center justify-center gap-1.5 w-full h-7 rounded-lg bg-kumo-danger/90 text-white text-xs font-medium transition-colors hover:bg-kumo-danger disabled:opacity-50"
+                    title={agent.status === 'stopping' ? 'Stopping…' : 'Stop agent'}
+                  >
+                    <Stop size={12} weight="fill" />
+                    {agent.status === 'stopping' ? 'Stopping…' : 'Stop'}
+                  </button>
+                )
+              }
+
+              return (
+                <button
+                  onClick={handleSend}
+                  disabled={!inputText.trim() && attachments.length === 0}
+                  className={`shrink-0 flex items-center justify-center gap-1.5 w-full h-7 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-30 ${
+                    canReplyViaChat ? 'bg-status-input hover:bg-status-input/80' : 'bg-kumo-brand hover:bg-kumo-brand-hover'
+                  }`}
+                  title={canReplyViaChat ? 'Reply' : 'Send message'}
+                >
+                  <ArrowUp size={12} weight="bold" />
+                  {canReplyViaChat ? 'Reply' : 'Send'}
+                </button>
+              )
+            })()}
           </div>
         </div>
         </div>{/* end bottom pane */}
@@ -1367,6 +1421,21 @@ const MessageBubble = memo(function MessageBubble({
     return <ToolGroupBubble message={message} verbose={verbose} rootRef={rootRef} />
   }
 
+  if (message.role === 'compaction') {
+    return (
+      <div
+        ref={rootRef}
+        className="self-center my-2 px-3 py-1.5 text-[11px] text-status-warning/90 border border-status-warning/30 bg-status-warning/10 rounded-full flex items-center gap-1.5"
+      >
+        {message.compactionActive
+          ? <CircleNotch size={11} weight="bold" className="animate-spin" />
+          : <ArrowsInLineHorizontal size={11} weight="bold" />
+        }
+        <span>{message.compactionActive ? 'Compacting session…' : message.content}</span>
+      </div>
+    )
+  }
+
   if (message.role === 'tool') {
     const toolName = message.toolName ?? extractToolName(message.content)
     const toolOutput = message.content ? extractToolOutput(message.content) : ''
@@ -1564,6 +1633,164 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbose === next.verbose
 )
+
+/**
+ * Which banner the drawer should render, derived from the agent's transient
+ * state. Computed once at the top of StatusBanner so the JSX stays flat.
+ */
+type BannerKind = 'compacting' | 'uncompactable' | 'overflow' | 'error'
+
+function bannerKind(agent: AgentRuntime): BannerKind | null {
+  if (agent.compacting) return 'compacting'
+  if (!agent.lastError) return null
+  // When compaction itself can't run (transcript already exceeds the provider's
+  // context limit — even summarization needs to read it), opencode reports a
+  // "prompt is too long" error. Compacting is not a valid recovery for this.
+  if (agent.lastError.message?.includes('prompt is too long')) return 'uncompactable'
+  if (agent.lastError.name === 'ContextOverflowError') return 'overflow'
+  return 'error'
+}
+
+interface BannerContent {
+  title: string
+  body: string
+  containerTone: string
+  iconTone: string
+}
+
+function bannerContent(kind: BannerKind, agent: AgentRuntime): BannerContent {
+  switch (kind) {
+    case 'compacting':
+      return {
+        title: 'Compacting session…',
+        body: 'Summarizing the conversation so far. This can take a few minutes for long sessions.',
+        containerTone: 'border-kumo-brand/40 bg-kumo-brand/10',
+        iconTone: 'text-kumo-brand'
+      }
+    case 'uncompactable':
+      return {
+        title: 'Session too large to compact',
+        body: 'The transcript already exceeds the model\'s context window, so even compaction can\'t run. Your code changes are preserved in the worktree — start a fresh session below and it will reconstruct context from git history.',
+        containerTone: 'border-kumo-danger/40 bg-kumo-danger/10',
+        iconTone: 'text-kumo-danger'
+      }
+    case 'overflow':
+      return {
+        title: 'Context window full',
+        body: 'This session is too long for the model to read in one pass. Compact the conversation to free up space, or switch to a model with a larger context window.',
+        containerTone: 'border-status-warning/40 bg-status-warning/10',
+        iconTone: 'text-status-warning'
+      }
+    case 'error':
+      return {
+        title: agent.lastError!.name,
+        body: agent.lastError!.message ?? 'The server reported an error. Check the logs for details.',
+        containerTone: 'border-kumo-danger/40 bg-kumo-danger/10',
+        iconTone: 'text-kumo-danger'
+      }
+  }
+}
+
+function StatusBanner({
+  agent,
+  onCompact,
+  onStartFreshSession,
+  onDismissError
+}: {
+  agent: AgentRuntime
+  onCompact?: () => void
+  onStartFreshSession?: () => void
+  onDismissError?: () => void
+}) {
+  const kind = bannerKind(agent)
+  if (!kind) return null
+
+  const { title, body, containerTone, iconTone } = bannerContent(kind, agent)
+  const showCompact = kind === 'overflow' && !!onCompact
+  const showStartFresh = kind === 'uncompactable' && !!onStartFreshSession
+  // Every error is dismissible. The user decides when to compact, switch
+  // models, or start fresh — we just surface the problem.
+  const showDismiss = kind !== 'compacting' && !!onDismissError
+
+  return (
+    <div className={`flex items-start gap-2 px-3 py-2 border-t text-[11px] ${containerTone}`}>
+      {kind === 'compacting'
+        ? <CircleNotch size={14} weight="bold" className={`mt-0.5 shrink-0 animate-spin ${iconTone}`} />
+        : <Warning size={14} weight="fill" className={`mt-0.5 shrink-0 ${iconTone}`} />
+      }
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-kumo-default">{title}</div>
+        <div className="text-kumo-subtle leading-snug mt-0.5">{body}</div>
+      </div>
+      <div className="flex flex-col gap-1 shrink-0">
+        {showCompact && (
+          <button
+            type="button"
+            onClick={onCompact}
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-kumo-brand hover:bg-kumo-brand-hover text-white text-[11px] font-medium whitespace-nowrap"
+          >
+            <ArrowsInLineHorizontal size={11} weight="bold" />
+            Compact
+          </button>
+        )}
+        {showStartFresh && (
+          <button
+            type="button"
+            onClick={onStartFreshSession}
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-kumo-brand hover:bg-kumo-brand-hover text-white text-[11px] font-medium whitespace-nowrap"
+          >
+            <Rocket size={11} weight="bold" />
+            Start fresh session
+          </button>
+        )}
+        {showDismiss && (
+          <button
+            type="button"
+            onClick={onDismissError}
+            className="flex items-center gap-1 px-2 py-1 rounded-md border border-kumo-line hover:bg-kumo-fill text-kumo-default text-[11px] whitespace-nowrap"
+          >
+            <X size={11} />
+            Dismiss
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Thresholds for the context-usage color ramp, ordered highest → lowest. The
+ * first entry whose `minPct` the current usage meets wins. Exposed as a table
+ * rather than an if/else chain so the breakpoints are easy to tune.
+ */
+const CONTEXT_USAGE_TONES: ReadonlyArray<{ minPct: number; tone: string }> = [
+  { minPct: 95, tone: 'text-kumo-danger' },       // compact now
+  { minPct: 80, tone: 'text-status-warning' },    // compact soon
+  { minPct: 60, tone: 'text-status-warning/80' }, // worth noticing
+  { minPct: 0,  tone: 'text-kumo-subtle' }        // plenty of room
+]
+
+function formatTokenCount(n: number): string {
+  return n >= 10_000 ? `${Math.round(n / 1000)}k` : `${n}`
+}
+
+/**
+ * Compact display of context-window usage. Hidden when we don't have enough
+ * data to compute (e.g. no assistant messages yet).
+ */
+function ContextUsageIndicator({ used, limit }: { used?: number; limit?: number }) {
+  if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return null
+
+  const pct = Math.min(100, Math.round((used / limit) * 100))
+  const tone = CONTEXT_USAGE_TONES.find((t) => pct >= t.minPct)?.tone ?? 'text-kumo-subtle'
+  const title = `${used.toLocaleString()} / ${limit.toLocaleString()} tokens in context (${pct}%)`
+
+  return (
+    <span className={`text-[10px] font-mono whitespace-nowrap ${tone}`} title={title}>
+      {formatTokenCount(used)}/{formatTokenCount(limit)} ({pct}%)
+    </span>
+  )
+}
 
 function ActionButton({
   icon,

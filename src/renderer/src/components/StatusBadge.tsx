@@ -14,10 +14,11 @@ const statusStyles: Record<AgentStatus, string> = {
   errored: 'bg-status-errored-bg text-status-errored',
   starting: 'bg-kumo-fill text-kumo-subtle',
   stopping: 'bg-kumo-fill text-kumo-subtle',
-  disconnected: 'bg-status-errored-bg text-status-errored'
+  disconnected: 'bg-status-errored-bg text-status-errored',
+  compacting: 'bg-status-warning/20 text-status-warning'
 }
 
-const pulsing = new Set<AgentStatus>(['needs_input', 'needs_approval', 'errored'])
+const pulsing = new Set<AgentStatus>(['needs_input', 'needs_approval', 'errored', 'compacting'])
 
 export function StatusBadge({ status }: StatusBadgeProps) {
   const style = statusStyles[status] ?? 'bg-kumo-fill text-kumo-subtle'

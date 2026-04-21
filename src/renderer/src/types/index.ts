@@ -12,6 +12,7 @@ export type AgentStatus =
   | 'errored'
   | 'disconnected'
   | 'stopping'
+  | 'compacting'
 
 // ── Labels: user-applied workflow tags ──
 
@@ -85,6 +86,20 @@ export interface AgentRuntime {
   blockedSince?: string
   blockedSinceMs?: number
   lastMessage?: string
+  /** Most recent session-level error from the server (e.g. ContextOverflowError). */
+  lastError?: AgentRuntimeError
+  /** True while a compaction RPC is running (shows spinner, disables compact buttons). */
+  compacting?: boolean
+  /** Approximate tokens currently sitting in the model's context window. */
+  contextTokens?: number
+  /** Provider-reported context window size for the active model. */
+  contextLimit?: number
+}
+
+export interface AgentRuntimeError {
+  name: string
+  message?: string
+  occurredAt: number
 }
 
 // ── Column visibility ──
@@ -188,13 +203,17 @@ export interface MessageImage {
 
 export interface Message {
   id: string
-  role: 'user' | 'assistant' | 'tool' | 'tool-group'
+  role: 'user' | 'assistant' | 'tool' | 'tool-group' | 'compaction'
   content: string
   timestamp: string
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]
   images?: MessageImage[]
+  /** For compaction rows: whether compaction is still running. */
+  compactionActive?: boolean
+  /** For compaction rows: whether the compaction was automatic (true) or user-initiated (false). */
+  compactionAuto?: boolean
 }
 
 export function isBlocked(status: AgentStatus): boolean {
@@ -219,7 +238,8 @@ export function statusLabel(status: AgentStatus): string {
     completed: 'Completed',
     errored: 'Errored',
     disconnected: 'Disconnected',
-    stopping: 'Stopping'
+    stopping: 'Stopping',
+    compacting: 'Compacting'
   }
   return labels[status]
 }
@@ -257,12 +277,13 @@ const STATUS_PRIORITY: Record<AgentStatus, number> = {
   needs_input: 0,
   needs_approval: 1,
   running: 2,
-  starting: 3,
-  idle: 4,
-  stopping: 5,
-  errored: 6,
-  completed: 7,
-  disconnected: 8
+  compacting: 3,
+  starting: 4,
+  idle: 5,
+  stopping: 6,
+  errored: 7,
+  completed: 8,
+  disconnected: 9
 }
 
 export function compareStatusPriority(a: AgentStatus, b: AgentStatus): number {
