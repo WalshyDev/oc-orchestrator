@@ -25,6 +25,20 @@ import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
 import { Tooltip } from './Tooltip'
 import { PrTooltipContent } from './PrTooltip'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
+
+/**
+ * Return the agent's context-window fill fraction (0–1) or -1 when we don't
+ * have enough data. Used to sort rows by how close they are to overflow;
+ * agents without metrics sink to the bottom in ascending sorts.
+ */
+function contextFraction(agent: AgentRuntime): number {
+  const { contextTokens, contextLimit } = agent
+  if (typeof contextTokens !== 'number' || typeof contextLimit !== 'number' || contextLimit <= 0) {
+    return -1
+  }
+  return contextTokens / contextLimit
+}
 import { useDismiss } from '../hooks/useDismiss'
 import {
   Lightning,
@@ -289,6 +303,14 @@ export function FleetTable({
           leftVal = (left.lastMessage || '').toLowerCase()
           rightVal = (right.lastMessage || '').toLowerCase()
           break
+        case 'context': {
+          // Sort by usage fraction so the agents closest to overflow surface
+          // at one end of the sorted list. Rows with no usage data sort last.
+          const leftPct = contextFraction(left)
+          const rightPct = contextFraction(right)
+          if (leftPct === rightPct) return compareStatusPriority(left.status, right.status)
+          return sortDirection === 'asc' ? leftPct - rightPct : rightPct - leftPct
+        }
         default:
           return 0
       }
@@ -867,6 +889,15 @@ function AgentRow({
               {agent.model}
             </button>
           )}
+        </td>
+      )}
+      {show('context') && (
+        <td className="px-3 py-2 overflow-hidden">
+          <ContextUsageIndicator
+            used={agent.contextTokens}
+            limit={agent.contextLimit}
+            variant="compact"
+          />
         </td>
       )}
       <td className="px-3 py-2 overflow-hidden">
