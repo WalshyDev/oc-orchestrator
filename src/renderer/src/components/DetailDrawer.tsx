@@ -121,6 +121,12 @@ interface DetailDrawerProps {
   commands?: ChatCommand[]
   agentConfigs?: AgentConfigItem[]
   sessionNotice?: string
+  /**
+   * When set, jumps the transcript to a specific anchor. `seq` must bump for
+   * each request so repeated clicks retrigger the scroll even when the target
+   * is unchanged.
+   */
+  scrollRequest?: { target: 'last-user-message'; seq: number } | null
   onClose: () => void
   onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
   onApprove?: () => void
@@ -154,6 +160,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   commands = [],
   agentConfigs = [],
   sessionNotice,
+  scrollRequest,
   onClose,
   onSendMessage,
   onApprove,
@@ -244,6 +251,14 @@ export const DetailDrawer = memo(function DetailDrawer({
   const followBottomRef = useRef(true)
   const isResizingRef = useRef(false)
   const isResizingVerticalRef = useRef(false)
+
+  // Map of message id -> DOM node for scroll-to-message. Populated by
+  // MessageBubble via registerRef callback.
+  const messageNodesRef = useRef<Map<string, HTMLElement>>(new Map())
+  const registerMessageRef = useCallback((id: string, node: HTMLElement | null) => {
+    if (node) messageNodesRef.current.set(id, node)
+    else messageNodesRef.current.delete(id)
+  }, [])
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -436,6 +451,45 @@ export const DetailDrawer = memo(function DetailDrawer({
       container.removeEventListener('keydown', onKeyDown)
     }
   }, [activeTab])
+
+  // Scroll-to-target: react to scrollRequest.seq changes. Triggered when the
+  // user clicks the "Last Message" cell in the fleet table.
+  const lastHandledScrollSeqRef = useRef<number>(-1)
+  useEffect(() => {
+    if (!scrollRequest) return
+    if (scrollRequest.seq === lastHandledScrollSeqRef.current) return
+    lastHandledScrollSeqRef.current = scrollRequest.seq
+
+    if (scrollRequest.target !== 'last-user-message') return
+
+    let targetIndex = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        targetIndex = i
+        break
+      }
+    }
+    if (targetIndex < 0) return
+    const targetId = messages[targetIndex].id
+
+    if (activeTab !== 'transcript') setActiveTab('transcript')
+
+    // Expand the visible window if the target is outside it so the node renders.
+    const neededCount = messages.length - targetIndex
+    if (neededCount > visibleMessageCount) {
+      setVisibleMessageCount(neededCount)
+    }
+
+    // Two rAFs: first waits for setActiveTab / setVisibleMessageCount to
+    // commit, second waits for the tab-switch effect's own rAF to run so
+    // our followBottom=false wins (otherwise streaming output would yank us
+    // back to the bottom immediately after jumping).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      followBottomRef.current = false
+      setShowJumpToLatest(true)
+      messageNodesRef.current.get(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }))
+  }, [scrollRequest, messages, activeTab, visibleMessageCount])
 
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputText(event.target.value)
@@ -711,7 +765,12 @@ export const DetailDrawer = memo(function DetailDrawer({
                       </button>
                     )}
                     {visibleMessages.map((message) => (
-                      <MessageBubble key={message.id} message={message} verbose={isVerbose} />
+                      <MessageBubble
+                        key={message.id}
+                        message={message}
+                        verbose={isVerbose}
+                        registerRef={registerMessageRef}
+                      />
                     ))}
                   </>
                 )}
@@ -1289,16 +1348,30 @@ function Tab({
   )
 }
 
-const MessageBubble = memo(function MessageBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
+type MessageRefCallback = (id: string, node: HTMLElement | null) => void
+
+const MessageBubble = memo(function MessageBubble({
+  message,
+  verbose = false,
+  registerRef
+}: {
+  message: Message
+  verbose?: boolean
+  registerRef?: MessageRefCallback
+}) {
+  const rootRef = useCallback((node: HTMLElement | null) => {
+    registerRef?.(message.id, node)
+  }, [message.id, registerRef])
+
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbose={verbose} />
+    return <ToolGroupBubble message={message} verbose={verbose} rootRef={rootRef} />
   }
 
   if (message.role === 'tool') {
     const toolName = message.toolName ?? extractToolName(message.content)
     const toolOutput = message.content ? extractToolOutput(message.content) : ''
     return (
-      <div className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
+      <div ref={rootRef} className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
         <div className="flex items-center gap-1.5 mb-0.5">
           <Wrench size={11} className="shrink-0" />
           <span className="font-semibold text-kumo-default">{toolName}</span>
@@ -1315,6 +1388,7 @@ const MessageBubble = memo(function MessageBubble({ message, verbose = false }: 
 
   return (
     <div
+      ref={rootRef}
       className={`px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
         isUser
           ? 'bg-kumo-interact/10 border border-kumo-interact/15 text-kumo-default self-end max-w-[85%]'
@@ -1355,7 +1429,8 @@ const MessageBubble = memo(function MessageBubble({ message, verbose = false }: 
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
   prev.message.toolCalls === next.message.toolCalls &&
-  prev.verbose === next.verbose
+  prev.verbose === next.verbose &&
+  prev.registerRef === next.registerRef
 )
 
 const toolStateStyles: Record<string, string> = {
@@ -1427,7 +1502,15 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
   }
 }
 
-const ToolGroupBubble = memo(function ToolGroupBubble({ message, verbose = false }: { message: Message; verbose?: boolean }) {
+const ToolGroupBubble = memo(function ToolGroupBubble({
+  message,
+  verbose = false,
+  rootRef
+}: {
+  message: Message
+  verbose?: boolean
+  rootRef?: (node: HTMLElement | null) => void
+}) {
   const [expanded, setExpanded] = useState(verbose)
   const toolCalls = message.toolCalls ?? []
 
@@ -1437,7 +1520,7 @@ const ToolGroupBubble = memo(function ToolGroupBubble({ message, verbose = false
   }, [verbose])
 
   return (
-    <div className="max-w-[95%] self-start">
+    <div ref={rootRef} className="max-w-[95%] self-start">
       <button
         onClick={() => setExpanded((prev) => !prev)}
         className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"

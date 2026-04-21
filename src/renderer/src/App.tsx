@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import { TopBar } from './components/TopBar'
 import { InterruptBanner } from './components/InterruptBanner'
 import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, loadPersistedFilter, persistFilter, loadPersistedSearch, persistSearch, type FilterState, type StatusFilter } from './components/FilterBar'
-import { FleetTable } from './components/FleetTable'
+import { FleetTable, type DrawerScrollTarget } from './components/FleetTable'
 import { StatusBar } from './components/StatusBar'
 import { DetailDrawer, type ChatCommand } from './components/DetailDrawer'
 import { LaunchModal, type FreshWorktreeConfig, type ImportSessionConfig } from './components/LaunchModal'
@@ -69,7 +69,16 @@ export function App() {
     persistSearch(value)
   }, [])
 
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [selectedAgentId, setSelectedAgentIdRaw] = useState<string | null>(null)
+  // Scroll request signal for DetailDrawer. `seq` bumps on every request so
+  // clicking the same cell twice in a row still retriggers the scroll.
+  const [drawerScrollRequest, setDrawerScrollRequest] = useState<{ target: DrawerScrollTarget; seq: number } | null>(null)
+  const setSelectedAgentId = useCallback((id: string | null, scrollTarget?: DrawerScrollTarget) => {
+    setSelectedAgentIdRaw(id)
+    if (id && scrollTarget) {
+      setDrawerScrollRequest((prev) => ({ target: scrollTarget, seq: (prev?.seq ?? 0) + 1 }))
+    }
+  }, [])
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>('general')
@@ -1404,6 +1413,7 @@ export function App() {
           events={selectedEvents}
           commands={agentCommands}
           agentConfigs={agentConfigs}
+          scrollRequest={drawerScrollRequest}
           onClose={handleCloseDrawer}
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? handleDrawerApprove : undefined}
