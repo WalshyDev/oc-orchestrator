@@ -8,7 +8,7 @@ import type {
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
-import { lookupContextLimit } from './useModelOptions'
+import { lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
 
 interface HistoricalMessageInfo {
   id: string
@@ -311,6 +311,27 @@ function cancelCompactingWatchdog(agentId: string): void {
     clearTimeout(existing)
     compactingTimers.delete(agentId)
   }
+}
+
+/**
+ * Fill in contextLimit for any agent whose rawModelId is now in the provider
+ * cache but whose limit wasn't known when its messages were hydrated (typical
+ * on cold start, where session messages arrive before the provider fetch).
+ * Subscribed in the hook's useEffect to avoid touching useModelOptions during
+ * module initialization — the two modules have a circular import via
+ * formatModelName.
+ */
+function backfillContextLimits(): void {
+  let changed = false
+  for (const agent of state.agents.values()) {
+    if (agent.contextLimit !== undefined || !agent.rawModelId) continue
+    const limit = lookupContextLimit(agent.rawModelId)
+    if (limit !== undefined) {
+      agent.contextLimit = limit
+      changed = true
+    }
+  }
+  if (changed) emit({ agents: true })
 }
 
 // Tracks how many step-start parts (invoked sub-agents) are currently active
@@ -2570,7 +2591,10 @@ export function useAgentStore() {
           state.initializing = false
           emit({ agents: true })
         }
-      })
+      }),
+      // Backfill contextLimit for agents whose modelID was hydrated before the
+      // provider fetch completed (common on cold start).
+      subscribeToContextLimits(backfillContextLimits)
     ]
 
     // Run initial fetch. If restoration already completed before we

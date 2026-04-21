@@ -1041,7 +1041,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               className="w-full flex-1 min-h-0 px-3 py-2.5 bg-transparent text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none"
             />
 
-            {/* Bottom row: hints */}
+            {/* Bottom row: hints + context usage */}
             <div className="flex items-center px-2 pb-1.5 shrink-0">
               <button
                 type="button"
@@ -1062,6 +1062,9 @@ export const DetailDrawer = memo(function DetailDrawer({
               />
               <span className="text-[10px] text-kumo-subtle/60 ml-2">
                 ↵ send · ⇧↵ newline
+              </span>
+              <span className="ml-auto">
+                <ContextUsageIndicator used={agent.contextTokens} limit={agent.contextLimit} />
               </span>
             </div>
           </div>

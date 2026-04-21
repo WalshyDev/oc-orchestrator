@@ -25,16 +25,37 @@ export interface ProviderData {
  */
 const contextLimitCache = new Map<string, number>()
 
+/** Observers notified when new context limits are recorded — typically the
+ *  agent store, which backfills limits onto agents whose modelID was hydrated
+ *  before the provider fetch completed. */
+const contextLimitObservers = new Set<() => void>()
+
+export function subscribeToContextLimits(listener: () => void): () => void {
+  contextLimitObservers.add(listener)
+  return () => contextLimitObservers.delete(listener)
+}
+
 export function recordContextLimitsFromProviders(data: ProviderData): void {
+  let changed = false
   for (const provider of data.providers) {
     for (const model of Object.values(provider.models)) {
       const limit = model.limit?.context
       if (typeof limit !== 'number' || limit <= 0) continue
-      contextLimitCache.set(`${provider.id}/${model.id}`, limit)
+      const key = `${provider.id}/${model.id}`
+      if (contextLimitCache.get(key) !== limit) {
+        contextLimitCache.set(key, limit)
+        changed = true
+      }
       // Also index by bare id so callers that don't carry the provider prefix
       // can still look up a limit when it's unambiguous.
-      if (!contextLimitCache.has(model.id)) contextLimitCache.set(model.id, limit)
+      if (!contextLimitCache.has(model.id)) {
+        contextLimitCache.set(model.id, limit)
+        changed = true
+      }
     }
+  }
+  if (changed) {
+    for (const listener of contextLimitObservers) listener()
   }
 }
 
