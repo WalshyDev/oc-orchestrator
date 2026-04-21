@@ -47,10 +47,12 @@ const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'wrench': Wrench,
 }
 
+export type DrawerScrollTarget = 'last-user-message'
+
 interface FleetTableProps {
   agents: AgentRuntime[]
   selectedId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, scrollTarget?: DrawerScrollTarget) => void
   sortColumn?: ColumnKey | null
   sortDirection?: SortDirection
   onSort?: (column: string, direction: 'asc' | 'desc') => void
@@ -370,6 +372,7 @@ export function FleetTable({
                 selected={agent.id === selectedId}
                 visibleColumns={visibleColumns}
                 onSelect={() => onSelect(agent.id)}
+                onSelectLastMessage={() => onSelect(agent.id, 'last-user-message')}
                 onContextMenu={(event) => handleContextMenu(event, agent.id)}
                 onApprove={onApprove ? () => onApprove(agent.id) : undefined}
                 onReply={onReply ? () => onReply(agent.id) : undefined}
@@ -679,6 +682,7 @@ function AgentRow({
   selected,
   visibleColumns,
   onSelect,
+  onSelectLastMessage,
   onContextMenu,
   onApprove,
   onReply,
@@ -706,6 +710,7 @@ function AgentRow({
   selected: boolean
   visibleColumns: Set<ColumnKey>
   onSelect: () => void
+  onSelectLastMessage: () => void
   onContextMenu: (event: React.MouseEvent) => void
   onApprove?: () => void
   onReply?: () => void
@@ -838,7 +843,11 @@ function AgentRow({
         </td>
       )}
       {show('lastMessage') && (
-        <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]" title={agent.lastMessage || undefined}>
+        <td
+          className="px-3 py-2 truncate text-kumo-subtle text-[11px] cursor-pointer hover:text-kumo-default"
+          title={agent.lastMessage ? `${agent.lastMessage}\n\nClick to jump to your last message` : undefined}
+          onClick={(event) => { event.stopPropagation(); onSelectLastMessage() }}
+        >
           {agent.lastMessage || <span className="text-kumo-muted italic">--</span>}
         </td>
       )}
