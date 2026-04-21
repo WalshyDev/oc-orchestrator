@@ -25,16 +25,37 @@ export interface ProviderData {
  */
 const contextLimitCache = new Map<string, number>()
 
+/** Observers notified when new context limits are recorded — typically the
+ *  agent store, which backfills limits onto agents whose modelID was hydrated
+ *  before the provider fetch completed. */
+const contextLimitObservers = new Set<() => void>()
+
+export function subscribeToContextLimits(listener: () => void): () => void {
+  contextLimitObservers.add(listener)
+  return () => contextLimitObservers.delete(listener)
+}
+
 export function recordContextLimitsFromProviders(data: ProviderData): void {
+  let changed = false
   for (const provider of data.providers) {
     for (const model of Object.values(provider.models)) {
       const limit = model.limit?.context
       if (typeof limit !== 'number' || limit <= 0) continue
-      contextLimitCache.set(`${provider.id}/${model.id}`, limit)
+      const key = `${provider.id}/${model.id}`
+      if (contextLimitCache.get(key) !== limit) {
+        contextLimitCache.set(key, limit)
+        changed = true
+      }
       // Also index by bare id so callers that don't carry the provider prefix
       // can still look up a limit when it's unambiguous.
-      if (!contextLimitCache.has(model.id)) contextLimitCache.set(model.id, limit)
+      if (!contextLimitCache.has(model.id)) {
+        contextLimitCache.set(model.id, limit)
+        changed = true
+      }
     }
+  }
+  if (changed) {
+    for (const listener of contextLimitObservers) listener()
   }
 }
 
@@ -105,6 +126,52 @@ export function resolveSystemDefaultLabel(
  * Falls back to a static list if no runtimes are available.
  * Resolves the system default model name from the opencode config.
  */
+/**
+ * Fetch providers + system config once and cache the results so repeated
+ * callers (useModelOptions across multiple modals, the agent store's boot
+ * backfill) share a single network call. The first call triggers the fetch;
+ * subsequent calls during the same in-flight request await the same promise.
+ */
+interface ProviderFetchResult {
+  providerData: ProviderData | null
+  configModel: string | undefined
+}
+
+let providerFetchPromise: Promise<ProviderFetchResult> | null = null
+
+export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
+  if (providerFetchPromise) return providerFetchPromise
+
+  providerFetchPromise = (async () => {
+    try {
+      const [providersResult, configResult] = await Promise.all([
+        window.api.listAllProviders(),
+        window.api.getSystemConfig(),
+      ])
+
+      const providerData = providersResult.ok && providersResult.data
+        ? providersResult.data as ProviderData
+        : null
+
+      if (providerData) recordContextLimitsFromProviders(providerData)
+
+      const configModel = configResult.ok && configResult.data
+        ? (configResult.data as { model?: string }).model
+        : undefined
+
+      return { providerData, configModel }
+    } catch (err) {
+      console.warn('[ensureProvidersLoaded] fetch failed', err)
+      // Reset so a later caller can retry. Without this, a transient failure
+      // would permanently disable provider-dependent features.
+      providerFetchPromise = null
+      return { providerData: null, configModel: undefined }
+    }
+  })()
+
+  return providerFetchPromise
+}
+
 export function useModelOptions(): { options: ModelOption[]; loading: boolean } {
   const [options, setOptions] = useState<ModelOption[]>(STATIC_MODEL_OPTIONS)
   const [loading, setLoading] = useState(true)
@@ -112,45 +179,22 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean } 
   useEffect(() => {
     let cancelled = false
 
-    const fetchData = async (): Promise<void> => {
-      try {
-        const [providersResult, configResult] = await Promise.all([
-          window.api.listAllProviders(),
-          window.api.getSystemConfig(),
-        ])
-        if (cancelled) return
+    void ensureProvidersLoaded().then(({ providerData, configModel }) => {
+      if (cancelled) return
 
-        const providerData = providersResult.ok && providersResult.data
-          ? providersResult.data as ProviderData
-          : null
-
-        if (providerData) recordContextLimitsFromProviders(providerData)
-
-        const configModel = configResult.ok && configResult.data
-          ? (configResult.data as { model?: string }).model
-          : undefined
-
-        let opts: ModelOption[]
-        if (providerData) {
-          const dynamicOptions = buildOptionsFromProviders(providerData)
-          opts = dynamicOptions.length > 1 ? dynamicOptions : [...STATIC_MODEL_OPTIONS]
-        } else {
-          opts = [...STATIC_MODEL_OPTIONS]
-        }
-
-        // Resolve the system default label
-        const defaultLabel = resolveSystemDefaultLabel(configModel, providerData)
-        opts[0] = { value: 'auto', label: defaultLabel }
-
-        setOptions(opts)
-      } catch {
-        // Fall back to static list silently
-      } finally {
-        if (!cancelled) setLoading(false)
+      let opts: ModelOption[]
+      if (providerData) {
+        const dynamicOptions = buildOptionsFromProviders(providerData)
+        opts = dynamicOptions.length > 1 ? dynamicOptions : [...STATIC_MODEL_OPTIONS]
+      } else {
+        opts = [...STATIC_MODEL_OPTIONS]
       }
-    }
 
-    void fetchData()
+      opts[0] = { value: 'auto', label: resolveSystemDefaultLabel(configModel, providerData) }
+      setOptions(opts)
+      setLoading(false)
+    })
+
     return () => { cancelled = true }
   }, [])
 

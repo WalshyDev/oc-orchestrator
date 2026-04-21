@@ -34,12 +34,13 @@ import { loadSettings, SETTINGS_CHANGED_EVENT, MAX_QUICK_ACTIONS, isQuickActionV
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { PortaledMenu } from './PortaledMenu'
 import { TextInputModal } from './TextInputModal'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
-import { useDismiss } from '../hooks/useDismiss'
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
@@ -1040,7 +1041,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               className="w-full flex-1 min-h-0 px-3 py-2.5 bg-transparent text-kumo-default text-sm outline-none placeholder:text-kumo-subtle resize-none"
             />
 
-            {/* Bottom row: hints */}
+            {/* Bottom row: hints + context usage */}
             <div className="flex items-center px-2 pb-1.5 shrink-0">
               <button
                 type="button"
@@ -1061,6 +1062,9 @@ export const DetailDrawer = memo(function DetailDrawer({
               />
               <span className="text-[10px] text-kumo-subtle/60 ml-2">
                 ↵ send · ⇧↵ newline
+              </span>
+              <span className="ml-auto">
+                <ContextUsageIndicator used={agent.contextTokens} limit={agent.contextLimit} />
               </span>
             </div>
           </div>
@@ -1758,40 +1762,6 @@ function StatusBanner({
   )
 }
 
-/**
- * Thresholds for the context-usage color ramp, ordered highest → lowest. The
- * first entry whose `minPct` the current usage meets wins. Exposed as a table
- * rather than an if/else chain so the breakpoints are easy to tune.
- */
-const CONTEXT_USAGE_TONES: ReadonlyArray<{ minPct: number; tone: string }> = [
-  { minPct: 95, tone: 'text-kumo-danger' },       // compact now
-  { minPct: 80, tone: 'text-status-warning' },    // compact soon
-  { minPct: 60, tone: 'text-status-warning/80' }, // worth noticing
-  { minPct: 0,  tone: 'text-kumo-subtle' }        // plenty of room
-]
-
-function formatTokenCount(n: number): string {
-  return n >= 10_000 ? `${Math.round(n / 1000)}k` : `${n}`
-}
-
-/**
- * Compact display of context-window usage. Hidden when we don't have enough
- * data to compute (e.g. no assistant messages yet).
- */
-function ContextUsageIndicator({ used, limit }: { used?: number; limit?: number }) {
-  if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return null
-
-  const pct = Math.min(100, Math.round((used / limit) * 100))
-  const tone = CONTEXT_USAGE_TONES.find((t) => pct >= t.minPct)?.tone ?? 'text-kumo-subtle'
-  const title = `${used.toLocaleString()} / ${limit.toLocaleString()} tokens in context (${pct}%)`
-
-  return (
-    <span className={`text-[10px] font-mono whitespace-nowrap ${tone}`} title={title}>
-      {formatTokenCount(used)}/{formatTokenCount(limit)} ({pct}%)
-    </span>
-  )
-}
-
 function ActionButton({
   icon,
   label,
@@ -1854,7 +1824,8 @@ function ActionDropdownButton({
   items: DropdownItem[]
   className?: string
 }) {
-  const { open, toggle, close, containerRef } = useDismiss()
+  const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   const visibleItems = items.filter((i) => i.onClick)
   if (visibleItems.length === 0) return null
@@ -1873,34 +1844,39 @@ function ActionDropdownButton({
   }
 
   return (
-    <div ref={containerRef} className={`relative inline-flex ${extraClass ?? ''}`}>
+    <>
       <button
-        onClick={toggle}
-        className="flex items-center gap-1 w-full px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors"
+        ref={buttonRef}
+        onClick={() => setOpen((o) => !o)}
+        className={`flex items-center gap-1 w-full px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap bg-kumo-control border-kumo-line text-kumo-default hover:bg-kumo-fill transition-colors ${extraClass ?? ''}`}
       >
         {icon}
         {label}
         <CaretDown size={10} className="ml-0.5" />
       </button>
-      {open && (
-        <div className="absolute bottom-full right-0 mb-1 z-[100] min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
-          {visibleItems.map((item) => (
-            <button
-              key={item.label}
-              disabled={item.disabled}
-              onClick={() => {
-                item.onClick?.()
-                close()
-              }}
-              className={`flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] rounded transition-colors text-left text-kumo-default hover:bg-kumo-fill ${item.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      <PortaledMenu
+        open={open}
+        triggerRef={buttonRef}
+        placement="top-right"
+        onDismiss={() => setOpen(false)}
+        className="min-w-[140px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl"
+      >
+        {visibleItems.map((item) => (
+          <button
+            key={item.label}
+            disabled={item.disabled}
+            onClick={() => {
+              item.onClick?.()
+              setOpen(false)
+            }}
+            className={`flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] rounded transition-colors text-left text-kumo-default hover:bg-kumo-fill ${item.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        ))}
+      </PortaledMenu>
+    </>
   )
 }
 

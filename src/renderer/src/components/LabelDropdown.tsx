@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CaretDown,
   Check,
@@ -12,7 +12,7 @@ import {
   X
 } from '@phosphor-icons/react'
 import { getLabelDefinition, LABEL_COLORS, type LabelDefinition, type LabelColorKey } from '../types'
-import { useDismiss } from '../hooks/useDismiss'
+import { PortaledMenu, type MenuPlacement } from './PortaledMenu'
 
 const BUILTIN_ICONS: Record<string, React.ReactNode> = {
   draft: <PencilSimpleLine size={12} />,
@@ -40,11 +40,19 @@ interface LabelDropdownProps {
 }
 
 export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels, onCreateLabel, onDeleteLabel, variant = 'row', onOpenChange, className: extraClass }: LabelDropdownProps) {
-  const { open, toggle, close, containerRef } = useDismiss(onOpenChange)
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLDivElement>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState<LabelColorKey>('blue')
   const [replacingLabelId, setReplacingLabelId] = useState<string | null>(null)
+
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
+
+  const close = () => setOpen(false)
+  const toggle = () => setOpen((prev) => !prev)
 
   const currentSet = new Set(current)
 
@@ -107,12 +115,15 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
   const isReplacing = replacingLabelId !== null
   const replacingDef = replacingLabelId ? getLabelDefinition(replacingLabelId, allLabels) : null
 
-  let menuPosition: string
+  // Map each visual variant to a menu placement relative to its trigger.
+  // 'action' opens upward-left (it sits in the bottom action rail); the others
+  // open downward from their respective sides.
+  let placement: MenuPlacement
   let trigger: React.ReactNode
 
   switch (variant) {
     case 'action':
-      menuPosition = 'absolute bottom-full left-0 mb-1'
+      placement = 'top-left'
       trigger = (
         <button
           onClick={handleOpen}
@@ -126,7 +137,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
       break
 
     case 'inline':
-      menuPosition = 'absolute top-full left-0 mt-1'
+      placement = 'bottom-left'
       trigger = (
         <div className="inline-flex items-center gap-0.5">
           {sortedCurrent.map((def) => {
@@ -155,7 +166,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
       break
 
     default:
-      menuPosition = 'absolute top-full right-0 mt-1'
+      placement = 'bottom-right'
       trigger = (
         <button
           onClick={handleOpen}
@@ -173,7 +184,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
       // Replace mode: pick a replacement for the clicked label, or remove it
       const otherLabels = allLabels.filter((l) => l.id !== replacingLabelId)
       return (
-        <div className={`${menuPosition} z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl`}>
+        <div className="min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
           <div className="px-2.5 py-1 text-[10px] text-kumo-subtle font-medium">
             Replace {replacingDef.name}
           </div>
@@ -293,7 +304,7 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
 
     // Normal multi-select mode
     return (
-      <div className={`${menuPosition} z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl`}>
+      <div className="min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
         {current.length > 0 && (
           <button
             onClick={(event) => { event.stopPropagation(); onClear() }}
@@ -409,9 +420,16 @@ export function LabelDropdown({ current, onToggle, onClear, onReplace, allLabels
   }
 
   return (
-    <div ref={containerRef} className={`relative inline-flex ${extraClass ?? ''}`}>
+    <div ref={triggerRef} className={`relative inline-flex ${extraClass ?? ''}`}>
       {trigger}
-      {open && renderMenu()}
+      <PortaledMenu
+        open={open}
+        triggerRef={triggerRef}
+        placement={placement}
+        onDismiss={close}
+      >
+        {renderMenu()}
+      </PortaledMenu>
     </div>
   )
 }

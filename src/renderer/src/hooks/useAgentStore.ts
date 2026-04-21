@@ -8,7 +8,7 @@ import type {
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
-import { lookupContextLimit } from './useModelOptions'
+import { ensureProvidersLoaded, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
 
 interface HistoricalMessageInfo {
   id: string
@@ -311,6 +311,27 @@ function cancelCompactingWatchdog(agentId: string): void {
     clearTimeout(existing)
     compactingTimers.delete(agentId)
   }
+}
+
+/**
+ * Fill in contextLimit for any agent whose rawModelId is now in the provider
+ * cache but whose limit wasn't known when its messages were hydrated (typical
+ * on cold start, where session messages arrive before the provider fetch).
+ * Subscribed in the hook's useEffect to avoid touching useModelOptions during
+ * module initialization — the two modules have a circular import via
+ * formatModelName.
+ */
+function backfillContextLimits(): void {
+  let changed = false
+  for (const agent of state.agents.values()) {
+    if (agent.contextLimit !== undefined || !agent.rawModelId) continue
+    const limit = lookupContextLimit(agent.rawModelId)
+    if (limit !== undefined) {
+      agent.contextLimit = limit
+      changed = true
+    }
+  }
+  if (changed) emit({ agents: true })
 }
 
 // Tracks how many step-start parts (invoked sub-agents) are currently active
@@ -789,7 +810,16 @@ function hydrateHistoricalMessages(entries: unknown): void {
         agent.model = formatted
         agent.rawModelId = entry.info.modelID
         const limit = lookupContextLimit(entry.info.modelID)
-        if (limit !== undefined) agent.contextLimit = limit
+        if (limit !== undefined) {
+          agent.contextLimit = limit
+        } else {
+          console.debug('[hydrate] no context limit found in cache', {
+            agentId: agent.id,
+            modelId: entry.info.modelID,
+            hasTokens: !!entry.info.tokens,
+            contextTokens: agent.contextTokens
+          })
+        }
         // Only seed configuredModel if not already set by a config fetch or
         // prior setAgentModel call, so the authoritative config value wins.
         if (!agent.configuredModel) {
@@ -2570,8 +2600,17 @@ export function useAgentStore() {
           state.initializing = false
           emit({ agents: true })
         }
-      })
+      }),
+      // Backfill contextLimit for agents whose modelID was hydrated before the
+      // provider fetch completed (common on cold start).
+      subscribeToContextLimits(backfillContextLimits)
     ]
+
+    // Kick off the provider fetch so context-window limits are populated for
+    // agents that will hydrate shortly. useModelOptions would do this too, but
+    // only when a consumer mounts — the fleet table's Context column needs
+    // the data even if the user never opens the Launch or Settings modal.
+    void ensureProvidersLoaded()
 
     // Run initial fetch. If restoration already completed before we
     // mounted (fast startup or no persisted agents), clear initializing
