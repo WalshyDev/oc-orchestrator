@@ -394,7 +394,7 @@ export function FleetTable({
                 selected={agent.id === selectedId}
                 visibleColumns={visibleColumns}
                 onSelect={() => onSelect(agent.id)}
-                onSelectLastMessage={() => onSelect(agent.id, 'last-user-message')}
+                onJumpToLastUserMessage={() => onSelect(agent.id, 'last-user-message')}
                 onContextMenu={(event) => handleContextMenu(event, agent.id)}
                 onApprove={onApprove ? () => onApprove(agent.id) : undefined}
                 onReply={onReply ? () => onReply(agent.id) : undefined}
@@ -704,7 +704,7 @@ function AgentRow({
   selected,
   visibleColumns,
   onSelect,
-  onSelectLastMessage,
+  onJumpToLastUserMessage,
   onContextMenu,
   onApprove,
   onReply,
@@ -732,7 +732,7 @@ function AgentRow({
   selected: boolean
   visibleColumns: Set<ColumnKey>
   onSelect: () => void
-  onSelectLastMessage: () => void
+  onJumpToLastUserMessage: () => void
   onContextMenu: (event: React.MouseEvent) => void
   onApprove?: () => void
   onReply?: () => void
@@ -860,16 +860,20 @@ function AgentRow({
         </td>
       )}
       {show('task') && (
-        <td className="px-3 py-2 truncate text-kumo-default" title={agent.taskSummary || undefined}>
-          {agent.taskSummary}
+        <td className="px-3 py-2 truncate text-kumo-default">
+          {agent.taskSummary && (
+            <span
+              className="cursor-pointer hover:text-kumo-strong"
+              title={`${agent.taskSummary}\n\nClick to jump to your last message`}
+              onClick={(event) => { event.stopPropagation(); onJumpToLastUserMessage() }}
+            >
+              {agent.taskSummary}
+            </span>
+          )}
         </td>
       )}
       {show('lastMessage') && (
-        <td
-          className="px-3 py-2 truncate text-kumo-subtle text-[11px] cursor-pointer hover:text-kumo-default"
-          title={agent.lastMessage ? `${agent.lastMessage}\n\nClick to jump to your last message` : undefined}
-          onClick={(event) => { event.stopPropagation(); onSelectLastMessage() }}
-        >
+        <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]" title={agent.lastMessage || undefined}>
           {agent.lastMessage || <span className="text-kumo-muted italic">--</span>}
         </td>
       )}
