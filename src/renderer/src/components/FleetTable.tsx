@@ -900,6 +900,7 @@ function AgentRow({
           <ContextUsageIndicator
             used={agent.contextTokens}
             limit={agent.contextLimit}
+            variant="bar"
           />
         </td>
       )}
