@@ -369,6 +369,7 @@ export function createDemoApi(): OrchestratorApi {
     // ── App Info ──
     getVersion: () => ok('1.0.0'),
     getHomeDirectory: () => ok('/Users/dev'),
+    setBadgeCount: noop,
 
     // ── Shell Integration ──
     notifyAgentStatus: noop,

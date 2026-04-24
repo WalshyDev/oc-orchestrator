@@ -91,6 +91,7 @@ export interface OrchestratorApi {
   // ── App Info ──
   getVersion: () => Promise<IpcResult<string>>
   getHomeDirectory: () => Promise<IpcResult<string>>
+  setBadgeCount: (count: number) => Promise<IpcResult>
 
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string) => Promise<IpcResult>
