@@ -7,10 +7,10 @@
  * bar variant and the text variants stay visually consistent.
  */
 const CONTEXT_USAGE_TONES: ReadonlyArray<{ minPct: number; text: string; bar: string }> = [
-  { minPct: 95, text: 'text-kumo-danger',        bar: 'bg-kumo-danger' },        // compact now
-  { minPct: 80, text: 'text-status-warning',     bar: 'bg-status-warning' },     // compact soon
-  { minPct: 60, text: 'text-status-warning/80',  bar: 'bg-status-warning/80' },  // worth noticing
-  { minPct: 0,  text: 'text-kumo-subtle',        bar: 'bg-kumo-subtle' }         // plenty of room
+  { minPct: 95, text: 'text-kumo-danger',       bar: 'bg-kumo-danger' },       // compact now
+  { minPct: 80, text: 'text-kumo-warning',      bar: 'bg-kumo-warning' },      // compact soon
+  { minPct: 60, text: 'text-kumo-warning/80',   bar: 'bg-kumo-warning/80' },   // worth noticing
+  { minPct: 0,  text: 'text-kumo-subtle',       bar: 'bg-kumo-subtle' }        // plenty of room
 ]
 
 function formatTokenCount(n: number): string {
