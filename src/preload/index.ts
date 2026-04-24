@@ -224,6 +224,9 @@ const api = {
   getHomeDirectory: (): Promise<IpcResult<string>> =>
     ipcRenderer.invoke('app:home-directory'),
 
+  setBadgeCount: (count: number): Promise<IpcResult> =>
+    ipcRenderer.invoke('app:set-badge-count', count),
+
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),

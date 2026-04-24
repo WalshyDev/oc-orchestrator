@@ -828,6 +828,17 @@ export function registerIpcHandlers(): void {
     return { ok: true, data: os.homedir() }
   })
 
+  ipcMain.handle('app:set-badge-count', async (_event, count: number) => {
+    try {
+      const safeCount = Math.max(0, Math.floor(count))
+      notificationService.updateBadgeCount(safeCount)
+      return { ok: true }
+    } catch (error) {
+      logIpcError('app:set-badge-count', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   // ── Shell Integration ──
 
   /** Promisified execFile — avoids shell interpretation of arguments */

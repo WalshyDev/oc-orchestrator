@@ -456,6 +456,30 @@ function getSnapshot(): AgentStoreState {
   return state
 }
 
+// ── Dock Badge ──
+
+const BADGE_STATUSES: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
+  'needs_input',
+  'needs_approval',
+  'errored'
+])
+
+let lastBadgeCount = -1
+
+// Subscribed at module load rather than from a React effect so the badge
+// reflects global state even when no component is observing the store.
+function syncBadgeCount(): void {
+  let count = 0
+  for (const agent of state.agents.values()) {
+    if (BADGE_STATUSES.has(agent.status)) count++
+  }
+  if (count === lastBadgeCount) return
+  lastBadgeCount = count
+  window.api?.setBadgeCount(count)
+}
+
+listeners.add(syncBadgeCount)
+
 // ── Event Logging ──
 
 function generateEventSummary(type: string, props: Record<string, unknown>): string {
