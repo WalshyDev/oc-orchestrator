@@ -1429,7 +1429,7 @@ const MessageBubble = memo(function MessageBubble({
     return (
       <div
         ref={rootRef}
-        className="self-center my-2 px-3 py-1.5 text-[11px] text-status-warning/90 border border-status-warning/30 bg-status-warning/10 rounded-full flex items-center gap-1.5"
+        className="self-center my-2 px-3 py-1.5 text-[11px] text-kumo-warning/90 border border-kumo-warning/30 bg-kumo-warning/10 rounded-full flex items-center gap-1.5"
       >
         {message.compactionActive
           ? <CircleNotch size={11} weight="bold" className="animate-spin" />
@@ -1682,8 +1682,8 @@ function bannerContent(kind: BannerKind, agent: AgentRuntime): BannerContent {
       return {
         title: 'Context window full',
         body: 'This session is too long for the model to read in one pass. Compact the conversation to free up space, or switch to a model with a larger context window.',
-        containerTone: 'border-status-warning/40 bg-status-warning/10',
-        iconTone: 'text-status-warning'
+        containerTone: 'border-kumo-warning/40 bg-kumo-warning/10',
+        iconTone: 'text-kumo-warning'
       }
     case 'error':
       return {

@@ -15,7 +15,7 @@ const statusStyles: Record<AgentStatus, string> = {
   starting: 'bg-kumo-fill text-kumo-subtle',
   stopping: 'bg-kumo-fill text-kumo-subtle',
   disconnected: 'bg-status-errored-bg text-status-errored',
-  compacting: 'bg-status-warning/20 text-status-warning'
+  compacting: 'bg-kumo-warning/20 text-kumo-warning'
 }
 
 const pulsing = new Set<AgentStatus>(['needs_input', 'needs_approval', 'errored', 'compacting'])
