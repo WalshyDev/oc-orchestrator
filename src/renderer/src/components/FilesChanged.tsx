@@ -9,6 +9,10 @@ export interface FileChange {
 
 interface FilesChangedProps {
   files: FileChange[]
+  /** Click handler for a file row. When provided, rows become buttons and
+   *  clicking launches the caller into whatever viewer they supply (in
+   *  practice, the Workspace diff view focused on that file). */
+  onFileClick?: (path: string) => void
 }
 
 const actionStyles: Record<FileChange['action'], string> = {
@@ -50,7 +54,7 @@ function extractFilename(filePath: string): string {
   return segments[segments.length - 1] || filePath
 }
 
-export const FilesChanged = memo(function FilesChanged({ files }: FilesChangedProps) {
+export const FilesChanged = memo(function FilesChanged({ files, onFileClick }: FilesChangedProps) {
   const sorted = useMemo(() => {
     const latestByPath = new Map<string, FileChange>()
     for (const file of files) {
@@ -76,38 +80,52 @@ export const FilesChanged = memo(function FilesChanged({ files }: FilesChangedPr
       <div className="text-[11px] text-kumo-subtle px-1 pb-1">
         {sorted.length} file{sorted.length !== 1 ? 's' : ''} changed
       </div>
-      {sorted.map((file, index) => (
-        <div
-          key={`${file.path}-${index}`}
-          className="flex items-center gap-2.5 px-2.5 py-2 rounded-md bg-kumo-control border border-kumo-line hover:border-kumo-fill-hover transition-colors group"
-        >
-          <span className={`shrink-0 ${actionStyles[file.action].split(' ').find((cls) => cls.startsWith('text-'))}`}>
-            {actionIcon(file.action)}
-          </span>
-
-          <div className="flex-1 min-w-0">
-            <div
-              className="text-xs text-kumo-default truncate"
-              title={file.path}
-            >
-              {extractFilename(file.path)}
-            </div>
-            <div className="text-[10px] text-kumo-subtle truncate" title={file.path}>
-              {file.path}
-            </div>
-          </div>
-
-          <span
-            className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${actionStyles[file.action]}`}
+      {sorted.map((file, index) => {
+        const clickable = !!onFileClick && file.action !== 'deleted'
+        const Tag = clickable ? 'button' : 'div'
+        const clickProps = clickable
+          ? {
+              type: 'button' as const,
+              onClick: () => onFileClick?.(file.path),
+              title: `${file.path} · click to view diff`
+            }
+          : {}
+        return (
+          <Tag
+            key={`${file.path}-${index}`}
+            {...clickProps}
+            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md bg-kumo-control border border-kumo-line transition-colors group text-left w-full ${
+              clickable ? 'hover:border-kumo-brand/50 hover:bg-kumo-fill-hover cursor-pointer' : 'hover:border-kumo-fill-hover'
+            }`}
           >
-            {actionLabels[file.action]}
-          </span>
+            <span className={`shrink-0 ${actionStyles[file.action].split(' ').find((cls) => cls.startsWith('text-'))}`}>
+              {actionIcon(file.action)}
+            </span>
 
-          <span className="shrink-0 text-[10px] text-kumo-subtle font-mono">
-            {formatRelativeTime(file.timestamp)}
-          </span>
-        </div>
-      ))}
+            <div className="flex-1 min-w-0">
+              <div
+                className="text-xs text-kumo-default truncate"
+                title={file.path}
+              >
+                {extractFilename(file.path)}
+              </div>
+              <div className="text-[10px] text-kumo-subtle truncate" title={file.path}>
+                {file.path}
+              </div>
+            </div>
+
+            <span
+              className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${actionStyles[file.action]}`}
+            >
+              {actionLabels[file.action]}
+            </span>
+
+            <span className="shrink-0 text-[10px] text-kumo-subtle font-mono">
+              {formatRelativeTime(file.timestamp)}
+            </span>
+          </Tag>
+        )
+      })}
     </div>
   )
 })

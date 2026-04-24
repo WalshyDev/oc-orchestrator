@@ -1,11 +1,12 @@
-import { ipcMain, dialog, shell } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
 import os from 'os'
 import { agentController } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
-import { workspaceManager } from './services/workspace-manager'
+import { workspaceManager, FileWriteConflictError } from './services/workspace-manager'
 import { database } from './services/database'
 import { notificationService, type NotifiableEventType } from './services/notification-service'
+import { subscribeFileChanges, unsubscribeFileChanges } from './services/file-watcher'
 import { getAppVersion } from './version'
 
 interface Attachment {
@@ -624,6 +625,106 @@ export function registerIpcHandlers(): void {
       logIpcError('workspace:status', error)
       return { ok: false, error: String(error) }
     }
+  })
+
+  /**
+   * Resolve an agent's worktree directory from its ID. Used by the git/file
+   * IPC handlers below so the renderer never passes an absolute filesystem
+   * path — it only supplies the agentId, and the main process owns the
+   * mapping to on-disk location.
+   */
+  const resolveAgentWorktree = (agentId: string): string => {
+    const agent = agentController.getAgent(agentId)
+    if (!agent) throw new Error(`Unknown agent: ${agentId}`)
+    return agent.directory
+  }
+
+  ipcMain.handle('workspace:git-status', async (_event, agentId: string) => {
+    try {
+      const worktree = resolveAgentWorktree(agentId)
+      const files = workspaceManager.getGitStatus(worktree)
+      return { ok: true, data: files }
+    } catch (error) {
+      logIpcError('workspace:git-status', error, { agentId })
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('workspace:git-diff', async (_event, agentId: string, relativePath: string) => {
+    try {
+      const worktree = resolveAgentWorktree(agentId)
+      const sides = workspaceManager.getDiffSides(worktree, relativePath)
+      return { ok: true, data: sides }
+    } catch (error) {
+      logIpcError('workspace:git-diff', error, { agentId, relativePath })
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('file:read', async (_event, agentId: string, relativePath: string) => {
+    try {
+      const worktree = resolveAgentWorktree(agentId)
+      const result = workspaceManager.readFileSafe(worktree, relativePath)
+      return { ok: true, data: result }
+    } catch (error) {
+      logIpcError('file:read', error, { agentId, relativePath })
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  /**
+   * Writes a file in the agent's worktree. `expectedMtimeMs` must match the
+   * mtime the renderer observed at read time, or the write is rejected with
+   * a CONFLICT error so the UI can prompt the user. Pass `null` to skip the
+   * check (after the user explicitly chose Overwrite in the conflict modal).
+   */
+  ipcMain.handle('file:write', async (
+    _event,
+    agentId: string,
+    relativePath: string,
+    content: string,
+    expectedMtimeMs: number | null
+  ) => {
+    try {
+      const worktree = resolveAgentWorktree(agentId)
+      const result = workspaceManager.writeFileSafe(worktree, relativePath, content, expectedMtimeMs)
+      return { ok: true, data: result }
+    } catch (error) {
+      if (error instanceof FileWriteConflictError) {
+        return {
+          ok: false,
+          error: 'CONFLICT',
+          data: { currentMtimeMs: error.currentMtimeMs }
+        }
+      }
+      logIpcError('file:write', error, { agentId, relativePath })
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  /**
+   * Subscribes a renderer to change events on one file. The renderer supplies
+   * a stable subscriptionId so it can correlate incoming `file:changed`
+   * broadcasts with a specific open editor. Re-subscribing with the same id
+   * replaces the existing watch (cheap way to switch files).
+   */
+  ipcMain.handle('file:watch', async (event, agentId: string, subscriptionId: string, relativePath: string) => {
+    try {
+      const worktree = resolveAgentWorktree(agentId)
+      const abs = workspaceManager.resolveWorktreeRelativePath(worktree, relativePath)
+      const window = BrowserWindow.fromWebContents(event.sender)
+      if (!window) throw new Error('Watch request came from a detached renderer')
+      subscribeFileChanges(window, subscriptionId, abs)
+      return { ok: true }
+    } catch (error) {
+      logIpcError('file:watch', error, { agentId, relativePath, subscriptionId })
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('file:unwatch', async (_event, subscriptionId: string) => {
+    unsubscribeFileChanges(subscriptionId)
+    return { ok: true }
   })
 
   // ── Database: Projects ──

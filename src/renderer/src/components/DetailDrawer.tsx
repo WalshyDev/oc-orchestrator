@@ -41,6 +41,7 @@ import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
+import { HighlightAskPopover, type HighlightSelection } from './HighlightAskPopover'
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
@@ -143,6 +144,12 @@ interface DetailDrawerProps {
   onOpenQuickActionSettings?: () => void
   onSetPrUrl?: (prUrl: string | null) => void
   onOpenInEditor?: () => void
+  /** Open the full-window Workspace view (git-status-backed diff viewer +
+   *  highlight-to-ask) for this agent. Offered alongside the external-editor
+   *  option so users can review work inline without leaving the app. Accepts
+   *  an optional file path to pre-select (used when the user clicks a row
+   *  in Files Changed). */
+  onOpenWorkspace?: (filePath?: string) => void
   onChangeModel?: () => void
   onOpenTerminal?: () => void
   onToggleLabel?: (labelId: string) => void
@@ -186,6 +193,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   onOpenQuickActionSettings,
   onSetPrUrl,
   onOpenInEditor,
+  onOpenWorkspace,
   onChangeModel,
   onOpenTerminal,
   onToggleLabel,
@@ -214,6 +222,9 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [cursorPos, setCursorPos] = useState(0)
   const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
   const [showPrLinkModal, setShowPrLinkModal] = useState(false)
+  // Highlight-to-ask popover state. Anchored near the selection end; nulled
+  // out on send/close/selection-cleared.
+  const [highlightPopover, setHighlightPopover] = useState<{ anchor: { x: number; y: number }; selection: HighlightSelection } | null>(null)
 
   // Input history cycling: -1 = not browsing, 0+ = offset from most recent
   const historyIndexRef = useRef(-1)
@@ -388,6 +399,80 @@ export const DetailDrawer = memo(function DetailDrawer({
   useEffect(() => {
     textareaRef.current?.focus()
   }, [agent.id])
+
+  // ── Highlight-to-ask in the transcript ────────────────────────────────
+  // Track text selections made inside the transcript content region. When a
+  // non-empty selection settles (mouseup / keyup), anchor the popover near
+  // its end and let the user compose a question quoting the selected text.
+  //
+  // Why this shape and not `selectionchange`: fires too aggressively during
+  // a drag, and we only want the popover once the user is done highlighting.
+  // We still reset on selection clear so switching focus to the composer
+  // doesn't leave a stale popover floating.
+  useEffect(() => {
+    if (activeTab !== 'transcript') {
+      setHighlightPopover(null)
+      return
+    }
+    const content = transcriptContentRef.current
+    if (!content) return
+
+    const captureSelection = () => {
+      const selection = window.getSelection()
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
+
+      const range = selection.getRangeAt(0)
+      if (!content.contains(range.commonAncestorContainer)) return
+
+      const text = selection.toString().trim()
+      if (!text) return
+
+      const rect = range.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) return
+
+      setHighlightPopover({
+        anchor: { x: rect.left, y: rect.bottom + 6 },
+        selection: {
+          text,
+          source: 'message transcript'
+        }
+      })
+    }
+
+    const onMouseUp = () => {
+      // Defer by a frame so the browser finalizes the selection first.
+      requestAnimationFrame(captureSelection)
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.shiftKey || event.key.startsWith('Arrow')) {
+        requestAnimationFrame(captureSelection)
+      }
+    }
+
+    content.addEventListener('mouseup', onMouseUp)
+    content.addEventListener('keyup', onKeyUp)
+    return () => {
+      content.removeEventListener('mouseup', onMouseUp)
+      content.removeEventListener('keyup', onKeyUp)
+    }
+  }, [activeTab])
+
+  const handleHighlightSend = useCallback((message: string) => {
+    if (onSendMessage) {
+      onSendMessage(message)
+    }
+    setHighlightPopover(null)
+    // Clear the selection so the popover doesn't immediately re-trigger.
+    window.getSelection()?.removeAllRanges()
+    // Re-engage follow-to-bottom so the user watches the agent's reply land
+    // even if they'd scrolled up to inspect the quoted passage.
+    followBottomRef.current = true
+    setShowJumpToLatest(false)
+    requestAnimationFrame(() => {
+      const container = transcriptScrollRef.current
+      if (container) container.scrollTop = container.scrollHeight
+    })
+  }, [onSendMessage])
 
   const scrollToBottom = (el: HTMLDivElement) => { el.scrollTop = el.scrollHeight }
 
@@ -650,9 +735,15 @@ export const DetailDrawer = memo(function DetailDrawer({
     setTimeout(onClose, 200)
   }
 
+  // Dedupe files by path so the tab badge matches what the user sees in the
+  // list. Multiple SSE events for the same file (e.g. agent edits foo.ts
+  // five times) would otherwise inflate the count even though FilesChanged
+  // itself collapses them on render.
+  const uniqueFileCount = new Set(files.map((file) => file.path)).size
+
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'transcript', label: 'Transcript', count: messages.length },
-    { key: 'files', label: 'Files Changed', count: files.length },
+    { key: 'files', label: 'Files Changed', count: uniqueFileCount },
     { key: 'tools', label: 'Tools', count: tools.length },
     { key: 'events', label: 'Events', count: events.length }
   ]
@@ -861,7 +952,12 @@ export const DetailDrawer = memo(function DetailDrawer({
               </div>
             )}
 
-            {activeTab === 'files' && <FilesChanged files={files} />}
+            {activeTab === 'files' && (
+              <FilesChanged
+                files={files}
+                onFileClick={onOpenWorkspace ? (path) => onOpenWorkspace(path) : undefined}
+              />
+            )}
             {activeTab === 'tools' && <ToolsUsage tools={tools} verbose={isVerbose} />}
             {activeTab === 'events' && <EventLog events={events} verbose={isVerbose} />}
           </div>
@@ -1120,6 +1216,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 label="Open In"
                 className="w-full"
                 items={[
+                  ...(onOpenWorkspace ? [{ icon: <Code size={12} />, label: 'Review changes (⌘E)', onClick: () => onOpenWorkspace() }] : []),
                   { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
                   { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
                 ]}
@@ -1192,6 +1289,14 @@ export const DetailDrawer = memo(function DetailDrawer({
             setShowPrLinkModal(false)
           }}
           onClose={() => setShowPrLinkModal(false)}
+        />
+      )}
+      {highlightPopover && onSendMessage && (
+        <HighlightAskPopover
+          anchor={highlightPopover.anchor}
+          selection={highlightPopover.selection}
+          onSend={handleHighlightSend}
+          onClose={() => setHighlightPopover(null)}
         />
       )}
     </div>

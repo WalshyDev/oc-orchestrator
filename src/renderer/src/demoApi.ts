@@ -335,6 +335,13 @@ export function createDemoApi(): OrchestratorApi {
     removeWorktree: noop,
     listWorktrees: () => ok([]),
     getWorktreeStatus: () => ok({ dirty: false, changedFiles: 0 }),
+    getGitStatus: () => ok([]),
+    getGitDiff: () => ok({ before: '', after: '' }),
+    readFile: () => ok({ content: '', mtimeMs: 0, size: 0, encoding: 'utf-8' as const, truncated: false }),
+    writeFile: () => ok({ mtimeMs: 0, size: 0 }),
+    watchFile: () => Promise.resolve({ ok: true } as const),
+    unwatchFile: () => Promise.resolve({ ok: true } as const),
+    onFileChanged: () => () => {},
 
     // ── Database: Projects ──
     listProjects: () => ok([]),

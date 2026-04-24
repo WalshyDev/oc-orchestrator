@@ -591,15 +591,35 @@ function resolveSessionIdForEvent(
   return agent?.sessionId
 }
 
-function trackFileChange(sessionId: string, filePath: string, action: FileChangeRecord['action']): void {
+function trackFileChange(sessionId: string, filePath: string, action: FileChangeRecord['action'], timestamp: number = Date.now()): void {
   const changes = state.fileChanges.get(sessionId) ?? []
   changes.push({
     path: filePath,
     action,
-    timestamp: Date.now()
+    timestamp
   })
   state.fileChanges.set(sessionId, changes)
   fileChangesVersion++
+}
+
+// Tracks agents we've already seeded with git-status-derived file changes, so
+// re-opening the Files Changed tab doesn't clobber real session events that
+// may have arrived since hydration. Cleared when the agent is removed.
+const fileChangesHydrated = new Set<string>()
+
+/** Map a git porcelain status into the three-way action that FileChangeRecord
+ *  uses. Git has richer states (renamed, copied, typechange, unmerged) but the
+ *  UI only distinguishes created/modified/deleted. */
+function gitStatusToFileChangeAction(status: string): FileChangeRecord['action'] {
+  switch (status) {
+    case 'added':
+    case 'untracked':
+      return 'created'
+    case 'deleted':
+      return 'deleted'
+    default:
+      return 'modified'
+  }
 }
 
 function getMessageCreatedAt(info: Record<string, unknown> | HistoricalMessageInfo): number {
@@ -3083,6 +3103,7 @@ export function useAgentStore() {
     if (!window.api) return
 
     removeAgentState(agentId)
+    fileChangesHydrated.delete(agentId)
     emit({ agents: true, messages: true, permissions: true, questions: true })
 
     // Background cleanup (runtime stop, worktree removal) in main process
@@ -3109,6 +3130,53 @@ export function useAgentStore() {
   const getFileChangesForSession = useCallback((sessionId: string): FileChangeRecord[] => {
     return storeState.fileChanges.get(sessionId) ?? []
   }, [fileChangesVersion])
+
+  /**
+   * Seed the Files Changed list for an agent from `git status` in its
+   * worktree. This handles the case where the user opens the drawer on a
+   * restored/dev-reloaded agent that never emitted file-change SSE events
+   * this session — without hydration, the tab would be empty even when
+   * the worktree has real uncommitted changes.
+   *
+   * Hydrated entries use `timestamp: 0` so any future real SSE event wins
+   * on the component's dedup-by-latest-timestamp. We hydrate at most once
+   * per agentId per app lifetime (cleared on agent removal) to avoid
+   * clobbering accumulated session provenance.
+   */
+  const hydrateFileChangesFromGit = useCallback(async (agentId: string): Promise<void> => {
+    if (fileChangesHydrated.has(agentId)) return
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    fileChangesHydrated.add(agentId)
+
+    try {
+      const result = await window.api.getGitStatus(agentId)
+      if (!result.ok || !result.data) return
+
+      // Stamp hydrated entries with a single "now" so they sort together in
+      // one block, clearly separate from later per-event timestamps. A real
+      // SSE event landing on the same file later will have a larger Date.now()
+      // and win the component's dedup-by-latest-timestamp pass.
+      const hydratedAt = Date.now()
+      for (const file of result.data) {
+        const action = gitStatusToFileChangeAction(file.status)
+        trackFileChange(agent.sessionId, file.path, action, hydratedAt)
+      }
+
+      if (result.data.length > 0) {
+        // fileChangesVersion already bumped by trackFileChange; piggyback
+        // on the agents flag to force a re-render so useCallback deps
+        // in consumers pick up the new file list.
+        emit({ agents: true })
+      }
+    } catch (error) {
+      // Non-fatal: user can still see files as soon as the agent emits events,
+      // or can open the Workspace view (⌘E) for the git-backed diff.
+      console.warn('[useAgentStore] Failed to hydrate file changes from git:', error)
+      // Leave the "hydrated" flag set so we don't retry in a tight loop if
+      // the call fails repeatedly (e.g. non-git worktree).
+    }
+  }, [])
 
   const getEventsForSession = useCallback((sessionId: string): EventLogEntry[] => {
     return storeState.eventLog.get(sessionId) ?? []
@@ -3270,7 +3338,8 @@ export function useAgentStore() {
     getMessagesForSession,
     getFileChangesForSession,
     getEventsForSession,
-    getToolCallsForSession
+    getToolCallsForSession,
+    hydrateFileChangesFromGit
   }), [
     agents, permissions, questions, storeState.healthy, storeState.initializing,
     launchAgent, sendMessage, listCommands, listAgentConfigs,
@@ -3280,6 +3349,7 @@ export function useAgentStore() {
     toggleLabel, clearLabels, setPrUrl,
     dismissAgentError, compactSession, selectDirectory,
     getMessagesForSession, getFileChangesForSession,
-    getEventsForSession, getToolCallsForSession
+    getEventsForSession, getToolCallsForSession,
+    hydrateFileChangesFromGit
   ])
 }

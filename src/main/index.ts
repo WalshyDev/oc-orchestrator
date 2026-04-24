@@ -79,6 +79,11 @@ function createWindow(): BrowserWindow {
     if (mainWindowRef === mainWindow) {
       mainWindowRef = null
     }
+    // Tear down any remaining file watchers belonging to this window so
+    // we don't leak fs.watch handles after reload.
+    void import('./services/file-watcher').then(({ unsubscribeAllForWindow }) => {
+      unsubscribeAllForWindow(mainWindow)
+    })
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

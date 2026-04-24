@@ -165,6 +165,38 @@ const api = {
   getWorktreeStatus: (worktreePath: string): Promise<IpcResult> =>
     ipcRenderer.invoke('workspace:status', worktreePath),
 
+  getGitStatus: (agentId: string): Promise<IpcResult<Array<{ path: string; oldPath?: string; status: string; staged: boolean; unstaged: boolean }>>> =>
+    ipcRenderer.invoke('workspace:git-status', agentId),
+
+  getGitDiff: (agentId: string, relativePath: string): Promise<IpcResult<{ before: string; after: string }>> =>
+    ipcRenderer.invoke('workspace:git-diff', agentId, relativePath),
+
+  readFile: (agentId: string, relativePath: string): Promise<IpcResult<{ content: string; mtimeMs: number; size: number; encoding: 'utf-8' | 'binary'; truncated: boolean }>> =>
+    ipcRenderer.invoke('file:read', agentId, relativePath),
+
+  writeFile: (
+    agentId: string,
+    relativePath: string,
+    content: string,
+    expectedMtimeMs: number | null
+  ): Promise<IpcResult<{ mtimeMs: number; size: number; currentMtimeMs?: number | null }>> =>
+    ipcRenderer.invoke('file:write', agentId, relativePath, content, expectedMtimeMs),
+
+  watchFile: (agentId: string, subscriptionId: string, relativePath: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('file:watch', agentId, subscriptionId, relativePath),
+
+  unwatchFile: (subscriptionId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('file:unwatch', subscriptionId),
+
+  /** Subscribe to file-changed events broadcast by the main process watcher.
+   *  The main-process file watcher pushes every change (debounced 150ms) as
+   *  a `file:changed` event; callers correlate by subscriptionId. */
+  onFileChanged: (callback: (data: { subscriptionId: string; event: 'changed' | 'renamed' | 'deleted' | 'error'; absPath?: string; mtimeMs?: number; error?: string }) => void): (() => void) => {
+    const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void => callback(data)
+    ipcRenderer.on('file:changed', handler)
+    return () => ipcRenderer.removeListener('file:changed', handler)
+  },
+
   // ── Database: Projects ──
   listProjects: (): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:list'),
