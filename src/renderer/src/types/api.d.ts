@@ -63,6 +63,13 @@ export interface OrchestratorApi {
   removeWorktree: (options: { repoRoot: string; worktreePath: string }) => Promise<IpcResult>
   listWorktrees: (repoRoot: string) => Promise<IpcResult<WorktreeListEntry[]>>
   getWorktreeStatus: (worktreePath: string) => Promise<IpcResult<WorktreeStatus>>
+  getGitStatus: (agentId: string) => Promise<IpcResult<GitStatusFile[]>>
+  getGitDiff: (agentId: string, relativePath: string) => Promise<IpcResult<{ before: string; after: string }>>
+  readFile: (agentId: string, relativePath: string) => Promise<IpcResult<FileReadPayload>>
+  writeFile: (agentId: string, relativePath: string, content: string, expectedMtimeMs: number | null) => Promise<IpcResult<FileWritePayload>>
+  watchFile: (agentId: string, subscriptionId: string, relativePath: string) => Promise<IpcResult>
+  unwatchFile: (subscriptionId: string) => Promise<IpcResult>
+  onFileChanged: (callback: (data: FileChangedPayload) => void) => () => void
 
   // ── Database: Projects ──
   listProjects: () => Promise<IpcResult<Project[]>>
@@ -135,6 +142,39 @@ export interface ProjectSessionEntry {
 export interface WorktreeStatus {
   dirty: boolean
   changedFiles: number
+}
+
+export interface GitStatusFile {
+  path: string
+  oldPath?: string
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unmerged' | 'typechange'
+  staged: boolean
+  unstaged: boolean
+}
+
+export interface FileReadPayload {
+  content: string
+  mtimeMs: number
+  size: number
+  encoding: 'utf-8' | 'binary'
+  truncated: boolean
+}
+
+export interface FileWritePayload {
+  mtimeMs: number
+  size: number
+  /** Present on CONFLICT errors — the mtime observed on disk at the time the
+   *  write was rejected. Lets the UI show a precise "agent edited N seconds
+   *  ago" message in the conflict modal. */
+  currentMtimeMs?: number | null
+}
+
+export interface FileChangedPayload {
+  subscriptionId: string
+  event: 'changed' | 'renamed' | 'deleted' | 'error'
+  absPath?: string
+  mtimeMs?: number
+  error?: string
 }
 
 export interface Project {

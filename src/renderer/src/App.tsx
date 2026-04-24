@@ -11,6 +11,7 @@ import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
 import { McpModal } from './components/McpModal'
+import { WorkspaceView } from './components/WorkspaceView'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
 import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority } from './types'
@@ -160,6 +161,12 @@ export function App() {
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelPickerAgentId, setModelPickerAgentId] = useState<string | null>(null)
   const [showMcpModal, setShowMcpModal] = useState(false)
+  // When set, the full-window Workspace (code review) view is open for this agent.
+  // Taking over the whole viewport, it reuses the selected agent's send-message path
+  // so highlight-to-ask questions flow through the normal chat pipeline.
+  const [workspaceAgentId, setWorkspaceAgentId] = useState<string | null>(null)
+  // Initial file to select on workspace open (e.g. clicked from Files Changed).
+  const [workspaceInitialFile, setWorkspaceInitialFile] = useState<string | null>(null)
   const [updateInfo, setUpdateInfo] = useState<{ currentVersion: string; latestVersion: string } | null>(null)
   const [appVersion, setAppVersion] = useState('')
   const [dismissedInterruptIds, setDismissedInterruptIds] = useState<Set<string> | null>(null)
@@ -205,6 +212,7 @@ export function App() {
     getMessagesForSession,
     getFileChangesForSession,
     getEventsForSession,
+    hydrateFileChangesFromGit: storeHydrateFileChangesFromGit,
     sendMessage: storeSendMessage,
     replyToQuestion: storeReplyToQuestion,
     resetSession: storeResetSession,
@@ -327,6 +335,16 @@ export function App() {
   useEffect(() => {
     setViewedAgentId(selectedAgentId)
   }, [selectedAgentId])
+
+  // ── Hydrate Files Changed from git when an agent is selected ──
+  // Restored/dev-reloaded agents never emit the SSE events that populate the
+  // session's file-change list, so the Files Changed tab stays empty even
+  // when the worktree has real uncommitted work. Seeding from git status on
+  // select fixes that. The store itself guards against repeated hydration.
+  useEffect(() => {
+    if (!selectedAgentId) return
+    void storeHydrateFileChangesFromGit(selectedAgentId)
+  }, [selectedAgentId, storeHydrateFileChangesFromGit])
 
   // ── Fetch app version ──
   useEffect(() => {
@@ -1041,6 +1059,36 @@ Then give me a brief summary of what the previous session was working on and whe
     window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
   }, [selectedAgentId, findLiveAgent])
 
+  const handleOpenWorkspace = useCallback((filePath?: string) => {
+    if (!selectedAgentId) return
+    setWorkspaceInitialFile(filePath ?? null)
+    setWorkspaceAgentId(selectedAgentId)
+  }, [selectedAgentId])
+
+  const handleCloseWorkspace = useCallback(() => {
+    setWorkspaceAgentId(null)
+    setWorkspaceInitialFile(null)
+  }, [])
+
+  /** Send a message to the agent whose Workspace view is currently open. Used
+   *  by the highlight-to-ask popover so quoted citations flow through the
+   *  normal send pipeline (history, /commands, @mentions). After sending we
+   *  pop back to the transcript and scroll to the bottom so the user can
+   *  watch the reply stream in, which is the whole point of asking. */
+  const handleWorkspaceSendMessage = useCallback(async (text: string) => {
+    if (!workspaceAgentId) return
+    await storeSendMessage(workspaceAgentId, text)
+    // Open the drawer for this agent and jump the transcript to the latest
+    // user message (our citation). setSelectedAgentId with a scroll target
+    // signals the drawer to switch to the transcript tab and scroll.
+    setSelectedAgentId(workspaceAgentId, 'last-user-message')
+  }, [workspaceAgentId, storeSendMessage, setSelectedAgentId])
+
+  const workspaceAgent = useMemo(() => {
+    if (!workspaceAgentId) return null
+    return store.agents.find((agent) => agent.id === workspaceAgentId) ?? null
+  }, [workspaceAgentId, store.agents])
+
   const handleOpenTerminalForDrawer = useCallback(() => {
     if (!selectedAgentId) return
     const liveAgent = findLiveAgent(selectedAgentId)
@@ -1284,10 +1332,23 @@ Then give me a brief summary of what the previous session was working on and whe
       const target = event.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
 
+      // Workspace view owns its own keyboard; don't fight it.
+      if (workspaceAgentId) return
+
       // Cmd+K -> command palette
       if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         setShowCommandPalette((prev) => !prev)
+        return
+      }
+
+      // Cmd+E -> open Workspace code review for the selected agent
+      if (event.key === 'e' && (event.metaKey || event.ctrlKey)) {
+        if (selectedAgentId) {
+          event.preventDefault()
+          setWorkspaceInitialFile(null)
+          setWorkspaceAgentId(selectedAgentId)
+        }
         return
       }
 
@@ -1407,7 +1468,7 @@ Then give me a brief summary of what the previous session was working on and whe
         return
       }
     },
-    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, findPermissionForAgent, store, handleQuickLaunch]
+    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, workspaceAgentId, findPermissionForAgent, store, handleQuickLaunch]
   )
 
   useEffect(() => {
@@ -1568,6 +1629,7 @@ Then give me a brief summary of what the previous session was working on and whe
            onOpenQuickActionSettings={() => { setSettingsTab('quick-actions'); setShowSettings(true) }}
            onSetPrUrl={handleDrawerSetPrUrl}
            onOpenInEditor={handleOpenInEditor}
+           onOpenWorkspace={handleOpenWorkspace}
           onChangeModel={handleDrawerChangeModel}
           onOpenTerminal={handleOpenTerminalForDrawer}
           onToggleLabel={handleDrawerToggleLabel}
@@ -1642,6 +1704,19 @@ Then give me a brief summary of what the previous session was working on and whe
         <McpModal
           agentId={selectedAgentId}
           onClose={() => setShowMcpModal(false)}
+        />
+      )}
+
+      {workspaceAgent && (
+        <WorkspaceView
+          agentId={workspaceAgent.id}
+          agentName={workspaceAgent.name}
+          projectName={workspaceAgent.projectName}
+          branchName={workspaceAgent.branchName}
+          agentStatus={workspaceAgent.status}
+          initialFilePath={workspaceInitialFile}
+          onClose={handleCloseWorkspace}
+          onSendMessage={handleWorkspaceSendMessage}
         />
       )}
 
