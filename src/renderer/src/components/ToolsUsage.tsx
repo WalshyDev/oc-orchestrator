@@ -8,6 +8,28 @@ export interface ToolCall {
   input?: string
   output?: string
   timestamp: number
+  /** For the `task` tool — sessionId of the sub-agent, so the UI can
+   *  render live progress by reading the child session's messages. */
+  childSessionId?: string
+  /** For the `task` tool — a flattened snapshot of the sub-agent's
+   *  transcript, computed by the app whenever the parent message list
+   *  rebuilds. Populated only when `childSessionId` is set. */
+  childTranscript?: ChildTranscriptEntry[]
+}
+
+/** Compact representation of a sub-agent's live activity for display inside
+ *  a `task` tool bubble. We flatten text and tool calls into a linear list
+ *  because the nested rendering doesn't need the full message grouping. */
+export interface ChildTranscriptEntry {
+  id: string
+  kind: 'text' | 'tool'
+  /** For text entries: the assistant's text. For tool entries: the tool name. */
+  label: string
+  /** For tool entries: the lifecycle state (so we can show a spinner). */
+  toolState?: 'running' | 'completed' | 'failed'
+  /** For tool entries: a short input summary (matches the parent bubble's
+   *  `summarizeToolInput` output). */
+  toolSummary?: string
 }
 
 interface ToolsUsageProps {

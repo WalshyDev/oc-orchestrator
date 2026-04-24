@@ -15,7 +15,8 @@ import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgen
 import { useCustomLabels } from './hooks/useCustomLabels'
 import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority } from './types'
 import type { FileChange } from './components/FilesChanged'
-import type { ToolCall } from './components/ToolsUsage'
+import type { ToolCall, ChildTranscriptEntry } from './components/ToolsUsage'
+import type { LiveMessage } from './hooks/useAgentStore'
 import type { EventEntry } from './components/EventLog'
 import { loadSettings, parseSlashCommand, type QuickAction } from './data/settings'
 
@@ -38,6 +39,68 @@ function mapToolState(toolState?: string): ToolCall['state'] {
   if (toolState === 'completed') return 'completed'
   if (toolState === 'error' || toolState === 'failed') return 'failed'
   return 'running'
+}
+
+/** Flatten a sub-agent's live messages into the compact transcript shape that
+ *  a `task` tool bubble renders inline. We keep every text chunk and every
+ *  tool invocation in chronological order; stale/step-start/finish parts are
+ *  skipped because they don't help the user see progress. Called per-task-
+ *  tool-call whenever the parent transcript rebuilds, so this stays cheap. */
+function buildChildTranscript(messages: LiveMessage[]): ChildTranscriptEntry[] {
+  const entries: ChildTranscriptEntry[] = []
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.type === 'text' && part.text) {
+        entries.push({
+          id: part.id,
+          kind: 'text',
+          label: part.text
+        })
+      } else if (part.type === 'tool' && part.toolName) {
+        entries.push({
+          id: part.id,
+          kind: 'tool',
+          label: part.toolName,
+          toolState: mapToolState(part.toolState),
+          toolSummary: summarizeChildToolInput(part.toolName, part.toolInput)
+        })
+      }
+    }
+  }
+  return entries
+}
+
+/** Single-line summary of a sub-agent tool's input. Mirrors the parent
+ *  bubble's formatter (DetailDrawer.summarizeToolInput) but collapsed onto
+ *  one line and truncated, because we're rendering inside a nested list. */
+function summarizeChildToolInput(name: string, input: string | undefined): string | undefined {
+  if (!input) return undefined
+  try {
+    const parsed = JSON.parse(input) as Record<string, unknown>
+    const pick = (...keys: string[]): string | undefined => {
+      for (const key of keys) {
+        const value = parsed[key]
+        if (typeof value === 'string' && value.trim()) return value
+      }
+      return undefined
+    }
+    const raw = (() => {
+      switch (name.toLowerCase()) {
+        case 'bash': return pick('command')
+        case 'read': case 'write': case 'edit': return pick('filePath', 'file_path', 'path')
+        case 'grep': return pick('pattern')
+        case 'glob': return pick('pattern')
+        case 'webfetch': return pick('url')
+        case 'task': return pick('description', 'prompt')
+        default: return undefined
+      }
+    })()
+    if (!raw) return undefined
+    const oneLine = raw.replace(/\s+/g, ' ').trim()
+    return oneLine.length > 80 ? oneLine.slice(0, 80) + '…' : oneLine
+  } catch {
+    return undefined
+  }
 }
 
 function extractLastAssistantMessage(messages: { role: string; parts: { type: string; text?: string }[] }[]): string | undefined {
@@ -545,7 +608,11 @@ export function App() {
               state: mapToolState(part.toolState),
               input: part.toolInput,
               output: part.text ?? undefined,
-              timestamp: msg.createdAt
+              timestamp: msg.createdAt,
+              childSessionId: part.childSessionId,
+              childTranscript: part.childSessionId
+                ? buildChildTranscript(getMessagesForSession(part.childSessionId))
+                : undefined
             })
             break
           case 'file':

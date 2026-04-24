@@ -53,6 +53,7 @@ interface HistoricalMessagePart {
     title?: string
     raw?: string
     input?: unknown
+    metadata?: Record<string, unknown>
   }
   reasoning?: string
   reason?: string
@@ -181,6 +182,12 @@ export interface LiveMessagePart {
   compactionAuto?: boolean
   /** For compaction parts — whether the compaction was triggered by a context overflow. */
   compactionOverflow?: boolean
+  /** For task-tool parts — sessionId of the sub-agent. The task tool reports
+   *  this via ctx.metadata({ metadata: { sessionId } }) when the sub-session
+   *  starts; all streaming progress is emitted against this child sessionId
+   *  (not the parent), so the UI has to read from that bucket to show live
+   *  output while the task runs. */
+  childSessionId?: string
 }
 
 export interface FileChangeRecord {
@@ -581,6 +588,16 @@ function getToolState(partState: Record<string, unknown> | undefined): string | 
   return typeof status === 'string' ? status : undefined
 }
 
+/** Extract a sub-agent sessionId from a tool part's state.metadata.
+ *  The task tool sets `metadata: { sessionId }` via ctx.metadata() both when
+ *  the sub-session is created (running) and in the final return (completed),
+ *  so we can read it at any point in the tool's lifecycle. */
+function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
+  const metadata = partState?.metadata as Record<string, unknown> | undefined
+  const sessionId = metadata?.sessionId
+  return typeof sessionId === 'string' ? sessionId : undefined
+}
+
 function stringifyToolInput(input: unknown): string | undefined {
   if (input === undefined) return undefined
   try {
@@ -663,6 +680,9 @@ function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): voi
     existingPart.text = nextPart.text
     existingPart.toolName = nextPart.toolName
     existingPart.toolState = nextPart.toolState
+    // Don't clobber a known childSessionId with undefined — the parent tool
+    // part may receive updates that omit metadata.
+    if (nextPart.childSessionId) existingPart.childSessionId = nextPart.childSessionId
     return
   }
 
@@ -681,6 +701,7 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
     nextPart.toolState = part.state?.status
     nextPart.toolInput = stringifyToolInput(part.state?.input)
     nextPart.text = part.text ?? part.state?.output ?? part.state?.error ?? part.state?.title ?? part.state?.raw
+    nextPart.childSessionId = getChildSessionId(part.state as Record<string, unknown> | undefined)
   }
 
   if (part.type === 'file') {
@@ -1305,6 +1326,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           if (partType === 'tool') {
             existingPart.toolState = getToolState(toolState)
             existingPart.toolInput = stringifyToolInput(toolState?.input)
+            existingPart.childSessionId = getChildSessionId(toolState) ?? existingPart.childSessionId
           }
           if (partType === 'file') {
             existingPart.fileMime = part.mime as string | undefined
@@ -1321,6 +1343,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
             newPart.toolName = part.tool as string | undefined
             newPart.toolState = getToolState(toolState)
             newPart.toolInput = stringifyToolInput(toolState?.input)
+            newPart.childSessionId = getChildSessionId(toolState)
           }
           if (partType === 'file') {
             newPart.fileMime = part.mime as string | undefined
