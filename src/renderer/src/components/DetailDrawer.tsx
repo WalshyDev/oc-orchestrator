@@ -1584,13 +1584,27 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
   verbose?: boolean
   rootRef?: (node: HTMLElement | null) => void
 }) {
-  const [expanded, setExpanded] = useState(verbose)
   const toolCalls = message.toolCalls ?? []
+
+  // Auto-expand the bubble when a `task` tool is still running so the user
+  // can see sub-agent progress without having to click. Otherwise the bubble
+  // looks frozen ("tool completed" only appears at the very end) and the user
+  // has no feedback until the child session finishes — which for CI-watching
+  // tasks can be many minutes.
+  const hasRunningTask = toolCalls.some((tool) => tool.name === 'task' && tool.state === 'running')
+  const [expanded, setExpanded] = useState(verbose || hasRunningTask)
 
   // Sync with verbose prop changes (e.g. user toggles verbose mode)
   useEffect(() => {
     if (verbose) setExpanded(true)
   }, [verbose])
+
+  // Once a task starts running inside this group, force the bubble open.
+  // We don't collapse it again when the task finishes — the user may want to
+  // scroll back through the progress.
+  useEffect(() => {
+    if (hasRunningTask) setExpanded(true)
+  }, [hasRunningTask])
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
@@ -1620,6 +1634,14 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
                   {summarizeToolInput(tool.name, tool.input)}
                 </pre>
               )}
+              {/* Live sub-agent progress for the `task` tool. The child
+                  session's messages are already flowing through EventBridge →
+                  useAgentStore; we just mirror them inline so the user can
+                  watch what the sub-agent is doing. Rendered above the final
+                  output so the transcript reads top-to-bottom. */}
+              {tool.name === 'task' && tool.childTranscript && tool.childTranscript.length > 0 && (
+                <ChildTaskTranscript entries={tool.childTranscript} running={tool.state === 'running'} />
+              )}
               {tool.output && (
                 <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
                   {tool.output}
@@ -1637,6 +1659,48 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbose === next.verbose
 )
+
+function ChildTaskTranscript({
+  entries,
+  running
+}: {
+  entries: NonNullable<ToolCall['childTranscript']>
+  running: boolean
+}) {
+  return (
+    <div className="mt-2 rounded-md border border-kumo-line bg-kumo-overlay px-2 py-1.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-kumo-subtle">
+        {running && <CircleNotch size={10} className="animate-spin text-kumo-link" />}
+        <span>sub-agent {running ? 'working' : 'transcript'}</span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {entries.map((entry) => (
+          <div key={entry.id} className="text-[10px] font-mono leading-tight">
+            {entry.kind === 'text' ? (
+              <div className="whitespace-pre-wrap break-words text-kumo-default">
+                {entry.label}
+              </div>
+            ) : (
+              <div className="flex items-start gap-1.5 text-kumo-subtle">
+                <span className={`shrink-0 ${toolIconStyle(entry.toolState)}`}>
+                  {entry.toolState === 'completed'
+                    ? '✓'
+                    : entry.toolState === 'failed'
+                    ? '✗'
+                    : '…'}
+                </span>
+                <span className="text-kumo-link">{entry.label}</span>
+                {entry.toolSummary && (
+                  <span className="truncate text-kumo-subtle">{entry.toolSummary}</span>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 /**
  * Which banner the drawer should render, derived from the agent's transient
