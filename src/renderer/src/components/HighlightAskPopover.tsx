@@ -29,6 +29,13 @@ interface HighlightAskPopoverProps {
   selectionRect: SelectionRect
   /** What the user highlighted — shown in a preview strip at the top of the popover. */
   selection: HighlightSelection
+  /** Whether sending should return the user to the chat transcript. The
+   *  popover renders a small inline toggle so the user can change this
+   *  per-question without leaving the popover. */
+  returnToTranscript: boolean
+  /** Called when the toggle changes. The host owns persistence (e.g. saving
+   *  to the preferences store) — the popover only reflects + emits. */
+  onChangeReturnToTranscript: (next: boolean) => void
   /** Called when the user sends. Receives the full composed message (citation + question). */
   onSend: (message: string) => void
   /** Dismiss without sending. */
@@ -60,7 +67,14 @@ const ANCHOR_GAP = 8
  * header — useful when the auto-placement still lands somewhere awkward
  * (e.g. selection spans most of the viewport).
  */
-export function HighlightAskPopover({ selectionRect, selection, onSend, onClose }: HighlightAskPopoverProps) {
+export function HighlightAskPopover({
+  selectionRect,
+  selection,
+  returnToTranscript,
+  onChangeReturnToTranscript,
+  onSend,
+  onClose
+}: HighlightAskPopoverProps) {
   const [question, setQuestion] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -213,6 +227,19 @@ export function HighlightAskPopover({ selectionRect, selection, onSend, onClose 
           rows={3}
           className="w-full resize-none bg-neutral-950 border border-neutral-800 rounded px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50 focus:border-sky-500/50"
         />
+        {/* "Return to transcript" toggle. Lives next to the Send button so
+            the user can flip it per-question without leaving the popover. */}
+        <label className="flex items-center gap-2 mt-2 cursor-pointer select-none group">
+          <input
+            type="checkbox"
+            checked={returnToTranscript}
+            onChange={(event) => onChangeReturnToTranscript(event.target.checked)}
+            className="h-3 w-3 rounded border-neutral-700 bg-neutral-950 text-sky-500 focus:ring-sky-500/50 focus:ring-offset-0"
+          />
+          <span className="text-[11px] text-neutral-400 group-hover:text-neutral-300">
+            Return to transcript after sending
+          </span>
+        </label>
         <div className="flex items-center justify-between mt-2">
           <span className="text-[10px] text-neutral-500">Enter to send · Shift+Enter for newline</span>
           <button
