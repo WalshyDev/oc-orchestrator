@@ -1155,12 +1155,19 @@ export const DetailDrawer = memo(function DetailDrawer({
                   }
                 ]}
               />
+              {onOpenWorkspace && (
+                <ActionButton
+                  icon={<Code size={12} />}
+                  label="Review"
+                  onClick={() => onOpenWorkspace()}
+                  className="w-full"
+                />
+              )}
               <ActionDropdownButton
                 icon={<ArrowSquareOut size={12} />}
                 label="Open In"
                 className="w-full"
                 items={[
-                  ...(onOpenWorkspace ? [{ icon: <Code size={12} />, label: 'Review changes (⌘E)', onClick: () => onOpenWorkspace() }] : []),
                   { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
                   { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
                 ]}
