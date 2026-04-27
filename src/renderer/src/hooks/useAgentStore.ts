@@ -591,10 +591,43 @@ function resolveSessionIdForEvent(
   return agent?.sessionId
 }
 
+/**
+ * Normalize a file path reported by an opencode tool event into a canonical
+ * worktree-relative form. Different tools emit the same logical file using
+ * different shapes — some absolute (`/Users/.../worktree/src/foo.ts`), some
+ * relative (`src/foo.ts`), occasionally with `./` prefixes — so storing the
+ * raw value produces duplicate Files Changed rows for the same file.
+ *
+ * Strategy: if the path starts with the agent's worktree directory, strip
+ * the prefix; otherwise leave it alone. Forward slashes always; trim a
+ * leading `./` for cosmetic consistency.
+ */
+function normalizeAgentFilePath(filePath: string, worktreeDirectory: string | undefined): string {
+  // Forward slashes only, even on Windows-shaped paths.
+  let normalized = filePath.replace(/\\/g, '/')
+
+  if (worktreeDirectory) {
+    const root = worktreeDirectory.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (normalized === root) return ''
+    if (normalized.startsWith(root + '/')) {
+      normalized = normalized.slice(root.length + 1)
+    }
+  }
+
+  // Strip a single leading `./`. Don't recursively unwind — `././foo` is
+  // exotic enough that we'd rather see it in the UI as a hint of bug.
+  if (normalized.startsWith('./')) normalized = normalized.slice(2)
+
+  return normalized
+}
+
 function trackFileChange(sessionId: string, filePath: string, action: FileChangeRecord['action'], timestamp: number = Date.now()): void {
+  const agent = findAgentBySession(sessionId)
+  const normalized = normalizeAgentFilePath(filePath, agent?.directory)
+
   const changes = state.fileChanges.get(sessionId) ?? []
   changes.push({
-    path: filePath,
+    path: normalized,
     action,
     timestamp
   })
@@ -3128,7 +3161,22 @@ export function useAgentStore() {
   }, [messagesVersion])
 
   const getFileChangesForSession = useCallback((sessionId: string): FileChangeRecord[] => {
-    return storeState.fileChanges.get(sessionId) ?? []
+    const raw = storeState.fileChanges.get(sessionId) ?? []
+    if (raw.length === 0) return raw
+
+    // Re-normalize on read so any entries written before this session got the
+    // normalization fix (or by an agent whose worktree we couldn't resolve at
+    // the time) collapse into the canonical worktree-relative shape. The
+    // FilesChanged component does its own dedup-by-path; normalizing here
+    // ensures that dedup catches absolute-vs-relative duplicates of the same
+    // logical file.
+    const agent = findAgentBySession(sessionId)
+    if (!agent) return raw
+    return raw.map((entry) => {
+      const normalized = normalizeAgentFilePath(entry.path, agent.directory)
+      if (normalized === entry.path) return entry
+      return { ...entry, path: normalized }
+    })
   }, [fileChangesVersion])
 
   /**
