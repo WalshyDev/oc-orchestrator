@@ -14,7 +14,7 @@ import {
   FolderSimple,
   Warning
 } from '@phosphor-icons/react'
-import { HighlightAskPopover, type HighlightSelection } from './HighlightAskPopover'
+import { HighlightAskPopover, type HighlightSelection, type SelectionRect } from './HighlightAskPopover'
 import { languageForPath } from '../lib/language'
 
 // Wire the Monaco loader to the bundled copy so it doesn't try to fetch from a
@@ -38,8 +38,11 @@ interface WorkspaceViewProps {
   onClose: () => void
   /** Hands a composed message (from the highlight-to-ask popover) back to the
    *  main send path, so it uses the same history/attachments/command pipeline
-   *  as the chat input. */
-  onSendMessage: (text: string) => void
+   *  as the chat input. The `returnToTranscript` flag tells the host whether
+   *  to pop the user back to the chat transcript (true) or leave them in the
+   *  workspace to keep reviewing (false). The host honours it via a
+   *  scrollRequest signal; the workspace itself only decides the policy. */
+  onSendMessage: (text: string, options: { returnToTranscript: boolean }) => void
 }
 
 interface GitStatusFile {
@@ -81,6 +84,11 @@ const STATUS_GLYPHS: Record<string, string> = {
  *  paste or rapid typing, short enough that you don't lose work if the app
  *  crashes. */
 const AUTOSAVE_DEBOUNCE_MS = 1000
+
+/** Preference key for the "return to transcript after send" toggle in the
+ *  workspace header. Stringly-typed because the preference store is
+ *  string-valued; we encode booleans as 'true'/'false'. */
+const WORKSPACE_RETURN_PREF_KEY = 'workspace.returnToTranscriptAfterSend'
 
 /** Stable subscription id for the file watcher — we reuse it on file switch
  *  so the main process just rebinds the single watch rather than accumulating
@@ -153,7 +161,15 @@ export function WorkspaceView({
   // Overwrite / Discard mine / Cancel without losing their edits.
   const [conflictModal, setConflictModal] = useState<{ currentMtimeMs: number | null } | null>(null)
 
-  const [popover, setPopover] = useState<{ anchor: { x: number; y: number }; selection: HighlightSelection } | null>(null)
+  const [popover, setPopover] = useState<{ selectionRect: SelectionRect; selection: HighlightSelection } | null>(null)
+
+  // After-send behaviour: when true, sending from the highlight-to-ask popover
+  // pops the user back to the chat transcript; when false, the workspace
+  // stays open so they can keep reviewing while the reply streams behind.
+  // Default false (stay in workspace) — better fits the "review code, ask
+  // multiple questions" workflow. Persisted via the preferences store so the
+  // user's choice survives reloads.
+  const [returnToTranscriptAfterSend, setReturnToTranscriptAfterSend] = useState(false)
 
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null)
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -468,16 +484,24 @@ export function WorkspaceView({
     const endLine = selection.endLineNumber
     const lineRange = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`
 
-    // Anchor the popover just below the selection end, using Monaco's coords.
+    // Build a viewport-coordinate rect for the selection so the popover can
+    // pick a side (above vs below) with more room. Monaco's
+    // getTopForLineNumber returns content-area-relative pixels; combined
+    // with the editor DOM rect and scroll offset we get viewport coords.
     const domNode = activeEditor.getDomNode()
     if (!domNode) return
-    const rect = domNode.getBoundingClientRect()
-    const lineTop = activeEditor.getTopForLineNumber(endLine) - activeEditor.getScrollTop()
-    const x = rect.left + 80 // offset past line numbers so the popover isn't clipped
-    const y = rect.top + lineTop + 24
+    const editorRect = domNode.getBoundingClientRect()
+    const scrollTop = activeEditor.getScrollTop()
+    const lineHeight = activeEditor.getOption(monacoNs.editor.EditorOption.lineHeight)
+    const top = editorRect.top + activeEditor.getTopForLineNumber(startLine) - scrollTop
+    const bottom = editorRect.top + activeEditor.getTopForLineNumber(endLine) - scrollTop + lineHeight
+    // Offset left past the line-number gutter so the popover doesn't sit
+    // on top of the gutter when above-placement is chosen.
+    const left = editorRect.left + 80
+    const right = editorRect.right
 
     setPopover({
-      anchor: { x, y },
+      selectionRect: { top, bottom, left, right },
       selection: {
         text: trimmed,
         source: `${selectedPath}:${lineRange}`,
@@ -544,10 +568,39 @@ export function WorkspaceView({
   }, [captureSelection])
 
   const handlePopoverSend = useCallback((message: string) => {
-    onSendMessage(message)
+    onSendMessage(message, { returnToTranscript: returnToTranscriptAfterSend })
     setPopover(null)
-    onClose()
-  }, [onSendMessage, onClose])
+    if (returnToTranscriptAfterSend) {
+      onClose()
+    }
+  }, [onSendMessage, onClose, returnToTranscriptAfterSend])
+
+  // ── Load + persist 'return to transcript' preference ────────────────────
+  // Single string-valued preference for now; if other workspace prefs
+  // accumulate we can switch to a JSON-encoded settings blob.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await window.api.getPreference(WORKSPACE_RETURN_PREF_KEY)
+        if (cancelled) return
+        if (result.ok && typeof result.data === 'string') {
+          setReturnToTranscriptAfterSend(result.data === 'true')
+        }
+      } catch {
+        // Non-fatal: fall back to the default (false).
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const toggleReturnToTranscript = useCallback(() => {
+    setReturnToTranscriptAfterSend((current) => {
+      const next = !current
+      void window.api.setPreference(WORKSPACE_RETURN_PREF_KEY, String(next))
+      return next
+    })
+  }, [])
 
   // ── Keyboard: Esc to close, cmd+up/down for file nav, hunk nav ───────────
   // Hunk navigation has two bindings because plain n/p would type those
@@ -636,6 +689,26 @@ export function WorkspaceView({
             Agent is working — review only
           </div>
         )}
+        {/* "After send" toggle: when on, sending a question pops the user
+            back to the chat transcript; when off (default), the workspace
+            stays open. Persisted via the preferences store. */}
+        <button
+          type="button"
+          onClick={toggleReturnToTranscript}
+          className={`no-drag flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors ${
+            returnToTranscriptAfterSend
+              ? 'text-sky-300 bg-sky-500/15 hover:bg-sky-500/25'
+              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
+          }`}
+          title={
+            returnToTranscriptAfterSend
+              ? 'After send: return to transcript. Click to stay in workspace instead.'
+              : 'After send: stay in workspace. Click to return to transcript instead.'
+          }
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${returnToTranscriptAfterSend ? 'bg-sky-400' : 'bg-neutral-600'}`} />
+          {returnToTranscriptAfterSend ? 'Return on send' : 'Stay on send'}
+        </button>
         <button
           type="button"
           onClick={() => void refreshStatus()}
@@ -867,7 +940,7 @@ export function WorkspaceView({
 
       {popover && (
         <HighlightAskPopover
-          anchor={popover.anchor}
+          selectionRect={popover.selectionRect}
           selection={popover.selection}
           onSend={handlePopoverSend}
           onClose={() => setPopover(null)}
