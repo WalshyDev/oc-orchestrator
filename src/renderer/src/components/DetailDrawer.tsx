@@ -130,7 +130,7 @@ interface DetailDrawerProps {
    * each request so repeated clicks retrigger the scroll even when the target
    * is unchanged.
    */
-  scrollRequest?: { target: 'last-user-message'; seq: number } | null
+  scrollRequest?: { target: 'last-user-message' | 'bottom'; seq: number } | null
   onClose: () => void
   onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
   onApprove?: () => void
@@ -476,12 +476,29 @@ export const DetailDrawer = memo(function DetailDrawer({
   }, [activeTab])
 
   // Scroll-to-target: react to scrollRequest.seq changes. Triggered when the
-  // user clicks the "Last Message" cell in the fleet table.
+  // user clicks the "Last Message" cell in the fleet table or sends from the
+  // workspace popover.
   const lastHandledScrollSeqRef = useRef<number>(-1)
   useEffect(() => {
     if (!scrollRequest) return
     if (scrollRequest.seq === lastHandledScrollSeqRef.current) return
     lastHandledScrollSeqRef.current = scrollRequest.seq
+
+    if (activeTab !== 'transcript') setActiveTab('transcript')
+
+    if (scrollRequest.target === 'bottom') {
+      // Snap to the very bottom and re-engage follow-mode so the streaming
+      // reply auto-scrolls into view as it arrives. This is what we want
+      // after sending from the workspace popover — the user just sent a
+      // message and wants to watch the agent answer.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        followBottomRef.current = true
+        setShowJumpToLatest(false)
+        const container = transcriptScrollRef.current
+        if (container) container.scrollTop = container.scrollHeight
+      }))
+      return
+    }
 
     if (scrollRequest.target !== 'last-user-message') return
 
@@ -494,8 +511,6 @@ export const DetailDrawer = memo(function DetailDrawer({
     }
     if (targetIndex < 0) return
     const targetId = messages[targetIndex].id
-
-    if (activeTab !== 'transcript') setActiveTab('transcript')
 
     // Expand the visible window if the target is outside it so the node renders.
     const neededCount = messages.length - targetIndex
@@ -902,6 +917,12 @@ export const DetailDrawer = memo(function DetailDrawer({
         </div>
 
         {/* Vertical resize handle */}
+        {/* Resize handle + bottom pane (chat input + action rail) only show
+            on the Transcript tab. The other tabs (Files Changed, Tools,
+            Events) are pure read-only views — keeping the composer there
+            offered nothing and stole space from the content above. */}
+        {activeTab === 'transcript' && (
+        <>
         <div
           onMouseDown={handleVerticalResizeStart}
           className="h-1.5 shrink-0 cursor-row-resize group flex items-center justify-center border-t border-kumo-line"
@@ -1198,6 +1219,8 @@ export const DetailDrawer = memo(function DetailDrawer({
           </div>
         </div>
         </div>{/* end bottom pane */}
+        </>
+        )}
       </div>
 
       {showPrLinkModal && onSetPrUrl && (

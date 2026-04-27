@@ -839,6 +839,12 @@ export function WorkspaceView({
                       readOnly: !canEdit,
                       originalEditable: false,
                       renderSideBySide: true,
+                      // Hide Monaco's inline per-hunk revert arrows. They
+                      // silently overwrite edits on a single click with no
+                      // confirmation, which is hostile here. Users still
+                      // have ⌘Z for fine-grained undo and the "Reload,
+                      // discard mine" banner for whole-file revert.
+                      renderMarginRevertIcon: false,
                       minimap: { enabled: false },
                       automaticLayout: true,
                       fontSize: 12,

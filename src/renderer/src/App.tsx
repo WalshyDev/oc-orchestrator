@@ -1073,15 +1073,15 @@ Then give me a brief summary of what the previous session was working on and whe
   /** Send a message to the agent whose Workspace view is currently open. Used
    *  by the highlight-to-ask popover so quoted citations flow through the
    *  normal send pipeline (history, /commands, @mentions). After sending we
-   *  pop back to the transcript and scroll to the bottom so the user can
-   *  watch the reply stream in, which is the whole point of asking. */
+   *  pop back to the transcript and snap to the very bottom — 'bottom' (vs
+   *  'last-user-message') matters because the citation has a long quoted
+   *  block, and landing at the *top* of that message would push the agent's
+   *  incoming reply offscreen. Re-engaging follow-mode also keeps the
+   *  streaming reply auto-scrolled into view. */
   const handleWorkspaceSendMessage = useCallback(async (text: string) => {
     if (!workspaceAgentId) return
     await storeSendMessage(workspaceAgentId, text)
-    // Open the drawer for this agent and jump the transcript to the latest
-    // user message (our citation). setSelectedAgentId with a scroll target
-    // signals the drawer to switch to the transcript tab and scroll.
-    setSelectedAgentId(workspaceAgentId, 'last-user-message')
+    setSelectedAgentId(workspaceAgentId, 'bottom')
   }, [workspaceAgentId, storeSendMessage, setSelectedAgentId])
 
   const workspaceAgent = useMemo(() => {

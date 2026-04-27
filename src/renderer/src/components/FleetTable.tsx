@@ -61,7 +61,15 @@ const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'wrench': Wrench,
 }
 
-export type DrawerScrollTarget = 'last-user-message'
+/**
+ * Where to land in the transcript when opening the drawer.
+ *  - 'last-user-message': scroll the last user message to the top of the
+ *    viewport. Used when jumping back from a notification or quick-action.
+ *  - 'bottom': scroll all the way to the bottom and re-engage follow-mode
+ *    so the next streaming reply auto-scrolls into view. Used after sending
+ *    from the workspace's highlight-to-ask popover.
+ */
+export type DrawerScrollTarget = 'last-user-message' | 'bottom'
 
 interface FleetTableProps {
   agents: AgentRuntime[]
