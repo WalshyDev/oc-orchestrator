@@ -594,12 +594,9 @@ export function WorkspaceView({
     return () => { cancelled = true }
   }, [])
 
-  const toggleReturnToTranscript = useCallback(() => {
-    setReturnToTranscriptAfterSend((current) => {
-      const next = !current
-      void window.api.setPreference(WORKSPACE_RETURN_PREF_KEY, String(next))
-      return next
-    })
+  const setReturnToTranscriptPersisted = useCallback((next: boolean) => {
+    setReturnToTranscriptAfterSend(next)
+    void window.api.setPreference(WORKSPACE_RETURN_PREF_KEY, String(next))
   }, [])
 
   // ── Keyboard: Esc to close, cmd+up/down for file nav, hunk nav ───────────
@@ -689,26 +686,6 @@ export function WorkspaceView({
             Agent is working — review only
           </div>
         )}
-        {/* "After send" toggle: when on, sending a question pops the user
-            back to the chat transcript; when off (default), the workspace
-            stays open. Persisted via the preferences store. */}
-        <button
-          type="button"
-          onClick={toggleReturnToTranscript}
-          className={`no-drag flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors ${
-            returnToTranscriptAfterSend
-              ? 'text-sky-300 bg-sky-500/15 hover:bg-sky-500/25'
-              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
-          }`}
-          title={
-            returnToTranscriptAfterSend
-              ? 'After send: return to transcript. Click to stay in workspace instead.'
-              : 'After send: stay in workspace. Click to return to transcript instead.'
-          }
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${returnToTranscriptAfterSend ? 'bg-sky-400' : 'bg-neutral-600'}`} />
-          {returnToTranscriptAfterSend ? 'Return on send' : 'Stay on send'}
-        </button>
         <button
           type="button"
           onClick={() => void refreshStatus()}
@@ -942,6 +919,8 @@ export function WorkspaceView({
         <HighlightAskPopover
           selectionRect={popover.selectionRect}
           selection={popover.selection}
+          returnToTranscript={returnToTranscriptAfterSend}
+          onChangeReturnToTranscript={setReturnToTranscriptPersisted}
           onSend={handlePopoverSend}
           onClose={() => setPopover(null)}
         />
