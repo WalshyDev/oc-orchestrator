@@ -6,6 +6,7 @@ export type NotifiableEventType =
   | 'errored'
   | 'completed'
   | 'disconnected'
+  | 'external_attached'
 
 export interface NotificationPreferences {
   needs_approval: boolean
@@ -13,6 +14,7 @@ export interface NotificationPreferences {
   errored: boolean
   completed: boolean
   disconnected: boolean
+  external_attached: boolean
 }
 
 interface SentNotificationKey {
@@ -27,7 +29,10 @@ const NOTIFICATION_TITLES: Record<NotifiableEventType, (agentName: string) => st
   needs_input: (agentName) => `Agent ${agentName} needs your input`,
   errored: (agentName) => `Agent ${agentName} encountered an error`,
   completed: (agentName) => `Agent ${agentName} completed its task`,
-  disconnected: (agentName) => `Runtime disconnected from agent ${agentName}`
+  disconnected: (agentName) => `Runtime disconnected from agent ${agentName}`,
+  // For external_attached the agentName slot carries the source label
+  // (e.g. "Voice prompt"), not a real agent name.
+  external_attached: (source) => `${source} attached`
 }
 
 const NOTIFICATION_BODIES: Record<NotifiableEventType, (projectName?: string) => string> = {
@@ -35,7 +40,8 @@ const NOTIFICATION_BODIES: Record<NotifiableEventType, (projectName?: string) =>
   needs_input: (projectName) => projectName ? `Project: ${projectName}` : 'Waiting for your input',
   errored: (projectName) => projectName ? `Project: ${projectName}` : 'Check the agent for details',
   completed: (projectName) => projectName ? `Project: ${projectName}` : 'Task finished successfully',
-  disconnected: (projectName) => projectName ? `Project: ${projectName}` : 'Connection lost'
+  disconnected: (projectName) => projectName ? `Project: ${projectName}` : 'Connection lost',
+  external_attached: (projectName) => projectName ? `New session in ${projectName}` : 'New external session'
 }
 
 class NotificationService {
@@ -44,7 +50,8 @@ class NotificationService {
     needs_input: true,
     errored: true,
     completed: false,
-    disconnected: true
+    disconnected: true,
+    external_attached: true
   }
 
   private soundEnabled = true
@@ -81,6 +88,68 @@ class NotificationService {
     }
   }
 
+  /**
+   * Surface an external attachment (e.g. voice-prompt creating a session via
+   * the HTTP API).
+   *
+   * The renderer broadcast is unconditional — it drives the FleetTable row
+   * flash and is independent of whether the user wants OS notifications.
+   * Only the OS Notification respects `preferences.external_attached`.
+   *
+   * Dedup short-circuits OS notifications fired within DEDUP_WINDOW_MS for
+   * the same (source, sessionId), so a client that retries POST /sessions
+   * after a transient error doesn't spam the user.
+   */
+  notifyExternalAttached(args: { source: string; projectName?: string; sessionId?: string; agentId?: string }): void {
+    // Renderer broadcast: always send so the FleetTable flashes regardless
+    // of OS notification preference.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('external:attached', {
+          source: args.source,
+          projectName: args.projectName,
+          sessionId: args.sessionId,
+          agentId: args.agentId
+        })
+      }
+    }
+
+    if (!this.preferences.external_attached) return
+    if (!Notification.isSupported()) return
+
+    // Dedup so a retried POST /sessions doesn't double-toast.  Keyed on
+    // (source, sessionId) — same source + same session = same intent.
+    // Falls back to source alone when no sessionId is provided.
+    const dedupKey = `external_attached:${args.source}:${args.sessionId ?? ''}`
+    if (this.isDuplicateKey(dedupKey)) return
+    this.recordKey(dedupKey)
+
+    const title = NOTIFICATION_TITLES.external_attached(args.source)
+    const body = NOTIFICATION_BODIES.external_attached(args.projectName)
+
+    const notification = new Notification({
+      title,
+      body,
+      silent: !this.soundEnabled
+    })
+
+    this.activeNotifications.add(notification)
+
+    if (args.agentId) {
+      const agentId = args.agentId
+      notification.on('click', () => {
+        this.handleNotificationClick(agentId)
+        this.activeNotifications.delete(notification)
+      })
+    }
+
+    notification.on('close', () => {
+      setTimeout(() => this.activeNotifications.delete(notification), 5 * 60 * 1000)
+    })
+
+    notification.show()
+  }
+
   checkAndNotify(
     agentId: string,
     status: NotifiableEventType,
@@ -101,21 +170,26 @@ class NotificationService {
   }
 
   private isDuplicate(agentId: string, eventType: NotifiableEventType): boolean {
-    const key = this.buildKey(agentId, eventType)
-    const lastSent = this.sentNotifications.get(key)
-
-    if (lastSent === undefined) {
-      return false
-    }
-
-    return Date.now() - lastSent < DEDUP_WINDOW_MS
+    return this.isDuplicateKey(this.buildKey(agentId, eventType))
   }
 
   private recordNotification(agentId: string, eventType: NotifiableEventType): void {
-    const key = this.buildKey(agentId, eventType)
-    this.sentNotifications.set(key, Date.now())
+    this.recordKey(this.buildKey(agentId, eventType))
+  }
 
-    // Clean up old entries periodically
+  /**
+   * Lower-level dedup helpers that take an arbitrary key.  Used by callers
+   * that don't fit the (agentId, NotifiableEventType) shape — e.g. external
+   * attachments keyed on (source, sessionId).
+   */
+  private isDuplicateKey(key: string): boolean {
+    const lastSent = this.sentNotifications.get(key)
+    if (lastSent === undefined) return false
+    return Date.now() - lastSent < DEDUP_WINDOW_MS
+  }
+
+  private recordKey(key: string): void {
+    this.sentNotifications.set(key, Date.now())
     if (this.sentNotifications.size > 100) {
       this.pruneOldEntries()
     }

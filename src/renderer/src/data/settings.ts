@@ -3,6 +3,7 @@ export interface NotificationPrefs {
   needs_input: boolean
   errored: boolean
   completed: boolean
+  external_attached: boolean
 }
 
 export type QuickActionIcon =
@@ -75,6 +76,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     needs_input: true,
     errored: true,
     completed: false,
+    external_attached: true,
   },
   verboseMode: false,
   soundEnabled: true,

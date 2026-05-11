@@ -285,6 +285,12 @@ const api = {
     return () => ipcRenderer.removeListener('agent:launched', handler)
   },
 
+  onExternalAttached: (callback: (data: { source: string; projectName?: string; sessionId?: string; agentId?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('external:attached', handler)
+    return () => ipcRenderer.removeListener('external:attached', handler)
+  },
+
   onRuntimeStarted: (callback: (data: { id: string; directory: string; serverUrl: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('runtime:started', handler)

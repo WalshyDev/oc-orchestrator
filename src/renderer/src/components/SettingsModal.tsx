@@ -245,6 +245,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                       { key: 'needs_input', label: 'Needs Input' },
                       { key: 'errored', label: 'Errored' },
                       { key: 'completed', label: 'Completed' },
+                      { key: 'external_attached', label: 'External Session Attached' },
                     ] as const
                   ).map((pref) => (
                     <label key={pref.key} className="flex items-center gap-2.5 cursor-pointer group">
