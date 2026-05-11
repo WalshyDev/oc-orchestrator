@@ -20,6 +20,7 @@ import {
 } from '@phosphor-icons/react'
 import type { AgentRuntime, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths, SortDirection } from '../types'
 import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
+import { isRecentlyAttached } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { TextInputModal } from './TextInputModal'
@@ -766,6 +767,7 @@ function AgentRow({
 }) {
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
+  const flashing = isRecentlyAttached(agent.id)
   const [inlineValue, setInlineValue] = useState(agent.name)
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const inlineSubmittedRef = useRef(false)
@@ -814,7 +816,7 @@ function AgentRow({
           : urgent
             ? 'bg-kumo-danger/[0.04] hover:bg-kumo-danger/[0.08]'
             : 'hover:bg-kumo-control'
-      }`}
+      } ${flashing ? 'ring-2 ring-inset ring-kumo-brand/60 bg-kumo-brand/[0.06]' : ''}`}
     >
       {show('agent') && (
         <td className="px-3 py-2 overflow-hidden">

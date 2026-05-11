@@ -246,6 +246,16 @@ let eventLogVersion = 0
 // Cleared when a server-generated session title arrives (which is a better summary).
 const taskSummaryLocked = new Set<string>()
 
+// Agents that were just created via an external attachment (e.g. voice-prompt
+// hitting POST /sessions).  FleetTable reads this to apply a brief flash
+// animation on the row.  Entries clear after RECENTLY_ATTACHED_TTL_MS.
+const recentlyAttachedAgents = new Set<string>()
+const RECENTLY_ATTACHED_TTL_MS = 4_000
+
+export function isRecentlyAttached(agentId: string): boolean {
+  return recentlyAttachedAgents.has(agentId)
+}
+
 // Tracks agents that should have PR URL extraction enabled.  We only extract
 // PR URLs when the user explicitly triggered the "Create PR" flow so that
 // URLs the user pastes in their own messages don't get picked up.
@@ -2694,6 +2704,16 @@ export function useAgentStore() {
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
       window.api.onSessionReset(handleSessionReset),
+      window.api.onExternalAttached((data) => {
+        const { agentId } = data
+        if (!agentId) return
+        recentlyAttachedAgents.add(agentId)
+        emit({ agents: true })
+        setTimeout(() => {
+          recentlyAttachedAgents.delete(agentId)
+          emit({ agents: true })
+        }, RECENTLY_ATTACHED_TTL_MS)
+      }),
       window.api.onEventError((data) => {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
         state.healthy = false

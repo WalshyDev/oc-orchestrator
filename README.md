@@ -97,6 +97,98 @@ Electron + React + TypeScript. SQLite for local persistence. Communicates with O
 - **Main process** — runtime management, agent controller, event bridge, database
 - **Renderer** — React 19 with TailwindCSS 4, central state via `useSyncExternalStore`
 
+## External HTTP API
+
+OCO exposes a localhost HTTP API for external tools to launch and control agents. The intended use case is bridging external triggers (voice prompts, hotkeys, scripts) into OCO's fleet, with the option to attach the OpenCode TUI to the same session OCO created. Both clients then see the same SSE event stream.
+
+The server binds to `127.0.0.1` only and is gated by a per-launch random token (see Discovery below). Don't expose the port off the loopback interface — the auth model is "anyone with read access to your home directory can drive OCO," not "anyone on the machine."
+
+### Discovery
+
+On startup, OCO writes the listening port and a per-run auth token to a JSON file inside Electron's `userData` directory. The exact path depends on how OCO is running:
+
+- macOS: `~/Library/Application Support/oc-orchestrator/api.json`
+- Linux: `~/.config/oc-orchestrator/api.json`
+- Windows: `%APPDATA%\oc-orchestrator\api.json`
+
+```json
+{
+  "port": 54321,
+  "pid": 12345,
+  "startedAt": 1731112233000,
+  "version": "1.2.3",
+  "token": "a1b2c3..."
+}
+```
+
+Always check `pid` is alive before using `port` — the file isn't cleaned up on hard crash. The `token` is regenerated each launch and required for every mutating request via `Authorization: Bearer <token>`.
+
+### Endpoints
+
+Every request except `GET /health` requires `Authorization: Bearer <token>` where the token comes from the discovery file. The public contract is keyed on `sessionId`, not OCO's internal `agentId`, so the same identifier flows directly into `opencode attach --session <id>` without translation.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| `GET` | `/health` | — | `{ ok, version, pid }` |
+| `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume? }` | `{ agentId, sessionId, runtimeUrl, directory, leaseId, leaseExpiresAt }` |
+| `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
+| `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
+| `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
+| `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
+
+`POST /sessions` requires `dir` to be a git repository — non-git paths are rejected with `400 not_a_git_repo`. The directory is normalized to its canonical repo root before any agent or project work happens, and that canonical root is what gets returned in the response (and is what you should pass to `opencode attach --dir`).
+
+`resume` is mutually exclusive with `prompt` and `model`; combining them returns `400 bad_request`. To resume and then send a message, call `POST /sessions { dir, resume }` followed by `POST /sessions/:sessionId/prompt { text }`.
+
+### Source attribution
+
+Send `X-OCO-Source: <label>` to identify the calling tool. The label appears in the desktop notification ("Voice prompt attached → my-project") and in the row flash on the FleetTable. Falls back to "External" if absent. The notification can be toggled in **Settings → Notify When → External Session Attached**.
+
+### Lease model
+
+`POST /sessions` returns a `leaseId` with a 30-minute TTL. While the lease is active, OCO's idle reaper won't reap the runtime even if there's no other activity. Refresh every ~5 minutes via `POST /leases/:leaseId/refresh`. Release with `DELETE /leases/:leaseId` when done. Expired leases are pruned lazily.
+
+Refreshing a lease whose underlying session has been removed from OCO returns `410 session_gone` and drops the lease — that prevents a forgotten refresher from pinning a runtime alive after its session has gone away.
+
+### Example: voice-prompt → OCO + TUI
+
+```bash
+#!/usr/bin/env bash
+DISCOVERY="$HOME/Library/Application Support/oc-orchestrator/api.json"
+
+PORT=$(jq -r .port "$DISCOVERY")
+TOKEN=$(jq -r .token "$DISCOVERY")
+PID=$(jq -r .pid "$DISCOVERY")
+kill -0 "$PID" 2>/dev/null || { echo "OCO is not running"; exit 1; }
+
+AUTH=(-H "Authorization: Bearer $TOKEN")
+
+# Create the session in OCO.  resume + prompt are mutually exclusive — to
+# pick up an existing session and then send a message, do two requests.
+RESP=$(curl -fs -X POST "http://127.0.0.1:$PORT/sessions" \
+  "${AUTH[@]}" \
+  -H "Content-Type: application/json" \
+  -H "X-OCO-Source: voice-prompt" \
+  -d "$(jq -n --arg dir "$WORKDIR" --arg prompt "$PROMPT" '{dir:$dir,prompt:$prompt}')")
+
+RUNTIME_URL=$(echo "$RESP" | jq -r .runtimeUrl)
+SESSION_ID=$(echo "$RESP" | jq -r .sessionId)
+LEASE_ID=$(echo "$RESP"   | jq -r .leaseId)
+
+# Refresh the lease in the background, release on exit.
+( while sleep 300; do
+    curl -fs -X POST "${AUTH[@]}" "http://127.0.0.1:$PORT/leases/$LEASE_ID/refresh" >/dev/null || break
+  done ) &
+REFRESHER=$!
+trap "kill $REFRESHER 2>/dev/null; \
+      curl -fs -X DELETE \"${AUTH[@]}\" \"http://127.0.0.1:$PORT/leases/$LEASE_ID\" >/dev/null" EXIT
+
+# Attach the OpenCode TUI to OCO's runtime, on the just-created session.
+# Both clients now share SSE events: typing in the TUI shows in OCO,
+# approving permissions in OCO unblocks prompts the TUI sent.
+exec opencode attach "$RUNTIME_URL" --session "$SESSION_ID" --dir "$WORKDIR"
+```
+
 ## License
 
 MIT

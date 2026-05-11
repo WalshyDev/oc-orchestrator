@@ -366,7 +366,8 @@ export function createDemoApi(): OrchestratorApi {
       needs_input: true,
       errored: true,
       completed: true,
-      disconnected: false
+      disconnected: false,
+      external_attached: true
     }),
     setNotificationPreference: noop,
     getSoundEnabled: () => ok(true),
@@ -387,6 +388,7 @@ export function createDemoApi(): OrchestratorApi {
     // ── Event Listeners ──
     onEvent: noopListener,
     onAgentLaunched: noopListener,
+    onExternalAttached: noopListener,
     onSessionReset: noopListener,
     onRuntimeStarted: noopListener,
     onRuntimeStopped: noopListener,

@@ -5,6 +5,7 @@ import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
 import { database } from './database'
 import { workspaceManager } from './workspace-manager'
+import { leaseRegistry } from './lease-registry'
 
 interface Attachment {
   id?: string
@@ -51,7 +52,7 @@ function buildMessageParts(text: string, attachments?: Attachment[]): Array<Text
 }
 
 // Bare model IDs (no slash) get an empty providerID so the server resolves the provider.
-function parseModelString(model: string): { providerID: string; modelID: string } {
+export function parseModelString(model: string): { providerID: string; modelID: string } {
   const slashIdx = model.indexOf('/')
   if (slashIdx > 0) {
     return { providerID: model.slice(0, slashIdx), modelID: model.slice(slashIdx + 1) }
@@ -1342,7 +1343,18 @@ class AgentController {
       const now = Date.now()
       const idleRuntimes = runtimeManager
         .getAllRuntimes()
-        .filter((runtime) => now - runtime.lastActivityAt >= idleTimeoutMs)
+        .filter((runtime) => {
+          if (now - runtime.lastActivityAt < idleTimeoutMs) return false
+          // Skip runtimes whose directory has an active lease — an external
+          // tool (e.g. an attached opencode TUI) is keeping them alive.
+          if (leaseRegistry.hasActiveLeaseForDirectory(runtime.directory)) {
+            console.log(
+              `[AgentController] Keeping runtime ${runtime.id} alive: active lease on ${runtime.directory}`
+            )
+            return false
+          }
+          return true
+        })
 
       await Promise.all(
         idleRuntimes.map(async (runtime) => {

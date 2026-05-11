@@ -108,6 +108,7 @@ export interface OrchestratorApi {
 
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
+  onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
   onRuntimeStopped: (callback: (data: { id: string }) => void) => () => void
@@ -193,6 +194,7 @@ export type NotifiableEventType =
   | 'errored'
   | 'completed'
   | 'disconnected'
+  | 'external_attached'
 
 export interface NotificationPreferences {
   needs_approval: boolean
@@ -200,6 +202,7 @@ export interface NotificationPreferences {
   errored: boolean
   completed: boolean
   disconnected: boolean
+  external_attached: boolean
 }
 
 export interface OpenCodeEventPayload {
@@ -245,6 +248,13 @@ export interface SessionResetPayload {
   branchName: string
   prompt: string
   title: string
+}
+
+export interface ExternalAttachedPayload {
+  source: string
+  projectName?: string
+  sessionId?: string
+  agentId?: string
 }
 
 export type ListAgentsPayload = AgentLaunchedPayload[]

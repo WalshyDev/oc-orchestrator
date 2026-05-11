@@ -5,6 +5,7 @@ import { agentController } from './services/agent-controller'
 import { database } from './services/database'
 import { runtimeManager } from './services/runtime-manager'
 import { startUpdateChecker, stopUpdateChecker } from './services/update-checker'
+import { startExternalApi, stopExternalApi } from './services/external-api'
 
 // Pin userData path before setName — otherwise it shifts to ~/Library/Application Support/Orchestrator/
 const userDataPath = app.getPath('userData')
@@ -172,6 +173,12 @@ app.whenReady().then(async () => {
   agentController.startIdleRuntimeChecks()
   startUpdateChecker()
 
+  // External HTTP API for tools like voice-prompt.  Starts after DB init so
+  // POST /sessions can persist projects, but doesn't block window creation.
+  startExternalApi().catch((error) => {
+    console.error('[Main] Failed to start external API:', error)
+  })
+
   // Restore agents after the renderer has loaded so the window appears
   // with the loading indicator before we start spawning runtimes.
   // If did-finish-load already fired while awaiting DB init, start immediately.
@@ -205,6 +212,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   console.log('[Main] Shutting down all agents and runtimes...')
+  stopExternalApi()
   stopUpdateChecker()
   agentController.stopAll()
 
