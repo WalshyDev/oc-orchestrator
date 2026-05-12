@@ -628,6 +628,13 @@ export const DetailDrawer = memo(function DetailDrawer({
     }
 
     // ── Input history cycling (ArrowUp/ArrowDown) ──
+    //
+    // Sequence the user expects when pressing ArrowUp repeatedly:
+    //   1. If on a multiline draft and below line 1 → step up one line (native).
+    //   2. Once on line 1 but not at column 0 → snap cursor to position 0.
+    //   3. Already at position 0 → load previous history entry, cursor at 0.
+    //   4. No more history → keep cursor pinned at 0.
+    // ArrowDown mirrors this toward the end of the buffer.
     const history = inputHistories.get(agent.id)
     if (history && history.length > 0) {
       const textarea = event.currentTarget as HTMLTextAreaElement
@@ -635,23 +642,60 @@ export const DetailDrawer = memo(function DetailDrawer({
       const noSelection = selectionStart === selectionEnd
       const onFirstLine = noSelection && !value.slice(0, selectionStart).includes('\n')
       const onLastLine = noSelection && !value.slice(selectionEnd).includes('\n')
+      const atStart = noSelection && selectionStart === 0
+      const atEnd = noSelection && selectionEnd === value.length
       const fromEnd = (i: number) => history[history.length - 1 - i]
+      const setCursor = (pos: number) => {
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current
+          if (ta) {
+            ta.selectionStart = pos
+            ta.selectionEnd = pos
+          }
+        })
+      }
 
       if (event.key === 'ArrowUp' && onFirstLine) {
+        // On line 1 but not column 0 → snap to start; let the next ArrowUp cycle.
+        if (!atStart) {
+          event.preventDefault()
+          setCursor(0)
+          return
+        }
+        // At position 0 → cycle to previous history entry.
         const next = historyIndexRef.current + 1
         if (next < history.length) {
           event.preventDefault()
           if (historyIndexRef.current === -1) savedDraftRef.current = inputText
           historyIndexRef.current = next
-          setInputText(fromEnd(next))
+          const entry = fromEnd(next)
+          setInputText(entry)
+          setCursor(0)
+        } else {
+          // No more history; keep cursor pinned at start.
+          event.preventDefault()
         }
         return
       }
 
-      if (event.key === 'ArrowDown' && onLastLine && historyIndexRef.current >= 0) {
-        event.preventDefault()
-        historyIndexRef.current -= 1
-        setInputText(historyIndexRef.current < 0 ? savedDraftRef.current : fromEnd(historyIndexRef.current))
+      if (event.key === 'ArrowDown' && onLastLine) {
+        // On last line but not at the very end → snap to end first.
+        if (!atEnd) {
+          event.preventDefault()
+          setCursor(value.length)
+          return
+        }
+        // At end → cycle forward through history (toward the current draft).
+        if (historyIndexRef.current >= 0) {
+          event.preventDefault()
+          historyIndexRef.current -= 1
+          const entry = historyIndexRef.current < 0 ? savedDraftRef.current : fromEnd(historyIndexRef.current)
+          setInputText(entry)
+          setCursor(entry.length)
+        } else {
+          // No newer history; keep cursor pinned at end.
+          event.preventDefault()
+        }
         return
       }
     }
