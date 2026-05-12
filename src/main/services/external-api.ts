@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { writeFileSync, unlinkSync, existsSync, chmodSync } from 'node:fs'
+import { writeFileSync, unlinkSync, existsSync, chmodSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { agentController, parseModelString } from './agent-controller'
@@ -47,14 +47,23 @@ interface PromptBody {
 
 const DISCOVERY_FILENAME = 'api.json'
 
+// The discovery file is the only handshake mechanism for external clients
+// (voice-prompt, etc.).  Check periodically that it still exists with our
+// content, since cleanup tools or a second OCO instance exiting can silently
+// remove it while the HTTP server is still running.
+const DISCOVERY_RECHECK_INTERVAL_MS = 60_000
+
 let server: Server | null = null
 let actualPort = 0
 let authToken = ''
+let startedAt = 0
+let discoveryRecheckTimer: NodeJS.Timeout | null = null
 
 export async function startExternalApi(): Promise<void> {
   if (server) return
 
   authToken = randomBytes(32).toString('hex')
+  startedAt = Date.now()
   server = createServer(handleRequest)
 
   await new Promise<void>((resolve, reject) => {
@@ -66,7 +75,25 @@ export async function startExternalApi(): Promise<void> {
         return
       }
       actualPort = address.port
-      writeDiscoveryFile()
+
+      // Write the discovery file synchronously and verify it landed.  If the
+      // write fails or the file isn't readable afterwards, the HTTP server
+      // is undiscoverable — better to fail loudly than to keep running with
+      // a "secret" port no client can find.
+      try {
+        writeDiscoveryFile()
+      } catch (error) {
+        // Clean up the listening socket so the caller can decide whether to
+        // retry or surface the failure to the UI.
+        server?.close()
+        server = null
+        actualPort = 0
+        authToken = ''
+        reject(error)
+        return
+      }
+
+      startDiscoveryRecheckLoop()
       console.log(`[ExternalAPI] Listening on http://127.0.0.1:${actualPort}`)
       resolve()
     })
@@ -75,41 +102,108 @@ export async function startExternalApi(): Promise<void> {
 
 export function stopExternalApi(): void {
   if (!server) return
+  stopDiscoveryRecheckLoop()
   removeDiscoveryFile()
   server.close()
   server = null
   actualPort = 0
   authToken = ''
+  startedAt = 0
 }
 
 function discoveryFilePath(): string {
   return join(app.getPath('userData'), DISCOVERY_FILENAME)
 }
 
+function buildDiscoveryPayload(): string {
+  return JSON.stringify(
+    {
+      port: actualPort,
+      pid: process.pid,
+      startedAt,
+      version: getAppVersion(),
+      token: authToken
+    },
+    null,
+    2
+  )
+}
+
 function writeDiscoveryFile(): void {
   const path = discoveryFilePath()
-  const payload = {
-    port: actualPort,
-    pid: process.pid,
-    startedAt: Date.now(),
-    version: getAppVersion(),
-    token: authToken
+  const payload = buildDiscoveryPayload()
+  writeFileSync(path, payload, 'utf-8')
+  // Restrict to owner-read/write only. The file contains an auth token.
+  // chmod is a no-op on Windows but harmless.
+  if (process.platform !== 'win32') {
+    try { chmodSync(path, 0o600) } catch { /* best-effort */ }
   }
-  try {
-    writeFileSync(path, JSON.stringify(payload, null, 2), 'utf-8')
-    // Restrict to owner-read/write only — the file contains an auth token.
-    // chmod is a no-op on Windows but harmless.
-    if (process.platform !== 'win32') {
-      try { chmodSync(path, 0o600) } catch { /* best-effort */ }
+  // Read back to confirm the write actually landed. Catches cases like a
+  // cleanup tool deleting the file between writeFileSync and the next read,
+  // or a filesystem that silently swallowed the write.
+  const readBack = readFileSync(path, 'utf-8')
+  if (readBack !== payload) {
+    throw new Error('Discovery file read-back did not match what was written')
+  }
+}
+
+function startDiscoveryRecheckLoop(): void {
+  stopDiscoveryRecheckLoop()
+  discoveryRecheckTimer = setInterval(() => {
+    if (!server) return
+    const path = discoveryFilePath()
+    let needsRewrite = false
+    if (!existsSync(path)) {
+      needsRewrite = true
+    } else {
+      try {
+        if (readFileSync(path, 'utf-8') !== buildDiscoveryPayload()) needsRewrite = true
+      } catch {
+        needsRewrite = true
+      }
     }
-  } catch (error) {
-    console.error('[ExternalAPI] Failed to write discovery file:', error)
+    if (!needsRewrite) return
+    try {
+      writeDiscoveryFile()
+      console.warn(`[ExternalAPI] Discovery file disappeared or was modified; rewrote ${path}`)
+    } catch (error) {
+      // Don't tear down the HTTP server. We're already in a degraded state
+      // and giving up on rewrites won't make it worse.
+      console.error('[ExternalAPI] Failed to rewrite discovery file:', error)
+    }
+  }, DISCOVERY_RECHECK_INTERVAL_MS)
+  // Allow the process to exit even if this timer is the only thing keeping
+  // the event loop alive (e.g. during shutdown).
+  discoveryRecheckTimer.unref()
+}
+
+function stopDiscoveryRecheckLoop(): void {
+  if (discoveryRecheckTimer) {
+    clearInterval(discoveryRecheckTimer)
+    discoveryRecheckTimer = null
   }
 }
 
 function removeDiscoveryFile(): void {
   const path = discoveryFilePath()
   if (!existsSync(path)) return
+
+  // Only delete the file if its contents match what we wrote. Otherwise a
+  // second OCO instance shutting down would clobber a first instance's
+  // discovery file, leaving the first instance listening on a port no
+  // client can find.
+  try {
+    const current = readFileSync(path, 'utf-8')
+    if (current !== buildDiscoveryPayload()) {
+      console.warn(`[ExternalAPI] Discovery file at ${path} belongs to another instance; not removing`)
+      return
+    }
+  } catch (error) {
+    // If we can't read it we can't prove it's ours; leave it alone.
+    console.warn('[ExternalAPI] Could not verify discovery file ownership before removal:', error)
+    return
+  }
+
   try {
     unlinkSync(path)
   } catch (error) {
