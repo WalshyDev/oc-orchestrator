@@ -604,7 +604,13 @@ export const DetailDrawer = memo(function DetailDrawer({
     }
 
     // ── Command autocomplete keyboard handling ──
+    //
+    // When the user is already navigating input history (historyIndexRef >= 0),
+    // skip arrow-key handling so ArrowUp/ArrowDown continue cycling history
+    // instead of getting trapped on the popup. Tab/Enter/Escape are still
+    // explicit "act on the popup" intents and remain handled.
     if (showCommandAutocomplete) {
+      const navigatingHistory = historyIndexRef.current >= 0
       if (event.key === 'Escape') {
         event.preventDefault()
         setInputText('')
@@ -616,12 +622,12 @@ export const DetailDrawer = memo(function DetailDrawer({
         if (selected) setInputText(`${selected.command} `)
         return
       }
-      if (event.key === 'ArrowDown') {
+      if (event.key === 'ArrowDown' && !navigatingHistory) {
         event.preventDefault()
         setCommandPickerIndex((prev) => (prev + 1) % matchingCommands.length)
         return
       }
-      if (event.key === 'ArrowUp') {
+      if (event.key === 'ArrowUp' && !navigatingHistory) {
         event.preventDefault()
         setCommandPickerIndex((prev) => (prev - 1 + matchingCommands.length) % matchingCommands.length)
         return
