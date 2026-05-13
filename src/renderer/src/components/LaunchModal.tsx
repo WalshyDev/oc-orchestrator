@@ -150,11 +150,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const trimmedPrompt = prompt.trim().toLowerCase()
 
+  // Only suggest commands while the user is still typing a single-token command
+  // (no space or newline yet). Once they add a space, they've committed to that
+  // command and are typing arguments — or the next Enter should submit.
+  const isTypingCommand = prompt.startsWith('/') && !prompt.includes(' ') && !prompt.includes('\n')
   const matchingCommands = useMemo(
-    () => prompt.startsWith('/')
+    () => isTypingCommand
       ? commands.filter(({ command }) => command.startsWith(trimmedPrompt))
       : [],
-    [prompt, trimmedPrompt, commands]
+    [isTypingCommand, trimmedPrompt, commands]
   )
 
   const showCommandAutocomplete = matchingCommands.length > 0 && trimmedPrompt.length > 0

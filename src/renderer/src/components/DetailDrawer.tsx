@@ -345,11 +345,15 @@ export const DetailDrawer = memo(function DetailDrawer({
 
   const trimmedInput = inputText.trim().toLowerCase()
 
+  // Only suggest commands while the user is still typing a single-token command
+  // (no space or newline yet). Once they add a space, they've committed to that
+  // command and are typing arguments — or the next Enter should submit.
+  const isTypingCommand = inputText.startsWith('/') && !inputText.includes(' ') && !inputText.includes('\n')
   const matchingCommands = useMemo(
-    () => inputText.startsWith('/')
+    () => isTypingCommand
       ? commands.filter(({ command }) => command.startsWith(trimmedInput))
       : [],
-    [inputText, trimmedInput, commands]
+    [isTypingCommand, trimmedInput, commands]
   )
 
   const showCommandAutocomplete = matchingCommands.length > 0 && trimmedInput.length > 0
