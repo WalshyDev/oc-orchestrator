@@ -157,10 +157,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     [prompt, trimmedPrompt, commands]
   )
 
-  const showCommandAutocomplete = useMemo(() => {
-    if (matchingCommands.length === 0 || trimmedPrompt.length === 0) return false
-    return !commands.some(({ command }) => command === trimmedPrompt)
-  }, [matchingCommands, trimmedPrompt, commands])
+  const showCommandAutocomplete = matchingCommands.length > 0 && trimmedPrompt.length > 0
 
   const agentMentionResult = useMemo(() => {
     if (agentConfigs.length === 0) return null

@@ -352,10 +352,7 @@ export const DetailDrawer = memo(function DetailDrawer({
     [inputText, trimmedInput, commands]
   )
 
-  const showCommandAutocomplete = useMemo(() => {
-    if (matchingCommands.length === 0 || trimmedInput.length === 0) return false
-    return !commands.some(({ command }) => command === trimmedInput)
-  }, [matchingCommands, trimmedInput, commands])
+  const showCommandAutocomplete = matchingCommands.length > 0 && trimmedInput.length > 0
 
   // ── @ Agent mention detection ──
   // Find the @mention being typed at or before the cursor position.
