@@ -707,7 +707,7 @@ function PromptTextarea({
   const matchingCommands = isTypingCommand
     ? commands.filter((c) => c.command.startsWith(trimmed))
     : []
-  const shouldShow = showAutocomplete && matchingCommands.length > 0 && !commands.some((c) => c.command === trimmed)
+  const shouldShow = showAutocomplete && matchingCommands.length > 0
 
   const insertCommand = (command: string) => {
     onChange(`${command} `)
