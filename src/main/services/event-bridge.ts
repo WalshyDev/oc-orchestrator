@@ -204,12 +204,46 @@ export class EventBridge {
       runtimeManager.touchRuntimeActivity(this.runtimeId)
     }
 
+    // Surface error-shaped events in main-process logs so issues like
+    // ProviderAuthError ("Unauthorized: ... opencode auth login ...") are
+    // visible without digging through the renderer's DevTools console.
+    if (event.type.endsWith('.error') || event.type.endsWith('.failed')) {
+      console.error(
+        `[EventBridge:${this.runtimeId}] ${event.type}:`,
+        this.summarizeErrorEvent(event.properties)
+      )
+    }
+
     // Forward all events to the renderer, tagged with the runtime ID
     this.broadcastToRenderer('opencode:event', {
       runtimeId: this.runtimeId,
       directory: this.directory,
       event
     })
+  }
+
+  /**
+   * Extract the most useful fields from an error-shaped event payload.
+   * Matches the SDK shape for session.error (properties.error.{name,data.message})
+   * and falls back to the raw payload for unknown shapes.
+   */
+  private summarizeErrorEvent(properties: unknown): unknown {
+    if (!properties || typeof properties !== 'object') return properties
+
+    const props = properties as Record<string, unknown>
+    const err = props.error
+    if (err && typeof err === 'object') {
+      const e = err as Record<string, unknown>
+      const data = (e.data as Record<string, unknown> | undefined) ?? {}
+      return {
+        sessionID: props.sessionID,
+        name: e.name,
+        providerID: data.providerID,
+        message: data.message,
+        statusCode: data.statusCode
+      }
+    }
+    return properties
   }
 
   private broadcastToRenderer(channel: string, data: unknown): void {
