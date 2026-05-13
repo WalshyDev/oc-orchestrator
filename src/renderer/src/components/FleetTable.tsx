@@ -23,6 +23,7 @@ import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_C
 import { isRecentlyAttached } from '../hooks/useAgentStore'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
+import { PortaledMenu } from './PortaledMenu'
 import { TextInputModal } from './TextInputModal'
 import { Tooltip } from './Tooltip'
 import { PrTooltipContent } from './PrTooltip'
@@ -971,13 +972,14 @@ function AgentRow({
         <div className="w-full flex items-center justify-center py-2 text-kumo-subtle group-hover:text-kumo-default">
           <ArrowRight size={14} weight="bold" />
         </div>
-        {arrowMenu.open && (
-          <ArrowMenuPopover
-            onOpen={() => { arrowMenu.close(); onOpen?.() }}
-            onOpenTerminal={() => { arrowMenu.close(); onOpenTerminal?.() }}
-            onOpenInEditor={() => { arrowMenu.close(); onOpenInEditor?.() }}
-          />
-        )}
+        <ArrowMenuPopover
+          open={arrowMenu.open}
+          triggerRef={arrowMenu.containerRef}
+          onDismiss={arrowMenu.close}
+          onOpen={() => { arrowMenu.close(); onOpen?.() }}
+          onOpenTerminal={() => { arrowMenu.close(); onOpenTerminal?.() }}
+          onOpenInEditor={() => { arrowMenu.close(); onOpenInEditor?.() }}
+        />
       </td>
     </tr>
   )
@@ -1056,16 +1058,28 @@ function ScrollArrow({ direction, onClick }: { direction: 'left' | 'right'; onCl
 const arrowMenuItemClass = 'flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left'
 
 function ArrowMenuPopover({
+  open,
+  triggerRef,
+  onDismiss,
   onOpen,
   onOpenTerminal,
   onOpenInEditor
 }: {
+  open: boolean
+  triggerRef: React.RefObject<HTMLTableCellElement | null>
+  onDismiss: () => void
   onOpen: () => void
   onOpenTerminal: () => void
   onOpenInEditor: () => void
 }) {
   return (
-    <div className="absolute right-0 top-full mt-1 z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
+    <PortaledMenu
+      open={open}
+      triggerRef={triggerRef}
+      placement="bottom-right"
+      onDismiss={onDismiss}
+      className="min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl"
+    >
       <button
         className={arrowMenuItemClass}
         onClick={(event) => { event.stopPropagation(); onOpen() }}
@@ -1084,6 +1098,6 @@ function ArrowMenuPopover({
       >
         <ArrowSquareOut size={13} /> Editor
       </button>
-    </div>
+    </PortaledMenu>
   )
 }

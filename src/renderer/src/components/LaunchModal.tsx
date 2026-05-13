@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, ChatCircleDots, Play } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import { LabelDropdown } from './LabelDropdown'
+import { PortaledMenu } from './PortaledMenu'
 import { useModelOptions } from '../hooks/useModelOptions'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
@@ -128,7 +129,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     removeAttachment, clearAttachments,
     handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
   } = useImageAttachments()
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const dropdownButtonRef = useRef<HTMLButtonElement>(null)
+  const sessionDropdownButtonRef = useRef<HTMLButtonElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [cursorPos, setCursorPos] = useState(0)
   const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
@@ -144,7 +146,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [importName, setImportName] = useState('')
   const [importPrompt, setImportPrompt] = useState('')
   const [showSessionDropdown, setShowSessionDropdown] = useState(false)
-  const sessionDropdownRef = useRef<HTMLDivElement>(null)
+
 
   const trimmedPrompt = prompt.trim().toLowerCase()
 
@@ -406,17 +408,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     if (activeTab !== 'import') { setSelectedSession(null); setImportSearch(''); setImportName(''); setImportPrompt('') }
   }, [activeTab])
 
-  // Close session dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(event.target as Node)) {
-        setShowSessionDropdown(false)
-        setImportSearch('')
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  // Session dropdown outside-click handling is delegated to PortaledMenu.
 
   const filteredImportSessions = useMemo(() => {
     if (!importSearch.trim()) return importSessions
@@ -434,17 +426,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     )
   }, [savedProjects, projectSearch])
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDropdown(false)
-        setProjectSearch('')
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  // Project dropdown outside-click handling is delegated to PortaledMenu.
 
   const persistProjectSettings = async (dir: string) => {
     try {
@@ -522,7 +504,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
 
   const selectMenuClasses =
-    'absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+    'overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
@@ -589,9 +571,10 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
               Project Directory
             </label>
-            <div className="relative flex gap-2" ref={dropdownRef}>
-              <div className="flex-1 min-w-0 relative">
+            <div className="flex gap-2">
+              <div className="flex-1 min-w-0">
                 <button
+                  ref={dropdownButtonRef}
                   type="button"
                   onClick={() => setShowDropdown(!showDropdown)}
                   className={`w-full flex items-center gap-2 px-3 py-2 bg-kumo-control border rounded-md text-sm outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring ${
@@ -615,65 +598,66 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   <CaretDown size={14} className="text-kumo-subtle shrink-0" />
                 </button>
 
-                {showDropdown && (
-                  <div className="fixed mt-1 bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl z-[210] max-h-[320px] flex flex-col overflow-hidden" style={{
-                    width: dropdownRef.current?.querySelector('button')?.getBoundingClientRect().width,
-                    left: dropdownRef.current?.querySelector('button')?.getBoundingClientRect().left,
-                    top: (dropdownRef.current?.querySelector('button')?.getBoundingClientRect().bottom ?? 0) + 4
-                  }}>
-                    {savedProjects.length > 0 && (
-                      <div className="px-2 pt-2 pb-1 shrink-0">
-                        <input
-                          type="text"
-                          value={projectSearch}
-                          onChange={(e) => setProjectSearch(e.target.value)}
-                          placeholder="Search projects..."
-                          className="w-full rounded border border-kumo-line bg-kumo-elevated px-2 py-1 text-xs text-kumo-default placeholder:text-kumo-subtle outline-none focus:border-kumo-ring"
-                          autoFocus
-                        />
-                      </div>
-                    )}
-                    <div className="overflow-y-auto flex-1">
-                      {filteredProjects.length > 0 && (
-                        <>
-                          <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
-                            Saved Projects
-                          </div>
-                          {filteredProjects.map((project) => (
-                            <div
-                              key={project.id}
-                              className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
-                              onMouseDown={() => handleSelectProject(project.repo_root)}
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
-                                <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
-                              </div>
-                              <button
-                                onMouseDown={(e) => void removeProject(project.id, e)}
-                                className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
-                                title="Remove from saved projects"
-                              >
-                                <Trash size={12} />
-                              </button>
-                            </div>
-                          ))}
-                          <div className="border-t border-kumo-fill-hover" />
-                        </>
-                      )}
-                      {filteredProjects.length === 0 && savedProjects.length > 0 && (
-                        <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
-                      )}
-                      <button
-                        onMouseDown={() => void handleBrowse()}
-                        className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
-                      >
-                        <FolderOpen size={14} className="text-kumo-subtle" />
-                        Browse for directory...
-                      </button>
+                <PortaledMenu
+                  open={showDropdown}
+                  triggerRef={dropdownButtonRef}
+                  placement="bottom-left"
+                  matchTriggerWidth
+                  onDismiss={() => { setShowDropdown(false); setProjectSearch('') }}
+                  className="bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl max-h-[320px] flex flex-col overflow-hidden"
+                >
+                  {savedProjects.length > 0 && (
+                    <div className="px-2 pt-2 pb-1 shrink-0">
+                      <input
+                        type="text"
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        placeholder="Search projects..."
+                        className="w-full rounded border border-kumo-line bg-kumo-elevated px-2 py-1 text-xs text-kumo-default placeholder:text-kumo-subtle outline-none focus:border-kumo-ring"
+                        autoFocus
+                      />
                     </div>
+                  )}
+                  <div className="overflow-y-auto flex-1">
+                    {filteredProjects.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
+                          Saved Projects
+                        </div>
+                        {filteredProjects.map((project) => (
+                          <div
+                            key={project.id}
+                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
+                            onMouseDown={() => handleSelectProject(project.repo_root)}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
+                              <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
+                            </div>
+                            <button
+                              onMouseDown={(e) => void removeProject(project.id, e)}
+                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
+                              title="Remove from saved projects"
+                            >
+                              <Trash size={12} />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="border-t border-kumo-fill-hover" />
+                      </>
+                    )}
+                    {filteredProjects.length === 0 && savedProjects.length > 0 && (
+                      <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
+                    )}
+                    <button
+                      onMouseDown={() => void handleBrowse()}
+                      className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
+                    >
+                      <FolderOpen size={14} className="text-kumo-subtle" />
+                      Browse for directory...
+                    </button>
                   </div>
-                )}
+                </PortaledMenu>
               </div>
               <button
                 onClick={handleBrowse}
@@ -833,48 +817,63 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     </div>
                   )}
 
-                  {showCommandAutocomplete && (
-                    <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                      {matchingCommands.map((item, index) => (
-                        <button
-                          key={item.command}
-                          type="button"
-                          onMouseDown={(event) => { event.preventDefault(); setPrompt(`${item.command} `) }}
-                          className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                            index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                          }`}
-                        >
-                          <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
-                          <span className="text-[11px] text-kumo-subtle">{item.description}</span>
-                        </button>
-                      ))}
-                      <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                        Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                      </div>
+                  {/* Popup visibility is driven by prompt content. onDismiss is
+                      a no-op so clicks outside the textarea don't permanently
+                      hide a popup that would re-derive itself. */}
+                  <PortaledMenu
+                    open={showCommandAutocomplete}
+                    triggerRef={promptRef}
+                    placement="top-left"
+                    matchTriggerWidth
+                    gap={8}
+                    onDismiss={() => {}}
+                    className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+                  >
+                    {matchingCommands.map((item, index) => (
+                      <button
+                        key={item.command}
+                        type="button"
+                        onMouseDown={(event) => { event.preventDefault(); setPrompt(`${item.command} `) }}
+                        className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                        }`}
+                      >
+                        <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                        <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                      </button>
+                    ))}
+                    <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                      Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
                     </div>
-                  )}
+                  </PortaledMenu>
 
-                  {showAgentPicker && (
-                    <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                      <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">Agents</div>
-                      {matchingAgents.map((cfg, index) => (
-                        <button
-                          key={cfg.name}
-                          type="button"
-                          onMouseDown={(event) => { event.preventDefault(); insertAgentMention(cfg.name) }}
-                          className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                            index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                          }`}
-                        >
-                          <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
-                          {cfg.description && <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>}
-                        </button>
-                      ))}
-                      <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                        Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                      </div>
+                  <PortaledMenu
+                    open={showAgentPicker}
+                    triggerRef={promptRef}
+                    placement="top-left"
+                    matchTriggerWidth
+                    gap={8}
+                    onDismiss={() => setAgentPickerDismissed(true)}
+                    className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+                  >
+                    <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">Agents</div>
+                    {matchingAgents.map((cfg, index) => (
+                      <button
+                        key={cfg.name}
+                        type="button"
+                        onMouseDown={(event) => { event.preventDefault(); insertAgentMention(cfg.name) }}
+                        className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                        }`}
+                      >
+                        <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                        {cfg.description && <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>}
+                      </button>
+                    ))}
+                    <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                      Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
                     </div>
-                  )}
+                  </PortaledMenu>
 
                   <textarea
                     ref={promptRef}
@@ -923,8 +922,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                       Session
                     </label>
-                    <div className="relative" ref={sessionDropdownRef}>
+                    <div>
                       <button
+                        ref={sessionDropdownButtonRef}
                         type="button"
                         onClick={() => { if (!importLoading && !importError) setShowSessionDropdown(!showSessionDropdown) }}
                         disabled={importLoading}
@@ -954,63 +954,64 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                         {!importLoading && <CaretDown size={14} className="text-kumo-subtle shrink-0" />}
                       </button>
 
-                      {showSessionDropdown && !importLoading && importSessions.length > 0 && (
-                        <div className="fixed mt-1 bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl z-[210] max-h-[320px] flex flex-col overflow-hidden" style={{
-                          width: sessionDropdownRef.current?.getBoundingClientRect().width,
-                          left: sessionDropdownRef.current?.getBoundingClientRect().left,
-                          top: (sessionDropdownRef.current?.getBoundingClientRect().bottom ?? 0) + 4
-                        }}>
-                          <div className="px-2 pt-2 pb-1 shrink-0">
-                            <input
-                              type="text"
-                              value={importSearch}
-                              onChange={(e) => setImportSearch(e.target.value)}
-                              placeholder="Search sessions..."
-                              className="w-full rounded border border-kumo-line bg-kumo-elevated px-2 py-1 text-xs text-kumo-default placeholder:text-kumo-subtle outline-none focus:border-kumo-ring"
-                              autoFocus
-                            />
-                          </div>
-                          <div className="overflow-y-auto flex-1">
-                            {filteredImportSessions.map((session) => {
-                              const isSelected = selectedSession?.id === session.id
-                              const wtLabel = worktreeLabel(session.directory, directory.trim())
-                              return (
-                                <div
-                                  key={session.id}
-                                  onMouseDown={() => {
-                                    setSelectedSession(session)
-                                    setImportName(deriveForkedName(session.title))
-                                    setShowSessionDropdown(false)
-                                    setImportSearch('')
-                                  }}
-                                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
-                                    isSelected ? 'bg-kumo-brand/10' : 'hover:bg-kumo-fill-hover'
-                                  }`}
-                                >
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-xs text-kumo-default font-medium truncate">{session.title}</div>
-                                    <div className="flex items-center gap-1.5 text-[10px] text-kumo-subtle mt-0.5">
-                                      <span>{formatTimestamp(session.updatedAt)}</span>
-                                      {wtLabel && (
-                                        <>
-                                          <span className="text-kumo-line">|</span>
-                                          <span className="font-mono truncate">{wtLabel}</span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                  {isSelected && (
-                                    <span className="shrink-0 text-[10px] font-medium text-kumo-brand">&#10003;</span>
-                                  )}
-                                </div>
-                              )
-                            })}
-                            {filteredImportSessions.length === 0 && (
-                              <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching sessions</div>
-                            )}
-                          </div>
+                      <PortaledMenu
+                        open={showSessionDropdown && !importLoading && importSessions.length > 0}
+                        triggerRef={sessionDropdownButtonRef}
+                        placement="bottom-left"
+                        matchTriggerWidth
+                        onDismiss={() => { setShowSessionDropdown(false); setImportSearch('') }}
+                        className="bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl max-h-[320px] flex flex-col overflow-hidden"
+                      >
+                        <div className="px-2 pt-2 pb-1 shrink-0">
+                          <input
+                            type="text"
+                            value={importSearch}
+                            onChange={(e) => setImportSearch(e.target.value)}
+                            placeholder="Search sessions..."
+                            className="w-full rounded border border-kumo-line bg-kumo-elevated px-2 py-1 text-xs text-kumo-default placeholder:text-kumo-subtle outline-none focus:border-kumo-ring"
+                            autoFocus
+                          />
                         </div>
-                      )}
+                        <div className="overflow-y-auto flex-1">
+                          {filteredImportSessions.map((session) => {
+                            const isSelected = selectedSession?.id === session.id
+                            const wtLabel = worktreeLabel(session.directory, directory.trim())
+                            return (
+                              <div
+                                key={session.id}
+                                onMouseDown={() => {
+                                  setSelectedSession(session)
+                                  setImportName(deriveForkedName(session.title))
+                                  setShowSessionDropdown(false)
+                                  setImportSearch('')
+                                }}
+                                className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
+                                  isSelected ? 'bg-kumo-brand/10' : 'hover:bg-kumo-fill-hover'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs text-kumo-default font-medium truncate">{session.title}</div>
+                                  <div className="flex items-center gap-1.5 text-[10px] text-kumo-subtle mt-0.5">
+                                    <span>{formatTimestamp(session.updatedAt)}</span>
+                                    {wtLabel && (
+                                      <>
+                                        <span className="text-kumo-line">|</span>
+                                        <span className="font-mono truncate">{wtLabel}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                {isSelected && (
+                                  <span className="shrink-0 text-[10px] font-medium text-kumo-brand">&#10003;</span>
+                                )}
+                              </div>
+                            )
+                          })}
+                          {filteredImportSessions.length === 0 && (
+                            <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching sessions</div>
+                          )}
+                        </div>
+                      </PortaledMenu>
                     </div>
                     <p className="text-[11px] text-kumo-subtle -mt-0.5">
                       Creates a new worktree and copies the session history into it.

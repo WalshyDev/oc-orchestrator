@@ -18,6 +18,7 @@ import {
   DotsSixVertical,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { PortaledMenu } from './PortaledMenu'
 import {
   DEFAULT_CREATE_PR_PROMPT,
   MAX_QUICK_ACTIONS,
@@ -124,7 +125,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
     'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
 
   const selectMenuClasses =
-    'absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+    'overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   const inputClasses =
     'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle'
@@ -746,29 +747,6 @@ function PromptTextarea({
         Prompt
       </label>
       <div className="relative">
-        {shouldShow && (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-1 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl max-h-40 overflow-y-auto">
-            {matchingCommands.map((cmd, index) => (
-              <button
-                key={cmd.command}
-                type="button"
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  insertCommand(cmd.command)
-                }}
-                className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                  index === selectedIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                }`}
-              >
-                <span className="font-mono text-[11px] text-kumo-default">{cmd.command}</span>
-                <span className="text-[11px] text-kumo-subtle truncate">{cmd.description}</span>
-              </button>
-            ))}
-            <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-              Tab/Enter to select · Arrow keys to navigate
-            </div>
-          </div>
-        )}
         <textarea
           ref={textareaRef}
           value={value}
@@ -784,6 +762,34 @@ function PromptTextarea({
           rows={6}
           className={`${inputClasses} min-h-24 resize-y leading-6`}
         />
+        <PortaledMenu
+          open={shouldShow}
+          triggerRef={textareaRef}
+          placement="top-left"
+          matchTriggerWidth
+          onDismiss={() => setShowAutocomplete(false)}
+          className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl max-h-40 overflow-y-auto"
+        >
+          {matchingCommands.map((cmd, index) => (
+            <button
+              key={cmd.command}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                insertCommand(cmd.command)
+              }}
+              className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                index === selectedIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+              }`}
+            >
+              <span className="font-mono text-[11px] text-kumo-default">{cmd.command}</span>
+              <span className="text-[11px] text-kumo-subtle truncate">{cmd.description}</span>
+            </button>
+          ))}
+          <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+            Tab/Enter to select · Arrow keys to navigate
+          </div>
+        </PortaledMenu>
       </div>
     </div>
   )

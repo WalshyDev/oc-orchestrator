@@ -1032,58 +1032,72 @@ export const DetailDrawer = memo(function DetailDrawer({
           <div className={`relative flex flex-col flex-1 min-h-0 rounded-lg border bg-kumo-control transition-colors ${
             isDragOver ? 'border-kumo-brand' : 'border-kumo-line focus-within:border-kumo-ring'
           }`}>
-            {/* Autocomplete popups */}
-            {showCommandAutocomplete && (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                {matchingCommands.map((item, index) => (
-                  <button
-                    key={item.command}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      setInputText(`${item.command} `)
-                    }}
-                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                    }`}
-                  >
-                    <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
-                    <span className="text-[11px] text-kumo-subtle">{item.description}</span>
-                  </button>
-                ))}
-                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                </div>
+            {/* Autocomplete popups — portal'd above the textarea so they
+                escape the input container's overflow/border, with viewport
+                flipping handled by PortaledMenu. */}
+            <PortaledMenu
+              open={showCommandAutocomplete}
+              triggerRef={textareaRef}
+              placement="top-left"
+              matchTriggerWidth
+              gap={8}
+              onDismiss={() => {}}
+              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+            >
+              {matchingCommands.map((item, index) => (
+                <button
+                  key={item.command}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    setInputText(`${item.command} `)
+                  }}
+                  className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                    index === commandPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                  }`}
+                >
+                  <span className="font-mono text-[11px] text-kumo-default">{item.command}</span>
+                  <span className="text-[11px] text-kumo-subtle">{item.description}</span>
+                </button>
+              ))}
+              <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
               </div>
-            )}
-            {showAgentPicker && (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl">
-                <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
-                  Agents
-                </div>
-                {matchingAgents.map((cfg, index) => (
-                  <button
-                    key={cfg.name}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      insertAgentMention(cfg.name)
-                    }}
-                    className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
-                    }`}
-                  >
-                    <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
-                    {cfg.description && (
-                      <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
-                    )}
-                  </button>
-                ))}
-                <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
-                  Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
-                </div>
+            </PortaledMenu>
+            <PortaledMenu
+              open={showAgentPicker}
+              triggerRef={textareaRef}
+              placement="top-left"
+              matchTriggerWidth
+              gap={8}
+              onDismiss={() => setAgentPickerDismissed(true)}
+              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+            >
+              <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
+                Agents
               </div>
-            )}
+              {matchingAgents.map((cfg, index) => (
+                <button
+                  key={cfg.name}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    insertAgentMention(cfg.name)
+                  }}
+                  className={`flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors ${
+                    index === agentPickerIndex ? 'bg-kumo-fill' : 'hover:bg-kumo-fill'
+                  }`}
+                >
+                  <span className="font-mono text-[11px] text-kumo-brand">@{cfg.name}</span>
+                  {cfg.description && (
+                    <span className="text-[11px] text-kumo-subtle truncate">{cfg.description}</span>
+                  )}
+                </button>
+              ))}
+              <div className="px-2.5 py-1 text-[10px] text-kumo-subtle border-t border-kumo-line mt-1 pt-1">
+                Tab/Enter to select · Arrow keys to navigate · Esc to dismiss
+              </div>
+            </PortaledMenu>
 
             {/* Attachment thumbnails inside the container */}
             {attachments.length > 0 && (

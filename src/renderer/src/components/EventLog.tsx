@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { ListBullets, CaretDown, CaretRight, Funnel } from '@phosphor-icons/react'
+import { PortaledMenu } from './PortaledMenu'
 
 export interface EventEntry {
   id: string
@@ -48,6 +49,7 @@ export const EventLog = memo(function EventLog({ events, verbose = false }: Even
   )
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const filterButtonRef = useRef<HTMLButtonElement>(null)
   // Track items the user explicitly collapsed so we don't re-expand them
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
 
@@ -116,8 +118,9 @@ export const EventLog = memo(function EventLog({ events, verbose = false }: Even
 
         <div className="flex-1" />
 
-        <div className="relative">
+        <>
           <button
+            ref={filterButtonRef}
             onClick={() => setShowFilterMenu(!showFilterMenu)}
             className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border transition-colors cursor-pointer ${
               typeFilter !== 'all'
@@ -130,30 +133,34 @@ export const EventLog = memo(function EventLog({ events, verbose = false }: Even
             <CaretDown size={10} />
           </button>
 
-          {showFilterMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-kumo-elevated border border-kumo-line rounded-md shadow-lg z-10 min-w-[140px] py-1">
+          <PortaledMenu
+            open={showFilterMenu}
+            triggerRef={filterButtonRef}
+            placement="bottom-right"
+            onDismiss={() => setShowFilterMenu(false)}
+            className="bg-kumo-elevated border border-kumo-line rounded-md shadow-lg min-w-[140px] py-1"
+          >
+            <button
+              onClick={() => { setTypeFilter('all'); setShowFilterMenu(false) }}
+              className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors cursor-pointer ${
+                typeFilter === 'all' ? 'text-kumo-link bg-kumo-interact/8' : 'text-kumo-default hover:bg-kumo-fill'
+              }`}
+            >
+              All types
+            </button>
+            {eventTypes.map((eventType) => (
               <button
-                onClick={() => { setTypeFilter('all'); setShowFilterMenu(false) }}
+                key={eventType}
+                onClick={() => { setTypeFilter(eventType); setShowFilterMenu(false) }}
                 className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors cursor-pointer ${
-                  typeFilter === 'all' ? 'text-kumo-link bg-kumo-interact/8' : 'text-kumo-default hover:bg-kumo-fill'
+                  typeFilter === eventType ? 'text-kumo-link bg-kumo-interact/8' : 'text-kumo-default hover:bg-kumo-fill'
                 }`}
               >
-                All types
+                {eventType}
               </button>
-              {eventTypes.map((eventType) => (
-                <button
-                  key={eventType}
-                  onClick={() => { setTypeFilter(eventType); setShowFilterMenu(false) }}
-                  className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors cursor-pointer ${
-                    typeFilter === eventType ? 'text-kumo-link bg-kumo-interact/8' : 'text-kumo-default hover:bg-kumo-fill'
-                  }`}
-                >
-                  {eventType}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+            ))}
+          </PortaledMenu>
+        </>
       </div>
 
       {/* Event list */}

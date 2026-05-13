@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { MagnifyingGlass, Columns, Check } from '@phosphor-icons/react'
 import type { AgentStatus, LabelDefinition, ColumnKey } from '../types'
 import { LABEL_COLORS, ALL_COLUMNS } from '../types'
+import { PortaledMenu } from './PortaledMenu'
+
 
 export type StatusFilter = 'blocked' | 'running' | 'idle' | 'errored' | 'completed'
 export type LabelFilter = string
@@ -281,29 +283,12 @@ function ColumnToggle({
   onToggle: (key: ColumnKey) => void
 }) {
   const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handleClickOutside = (event: MouseEvent): void => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const handleEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open])
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   return (
-    <div ref={containerRef} className="relative">
+    <>
       <button
+        ref={buttonRef}
         onClick={() => setOpen((prev) => !prev)}
         title="Toggle columns"
         className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors cursor-pointer ${
@@ -316,26 +301,30 @@ function ColumnToggle({
         <span>Columns</span>
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-[100] min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl">
-          {ALL_COLUMNS.map((col) => {
-            const isVisible = visibleColumns.has(col.key)
-            return (
-              <button
-                key={col.key}
-                onClick={() => onToggle(col.key)}
-                className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left cursor-pointer"
-              >
-                <span className={`w-3.5 h-3.5 flex items-center justify-center rounded border ${isVisible ? 'bg-kumo-interact/20 border-kumo-interact/40 text-kumo-link' : 'border-kumo-line text-transparent'}`}>
-                  {isVisible && <Check size={10} weight="bold" />}
-                </span>
-                {col.label}
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
+      <PortaledMenu
+        open={open}
+        triggerRef={buttonRef}
+        placement="bottom-right"
+        onDismiss={() => setOpen(false)}
+        className="min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated p-1 shadow-xl"
+      >
+        {ALL_COLUMNS.map((col) => {
+          const isVisible = visibleColumns.has(col.key)
+          return (
+            <button
+              key={col.key}
+              onClick={() => onToggle(col.key)}
+              className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[11px] text-kumo-default rounded hover:bg-kumo-fill transition-colors text-left cursor-pointer"
+            >
+              <span className={`w-3.5 h-3.5 flex items-center justify-center rounded border ${isVisible ? 'bg-kumo-interact/20 border-kumo-interact/40 text-kumo-link' : 'border-kumo-line text-transparent'}`}>
+                {isVisible && <Check size={10} weight="bold" />}
+              </span>
+              {col.label}
+            </button>
+          )
+        })}
+      </PortaledMenu>
+    </>
   )
 }
 

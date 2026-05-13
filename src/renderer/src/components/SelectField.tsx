@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CaretDown, Check, MagnifyingGlass } from '@phosphor-icons/react'
+import { PortaledMenu } from './PortaledMenu'
 
 interface SelectOption {
   value: string
@@ -13,6 +14,11 @@ interface SelectFieldProps {
   searchable?: boolean
   searchPlaceholder?: string
   buttonClassName?: string
+  /**
+   * Style-only classes for the dropdown menu (background, border, etc.).
+   * Position is handled by PortaledMenu — strip any `absolute`/`top-*`/
+   * `bottom-*`/`left-*`/`right-*`/`mt-*` classes from this string.
+   */
   menuClassName?: string
 }
 
@@ -27,7 +33,7 @@ export function SelectField({
 }: SelectFieldProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const selectedOption = useMemo(() => {
@@ -43,30 +49,6 @@ export function SelectField({
     )
   }, [options, searchable, search])
 
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false)
-      }
-    }
-
-    window.addEventListener('mousedown', handlePointerDown)
-    window.addEventListener('keydown', handleEscape)
-
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown)
-      window.removeEventListener('keydown', handleEscape)
-    }
-  }, [isOpen])
-
   // Reset search and auto-focus when dropdown opens
   useEffect(() => {
     if (isOpen && searchable) {
@@ -76,8 +58,9 @@ export function SelectField({
   }, [isOpen, searchable])
 
   return (
-    <div ref={containerRef} className="relative">
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
@@ -88,11 +71,15 @@ export function SelectField({
         <CaretDown size={14} className={`shrink-0 text-kumo-subtle transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
-      {isOpen && (
-        <div
-          role="listbox"
-          className={menuClassName}
-        >
+      <PortaledMenu
+        open={isOpen}
+        triggerRef={buttonRef}
+        placement="bottom-left"
+        matchTriggerWidth
+        onDismiss={() => setIsOpen(false)}
+        className={menuClassName}
+      >
+        <div role="listbox">
           {searchable && (
             <div className="px-2 pt-2 pb-1">
               <div className="relative">
@@ -137,7 +124,7 @@ export function SelectField({
             })
           )}
         </div>
-      )}
-    </div>
+      </PortaledMenu>
+    </>
   )
 }
