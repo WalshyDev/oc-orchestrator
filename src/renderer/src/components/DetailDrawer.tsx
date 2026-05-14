@@ -33,6 +33,7 @@ import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { loadSettings, SETTINGS_CHANGED_EVENT, MAX_QUICK_ACTIONS, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
+import { useEditorLabel } from '../hooks/useEditorLabel'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -254,6 +255,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   // Settings: reactive to changes from SettingsModal
   const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
   const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
+  const editorLabel = useEditorLabel()
   useEffect(() => {
     const onSettingsChanged = () => {
       const s = loadSettings()
@@ -1235,7 +1237,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                 className="w-full"
                 items={[
                   { icon: <Terminal size={12} />, label: 'Terminal', onClick: onOpenTerminal },
-                  { icon: <ArrowSquareOut size={12} />, label: 'Editor', onClick: onOpenInEditor }
+                  { icon: <ArrowSquareOut size={12} />, label: editorLabel, onClick: onOpenInEditor }
                 ]}
               />
               {onChangeModel && (
