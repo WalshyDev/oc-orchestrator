@@ -51,6 +51,7 @@ import {
   Wrench,
 } from '@phosphor-icons/react'
 import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
+import { useEditorLabel } from '../hooks/useEditorLabel'
 
 const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'git-pull-request': GitPullRequest,
@@ -587,6 +588,7 @@ function ContextMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
+  const editorLabel = useEditorLabel()
 
   useEffect(() => {
     const onSettingsChanged = () => setQuickActions(loadSettings().quickActions)
@@ -697,7 +699,7 @@ function ContextMenu({
         <Terminal size={13} /> Open Terminal
       </button>
       <button className={itemClass} onClick={onOpenInEditor}>
-        <ArrowSquareOut size={13} /> Open in Editor
+        <ArrowSquareOut size={13} /> Open in {editorLabel}
       </button>
 
       <div className="my-1 border-t border-kumo-line" />
@@ -1072,6 +1074,7 @@ function ArrowMenuPopover({
   onOpenTerminal: () => void
   onOpenInEditor: () => void
 }) {
+  const editorLabel = useEditorLabel()
   return (
     <PortaledMenu
       open={open}
@@ -1096,7 +1099,7 @@ function ArrowMenuPopover({
         className={arrowMenuItemClass}
         onClick={(event) => { event.stopPropagation(); onOpenInEditor() }}
       >
-        <ArrowSquareOut size={13} /> Editor
+        <ArrowSquareOut size={13} /> {editorLabel}
       </button>
     </PortaledMenu>
   )

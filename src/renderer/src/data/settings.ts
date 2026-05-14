@@ -118,6 +118,22 @@ export function isQuickActionValid(qa: QuickAction): boolean {
   return Boolean(qa.label?.trim() && qa.prompt?.trim())
 }
 
+const EDITOR_DISPLAY_LABELS: Record<string, string> = {
+  vscode: 'VS Code',
+  cursor: 'Cursor',
+  windsurf: 'Windsurf',
+  goland: 'GoLand',
+  custom: 'Custom',
+}
+
+/**
+ * Returns the user-facing label for the configured editor (e.g. "GoLand").
+ * Falls back to "Editor" if the configured value is unknown.
+ */
+export function getEditorDisplayLabel(editor: string): string {
+  return EDITOR_DISPLAY_LABELS[editor] ?? 'Editor'
+}
+
 export const SETTINGS_CHANGED_EVENT = 'oc-orchestrator:settings-changed'
 
 export function saveSettings(settings: AppSettings): void {
