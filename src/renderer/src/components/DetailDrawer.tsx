@@ -1052,7 +1052,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               matchTriggerWidth
               gap={8}
               onDismiss={() => {}}
-              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl max-h-60 overflow-y-auto"
             >
               {matchingCommands.map((item, index) => (
                 <button
@@ -1081,7 +1081,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               matchTriggerWidth
               gap={8}
               onDismiss={() => setAgentPickerDismissed(true)}
-              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl"
+              className="rounded-lg border border-kumo-line bg-kumo-overlay p-1 shadow-xl max-h-60 overflow-y-auto"
             >
               <div className="px-2.5 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wide">
                 Agents
