@@ -26,6 +26,7 @@ import {
   CheckCircle,
   Warning,
   ArrowsInLineHorizontal,
+  Copy,
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
@@ -1574,16 +1575,50 @@ const MessageBubble = memo(function MessageBubble({
   }
 
   const isUser = message.role === 'user'
+  const [copied, setCopied] = useState(false)
+
+  // Clear the "copied" indicator after a short delay, cancelling the
+  // timer if the message unmounts or the user copies again first.
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  const handleCopy = useCallback(async () => {
+    if (!message.content) return
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopied(true)
+    } catch {
+      // clipboard write can fail silently
+    }
+  }, [message.content])
+
+  const copyLabel = copied ? 'Copied' : 'Copy message'
 
   return (
     <div
       ref={rootRef}
-      className={`px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
+      className={`group relative px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
         isUser
           ? 'bg-kumo-interact/10 border border-kumo-interact/15 text-kumo-default self-end max-w-[85%]'
           : 'bg-kumo-control border border-kumo-line text-kumo-default max-w-[95%]'
       }`}
     >
+      {message.content && (
+        <button
+          type="button"
+          onClick={handleCopy}
+          title={copyLabel}
+          aria-label={copyLabel}
+          className="absolute top-1.5 right-1.5 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+        >
+          {copied
+            ? <Check size={12} weight="bold" />
+            : <Copy size={12} weight="regular" />}
+        </button>
+      )}
       <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
         {isUser ? 'You' : 'Agent'}
       </div>
