@@ -620,6 +620,17 @@ describe('optimistic guard: stale blocked events after user response', () => {
     expect(agent.status).toBe('needs_input')
   })
 
+  it('question.asked still flips status to needs_input when the questions array is empty', () => {
+    // Regression: server occasionally delivers a malformed question.asked SSE
+    // payload (missing/empty `questions`). The handler must still flip status
+    // so the agent doesn't appear stuck in "running" while actually blocked.
+    // The renderer schedules a reconcile fetch to recover the question content.
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 0 }
+    applyQuestionAsked(agent) // status update is independent of the questions payload
+    expect(agent.status).toBe('needs_input')
+    expect(agent.blockedSince).toBeDefined()
+  })
+
   it('permission.asked clears the guard so subsequent events are not suppressed', () => {
     const agent: MinimalAgent = { status: 'needs_input', lastActivityAt: 0 }
 

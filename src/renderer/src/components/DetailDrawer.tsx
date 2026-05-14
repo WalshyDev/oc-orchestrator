@@ -919,10 +919,11 @@ export const DetailDrawer = memo(function DetailDrawer({
                   </div>
                 )}
 
-                {/* Question card — show whenever we have question data, regardless of
-                    agent status. The presence of a question in state is the authoritative
-                    signal; status may lag behind due to event ordering races. */}
-                {!permission && question && (
+                {/* Question card — show only when we actually have structured question
+                    content. If the server delivered a malformed event with an empty
+                    `questions` array, fall through to the "Waiting for your response"
+                    placeholder so the user isn't stuck staring at a bare header. */}
+                {!permission && question && question.questions.length > 0 && (
                   <QuestionCard
                     question={question}
                     onReply={onReplyQuestion}
@@ -930,8 +931,10 @@ export const DetailDrawer = memo(function DetailDrawer({
                   />
                 )}
 
-                {/* Waiting for input (no structured question) */}
-                {!permission && !question && agent.status === 'needs_input' && (
+                {/* Waiting for input (no structured question, or question payload was empty) */}
+                {!permission
+                  && (!question || question.questions.length === 0)
+                  && agent.status === 'needs_input' && (
                   <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
                     <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
                       <ChatCircleDots size={14} weight="fill" /> Waiting for your response

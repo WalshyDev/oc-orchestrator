@@ -1561,15 +1561,30 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // Try session-based lookup first, fall back to runtime-based lookup
       // in case the sessionID doesn't match (e.g. event ordering race)
       const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
-      if (agent && questions) {
-        notifyIfNeeded(agent, 'needs_input')
 
-        agent.status = 'needs_input'
-        agent.blockedSince = agent.blockedSince ?? Date.now()
-        agent.lastActivityAt = Date.now()
-        // A new question means the server has moved on, so clear the guard.
-        agent.respondedAt = undefined
+      if (!agent) {
+        // No agent matched — log so we can diagnose. The 30s reconciliation
+        // poll will pick it up if the agent registers later.
+        console.warn('[question.asked] dropped — no matching agent', {
+          requestId, sessionId, runtimeId
+        })
+        break
+      }
 
+      // Always flip status to needs_input and request a server reconciliation,
+      // even if the SSE payload was missing or had an empty `questions` array.
+      // Without this the agent stays "running" in the UI while the server is
+      // actually blocked waiting for an answer, and the user has no way to
+      // know a question is pending.
+      notifyIfNeeded(agent, 'needs_input')
+      agent.status = 'needs_input'
+      agent.blockedSince = agent.blockedSince ?? Date.now()
+      agent.lastActivityAt = Date.now()
+      // A new question means the server has moved on, so clear the guard.
+      agent.respondedAt = undefined
+
+      const hasUsableQuestions = Array.isArray(questions) && questions.length > 0
+      if (hasUsableQuestions) {
         state.questions.set(requestId, {
           id: requestId,
           agentId: agent.id,
@@ -1577,9 +1592,18 @@ function processEvent(payload: OpenCodeEventPayload): void {
           questions,
           createdAt: Date.now()
         })
-
-        emit({ agents: true, questions: true })
+      } else {
+        // Malformed payload: agent went into needs_input but we don't have the
+        // structured question content. Schedule a fast reconciliation so the
+        // user isn't stuck looking at a bare placeholder. The next periodic
+        // reconcile will fill in the question via /question listing.
+        console.warn('[question.asked] payload missing questions array — scheduling reconcile', {
+          requestId, sessionId, agentId: agent.id, rawQuestions: questions
+        })
+        scheduleQuestionReconcile()
       }
+
+      emit({ agents: true, questions: true })
       break
     }
 
@@ -2160,6 +2184,36 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
   }
 
   if (changed) emit({ agents: true })
+}
+
+/**
+ * Trigger a one-off poll of pending questions from the server. Used when a
+ * `question.asked` SSE event arrives malformed (missing or empty `questions`
+ * array) — the server still has the structured question, we just need to pull
+ * it ourselves rather than wait up to 30s for the next periodic reconcile.
+ *
+ * Debounced so a burst of malformed events only triggers one fetch.
+ */
+let questionReconcileTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleQuestionReconcile(): void {
+  if (questionReconcileTimer) return
+  questionReconcileTimer = setTimeout(async () => {
+    questionReconcileTimer = null
+    if (!window.api) return
+    try {
+      const result = await window.api.listQuestions()
+      if (result.ok && result.data) {
+        reconcileQuestions(
+          result.data as Array<{
+            agentId: string
+            questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }>
+          }>
+        )
+      }
+    } catch (error) {
+      console.warn('[scheduleQuestionReconcile] poll failed', error)
+    }
+  }, 500)
 }
 
 /**
