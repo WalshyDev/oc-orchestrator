@@ -10,6 +10,9 @@ import type {
 } from '../types/api'
 import { ensureProvidersLoaded, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
 
+// Deduplication cache for provider error toasts per runtime to avoid flicker.
+const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
+
 interface HistoricalMessageInfo {
   id: string
   sessionID: string
@@ -1161,20 +1164,38 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
-    case 'tui.toast.show': {
-      // Opencode's TUI toasts are the canonical channel for provider and
-      // compactor errors. Surface error-variant toasts on the best-guess
-      // agent for the runtime (toasts don't carry a sessionID).
-      const toast = props as { title?: string; message?: string; variant?: string }
-      console.log('[tui.toast.show]', { runtimeId, variant: toast.variant, title: toast.title, message: toast.message })
+  case 'tui.toast.show': {
+    // Opencode's TUI toasts are the canonical channel for provider and
+    // compactor errors. Surface error-variant toasts on the best-guess
+    // agent for the runtime (toasts don't carry a sessionID).
+    const toast = props as { title?: string; message?: string; variant?: string }
+    console.log('[tui.toast.show]', { runtimeId, variant: toast.variant, title: toast.title, message: toast.message })
 
       if (toast.variant !== 'error' && toast.variant !== 'warning') break
 
-      const target = pickToastTargetAgent(runtimeId)
-      if (!target) {
-        console.warn('[tui.toast.show] no agent for runtime', { runtimeId })
+      // Deduplicate identical error toasts for a short window to avoid UI flicker
+      // while the server is retrying (e.g. repeated 502/overloaded errors).
+      const ERROR_TOAST_DEDUP_MS = 30_000
+      const toastSig = `${toast.variant}|${toast.title ?? ''}|${toast.message ?? ''}`
+      const key = `runtime:${runtimeId}`
+      const nowTs = Date.now()
+      if (!toastDedup.has(key)) {
+        toastDedup.set(key, { sig: '', expiresAt: 0 })
+      }
+      const prev = toastDedup.get(key)!
+      if (toast.variant === 'error' && prev.sig === toastSig && prev.expiresAt > nowTs) {
+        // Within dedup window — ignore to avoid bouncing the banner repeatedly
         break
       }
+      if (toast.variant === 'error') {
+        toastDedup.set(key, { sig: toastSig, expiresAt: nowTs + ERROR_TOAST_DEDUP_MS })
+      }
+
+    const target = pickToastTargetAgent(runtimeId)
+    if (!target) {
+      console.warn('[tui.toast.show] no agent for runtime', { runtimeId })
+      break
+    }
 
       if (toast.variant === 'error') {
         console.error('[tui.toast.show error]', {
@@ -1188,6 +1209,14 @@ function processEvent(payload: OpenCodeEventPayload): void {
           message: toast.message,
           sessionId: target.sessionId,
           occurredAt: Date.now()
+        }
+        // Treat provider errors as a blocked state so users see them in the
+        // InterruptBanner. This mirrors the TUI behavior which surfaces
+        // transient gateway/overload failures prominently.
+        if (target.status !== 'needs_input' && target.status !== 'needs_approval') {
+          notifyIfNeeded(target, 'needs_input')
+          target.status = 'needs_input'
+          target.blockedSince = target.blockedSince ?? Date.now()
         }
         target.lastActivityAt = Date.now()
         // Compactor errors (e.g. "prompt is too long") arrive here. Stop the
@@ -2810,6 +2839,7 @@ export function useAgentStore() {
     // terminal events, etc.). Without this, agents can appear stuck in 'running'
     // indefinitely when the SSE stream misses a session.idle/completed/error event.
     const RECONCILE_INTERVAL_MS = 30_000
+    const STALLED_TIMEOUT_MS = 5 * 60_000 // 5 minutes without activity → attention
     const reconcileInterval = setInterval(async () => {
       if (cancelled || !window.api) return
       try {
@@ -2835,6 +2865,31 @@ export function useAgentStore() {
         if (permissionsResult.ok && permissionsResult.data) {
           reconcilePermissions(permissionsResult.data as Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>)
         }
+
+        // Watchdog: if an agent has been 'running' with no activity for N minutes,
+        // surface it as needs_input so it shows in the InterruptBanner. This
+        // catches cases where providers hang or keep retrying silently.
+        const now = Date.now()
+        let changed = false
+        for (const agent of state.agents.values()) {
+          if (agent.status !== 'running') continue
+          const last = agent.lastActivityAt ?? 0
+          if (last > 0 && now - last >= STALLED_TIMEOUT_MS) {
+            // Only flip once; if already blocked, leave as-is
+            agent.lastError = agent.lastError ?? {
+              name: 'StalledResponse',
+              message: 'No update from provider for 5 minutes — model may be overloaded or network is unstable. Try again or switch models.',
+              sessionId: agent.sessionId,
+              occurredAt: now
+            }
+            notifyIfNeeded(agent, 'needs_input')
+            agent.status = 'needs_input'
+            agent.blockedSince = agent.blockedSince ?? now
+            changed = true
+            console.warn('[watchdog] stalled agent marked needs_input', { agentId: agent.id })
+          }
+        }
+        if (changed) emit({ agents: true })
       } catch {
         // Silently ignore — next interval will retry
       }

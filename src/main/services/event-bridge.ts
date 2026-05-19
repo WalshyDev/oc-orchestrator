@@ -214,6 +214,27 @@ export class EventBridge {
       )
     }
 
+    // Also surface TUI error/warning toasts in the terminal. These are how the
+    // server reports transient provider failures (e.g. 502 Bad Gateway,
+    // overloaded models, rate limits) and they don't end with `.error`, so they
+    // would otherwise only be visible in the renderer DevTools.
+    if (event.type === 'tui.toast.show') {
+      try {
+        const toast = (event.properties ?? {}) as Record<string, unknown>
+        const variant = String(toast.variant ?? '')
+        const title = typeof toast.title === 'string' ? toast.title : ''
+        const message = typeof toast.message === 'string' ? toast.message : ''
+        const summary = { variant, title, message }
+        if (variant === 'error') {
+          console.error(`[EventBridge:${this.runtimeId}] TUI toast error:`, summary)
+        } else if (variant === 'warning') {
+          console.warn(`[EventBridge:${this.runtimeId}] TUI toast warning:`, summary)
+        }
+      } catch {
+        // best-effort logging only
+      }
+    }
+
     // Forward all events to the renderer, tagged with the runtime ID
     this.broadcastToRenderer('opencode:event', {
       runtimeId: this.runtimeId,
