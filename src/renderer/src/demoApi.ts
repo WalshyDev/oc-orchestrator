@@ -393,6 +393,7 @@ export function createDemoApi(): OrchestratorApi {
     onRuntimeStarted: noopListener,
     onRuntimeStopped: noopListener,
     onEventError: noopListener,
+    onEventReconnectFailed: noopListener,
     onUpdateAvailable: noopListener,
     onNotificationSelectAgent: noopListener,
     onAgentsRestored: noopListener,

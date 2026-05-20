@@ -315,6 +315,12 @@ const api = {
     return () => ipcRenderer.removeListener('event:error', handler)
   },
 
+  onEventReconnectFailed: (callback: (data: { runtimeId: string; attempts: number; error: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('event:reconnect_failed', handler)
+    return () => ipcRenderer.removeListener('event:reconnect_failed', handler)
+  },
+
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('update:available', handler)
