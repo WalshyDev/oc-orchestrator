@@ -747,6 +747,30 @@ function removeOptimisticUserMessages(sessionId: string): void {
   state.messages.set(sessionId, messages.filter((msg) => !msg.id.startsWith(OPTIMISTIC_PREFIX)))
 }
 
+/**
+ * Adopt an optimistic user message in place of the server-authoritative one.
+ * Keeps the placeholder's text part visible while we wait for the server's
+ * own message.part.updated events to arrive — those can lag until the
+ * assistant starts responding. Returns true if an optimistic message was
+ * adopted, false otherwise.
+ */
+function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, createdAt: number): boolean {
+  const messages = state.messages.get(sessionId)
+  if (!messages) return false
+  // Find the most recent optimistic placeholder for this session. Multiple
+  // optimistics shouldn't normally coexist — each launch injects one — but
+  // pick the latest by createdAt to be safe.
+  let target: LiveMessage | undefined
+  for (const msg of messages) {
+    if (!msg.id.startsWith(OPTIMISTIC_PREFIX)) continue
+    if (!target || msg.createdAt > target.createdAt) target = msg
+  }
+  if (!target) return false
+  target.id = serverMessageId
+  target.createdAt = createdAt
+  return true
+}
+
 function upsertMessage(message: LiveMessage): LiveMessage {
   const messages = state.messages.get(message.sessionId) ?? []
   const existingMessage = messages.find((candidate) => candidate.id === message.id)
@@ -1357,16 +1381,20 @@ function processEvent(payload: OpenCodeEventPayload): void {
         }
       }
 
-      // When the server-authoritative user message arrives, drop any
-      // optimistic placeholder we injected earlier so it doesn't duplicate.
+      // When the server-authoritative user message arrives, adopt the
+      // optimistic placeholder we injected earlier — rename its id to the
+      // server id and preserve its text part. The server's own
+      // message.part.updated for the user text can lag until the assistant
+      // starts responding; without adoption the bubble would empty in between.
+      let adopted = false
       if (role === 'user') {
-        removeOptimisticUserMessages(sessionId)
+        adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt)
       }
 
       // Store message
       const messages = state.messages.get(sessionId) ?? []
       const existing = messages.find((msg) => msg.id === messageId)
-      if (!existing) {
+      if (!existing && !adopted) {
         messages.push({
           id: messageId,
           role,
@@ -1375,7 +1403,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           parts: []
         })
         state.messages.set(sessionId, messages)
-      } else {
+      } else if (existing) {
         existing.createdAt = createdAt
         existing.role = role
       }
@@ -1437,6 +1465,44 @@ function processEvent(payload: OpenCodeEventPayload): void {
         }
 
         const partText = extractText()
+
+        // If the server's user-text part lands on a message we adopted from
+        // an optimistic placeholder, replace the placeholder part instead of
+        // appending — otherwise the bubble would show the prompt twice.
+        if (!existingPart && partType === 'text' && message.role === 'user') {
+          const optimisticIdx = message.parts.findIndex((p) => p.id.startsWith(OPTIMISTIC_PREFIX))
+          if (optimisticIdx >= 0) {
+            message.parts[optimisticIdx] = {
+              id: partId,
+              type: partType,
+              text: partText
+            }
+            // Skip the normal upsert path below — we've already placed the part.
+            let agentChanged = false
+            const agent = findAgentBySession(sessionId)
+            if (agent) {
+              agent.lastActivityAt = Date.now()
+              if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed' && agent.status !== 'idle') {
+                agent.status = 'running'
+                agent.blockedSince = undefined
+              }
+              if (partText && partText.length > 0) {
+                if (!taskSummaryLocked.has(agent.id)) {
+                  agent.taskSummary = partText.slice(0, 120)
+                }
+                if (agent.autoNamed) {
+                  agent.name = deriveNameFromPrompt(partText)
+                  agent.autoNamed = false
+                }
+                persistAgentMeta(agent.id, { displayName: agent.name, taskSummary: agent.taskSummary })
+                agentChanged = true
+              }
+            }
+            emitMessagesThrottled(agentChanged || modelRestored)
+            break
+          }
+        }
+
         if (existingPart) {
           existingPart.text = partText
           if (partType === 'tool') {
@@ -1820,22 +1886,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
     }
 
     case 'server.instance.disposed': {
-      // The OpenCode server for a specific project directory is shutting down.
-      // Mark all agents on this runtime as disconnected so the user knows the
-      // server went away (EventBridge will attempt reconnection).
-      for (const agent of state.agents.values()) {
-        if (agent.runtimeId === runtimeId) {
-          // Don't override terminal states — if the agent already completed
-          // before the server shut down, leave it as completed.
-          if (agent.status === 'completed' || agent.status === 'errored') continue
-          agent.status = 'disconnected'
-          agent.lastActivityAt = Date.now()
-          agent.blockedSince = undefined
-          agent.respondedAt = undefined
-        }
-      }
-      state.healthy = false
-      emit({ agents: true })
+      // The OpenCode server disposed the per-directory instance. This fires
+      // during normal lifecycle between prompts and the EventBridge
+      // reconnects automatically — flipping every agent to 'disconnected'
+      // here caused new launches to flash Disconnected until the assistant
+      // responded. Trust the EventBridge to surface a real outage via
+      // event:reconnect_failed, handled by onEventReconnectFailed below.
+      console.log('[server.instance.disposed] noting disposal (no status change)', { runtimeId })
       break
     }
 
@@ -2799,6 +2856,23 @@ export function useAgentStore() {
       }),
       window.api.onEventError((data) => {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
+        state.healthy = false
+        emit({ agents: true })
+      }),
+      window.api.onEventReconnectFailed((data) => {
+        // EventBridge gave up reconnecting to this runtime. This is the
+        // real "agent is disconnected" signal — server.instance.disposed
+        // alone is not, because it fires during normal lifecycle and the
+        // bridge reconnects automatically.
+        console.error(`[EventReconnectFailed] Runtime ${data.runtimeId} after ${data.attempts} attempts: ${data.error}`)
+        for (const agent of state.agents.values()) {
+          if (agent.runtimeId !== data.runtimeId) continue
+          if (agent.status === 'completed' || agent.status === 'errored') continue
+          agent.status = 'disconnected'
+          agent.lastActivityAt = Date.now()
+          agent.blockedSince = undefined
+          agent.respondedAt = undefined
+        }
         state.healthy = false
         emit({ agents: true })
       }),

@@ -113,6 +113,7 @@ export interface OrchestratorApi {
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
   onRuntimeStopped: (callback: (data: { id: string }) => void) => () => void
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => () => void
+  onEventReconnectFailed: (callback: (data: { runtimeId: string; attempts: number; error: string }) => void) => () => void
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => () => void
   onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => () => void
   onAgentsRestored: (callback: () => void) => () => void
