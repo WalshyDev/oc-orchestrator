@@ -45,7 +45,6 @@ function contextFraction(agent: AgentRuntime): number {
   }
   return contextTokens / contextLimit
 }
-import { useDismiss } from '../hooks/useDismiss'
 import {
   Lightning,
   Rocket,
@@ -1305,7 +1304,18 @@ function AgentRow({
   const [inlineValue, setInlineValue] = useState(agent.name)
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const inlineSubmittedRef = useRef(false)
-  const arrowMenu = useDismiss<HTMLTableCellElement>()
+  // Note: don't use useDismiss here — its mousedown outside-click handler
+  // fires before the menu's onClick (the menu is portaled outside this <td>),
+  // closing the menu before clicks on items like Terminal/Editor register.
+  // PortaledMenu has its own portal-aware outside-click handling.
+  const [arrowMenuOpen, setArrowMenuOpen] = useState(false)
+  const arrowMenuRef = useRef<HTMLTableCellElement>(null)
+  const arrowMenu = {
+    open: arrowMenuOpen,
+    toggle: () => setArrowMenuOpen((prev) => !prev),
+    close: () => setArrowMenuOpen(false),
+    containerRef: arrowMenuRef
+  }
 
   useEffect(() => {
     if (!isInlineEditing) return
