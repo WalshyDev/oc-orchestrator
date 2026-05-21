@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { Fragment, useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import {
   ArrowRight,
   CaretLeft,
@@ -115,6 +115,7 @@ const SCROLL_STEP = 200
 const SPIKE_FOLDERS_KEY = 'oco.spike.folders'
 const SPIKE_MEMBERSHIP_KEY = 'oco.spike.folderMembership'
 const SPIKE_EXPANDED_KEY = 'oco.spike.foldersExpanded'
+const SPIKE_ROOT_ORDER_KEY = 'oco.spike.rootOrder'
 
 function readJson<T>(key: string, fallback: T, validate: (value: unknown) => T): T {
   try {
@@ -165,6 +166,42 @@ function loadSpikeExpanded(): Set<string> {
 function saveSpikeExpanded(set: Set<string>) {
   writeJson(SPIKE_EXPANDED_KEY, Array.from(set))
 }
+
+function loadSpikeRootOrder(): string[] {
+  return readJson(SPIKE_ROOT_ORDER_KEY, [] as string[], (value) => {
+    if (!Array.isArray(value)) return []
+    return value.filter((id): id is string => typeof id === 'string')
+  })
+}
+
+function saveSpikeRootOrder(order: string[]) {
+  writeJson(SPIKE_ROOT_ORDER_KEY, order)
+}
+
+/**
+ * Root-level items in the FleetTable can be either a folder or a top-level
+ * agent. We address them by a prefixed ID so they can share one ordered list.
+ */
+type RootItemKind = 'folder' | 'agent'
+type RootItemId = string // 'f:<id>' or 'a:<id>'
+
+const folderItemId = (id: string): RootItemId => `f:${id}`
+const agentItemId = (id: string): RootItemId => `a:${id}`
+const parseItemId = (itemId: RootItemId): { kind: RootItemKind; id: string } | null => {
+  if (itemId.startsWith('f:')) return { kind: 'folder', id: itemId.slice(2) }
+  if (itemId.startsWith('a:')) return { kind: 'agent', id: itemId.slice(2) }
+  return null
+}
+
+/**
+ * Where a drag will land if released right now.
+ *  - 'into-folder': move the dragged agent into the named folder (agents only).
+ *  - 'between':     reorder the dragged item to a gap between root items.
+ *                   `index` is the destination position in the root list.
+ */
+type DropTarget =
+  | { kind: 'into-folder'; folderId: string }
+  | { kind: 'between'; index: number }
 
 interface ContextMenuState {
   agentId: string
@@ -233,13 +270,18 @@ export function FleetTable({
   const [folders, setFolders] = useState<AgentFolder[]>(() => loadSpikeFolders())
   const [agentFolderMap, setAgentFolderMap] = useState<Record<string, string>>(() => loadSpikeMembership())
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => loadSpikeExpanded())
-  const [dragAgentId, setDragAgentId] = useState<string | null>(null)
-  const [dropFolderId, setDropFolderId] = useState<string | 'root' | null>(null)
+  const [rootOrder, setRootOrder] = useState<RootItemId[]>(() => loadSpikeRootOrder())
   const [folderRenameId, setFolderRenameId] = useState<string | null>(null)
+
+  // Drag state. `dragItem` describes what's being dragged (an agent or a
+  // folder); `dropTarget` describes where it'll land if released right now.
+  const [dragItem, setDragItem] = useState<{ kind: RootItemKind; id: string } | null>(null)
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
 
   useEffect(() => { saveSpikeFolders(folders) }, [folders])
   useEffect(() => { saveSpikeMembership(agentFolderMap) }, [agentFolderMap])
   useEffect(() => { saveSpikeExpanded(expandedFolders) }, [expandedFolders])
+  useEffect(() => { saveSpikeRootOrder(rootOrder) }, [rootOrder])
 
   const createFolder = useCallback(() => {
     const id = `folder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
@@ -247,6 +289,13 @@ export function FleetTable({
     setFolders((prev) => [...prev, { id, name: 'New Folder', sortOrder }])
     setExpandedFolders((prev) => new Set(prev).add(id))
     setFolderRenameId(id)
+    // Insert the new folder at the top of rootOrder so it's immediately visible
+    // (otherwise it appends to the bottom, possibly off-screen behind many agents).
+    setRootOrder((prev) => [folderItemId(id), ...prev.filter((existingId) => existingId !== folderItemId(id))])
+    // Scroll to the top so the user sees the new folder's rename input.
+    requestAnimationFrame(() => {
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    })
   }, [folders.length])
 
   const renameFolder = useCallback((id: string, name: string) => {
@@ -271,12 +320,32 @@ export function FleetTable({
     })
   }, [])
 
-  const moveAgent = useCallback((agentId: string, folderId: string | null) => {
+  const moveAgentToFolder = useCallback((agentId: string, folderId: string | null) => {
     setAgentFolderMap((prev) => {
       const next = { ...prev }
       if (folderId == null) delete next[agentId]
       else next[agentId] = folderId
       return next
+    })
+    // When an agent is pulled out to the root, ensure it has a position in
+    // rootOrder. When moved into a folder, drop it from rootOrder.
+    setRootOrder((prev) => {
+      const itemId = agentItemId(agentId)
+      const filtered = prev.filter((id) => id !== itemId)
+      return folderId == null ? [...filtered, itemId] : filtered
+    })
+  }, [])
+
+  /**
+   * Reorder a root-level item (folder or agent) to a new index in rootOrder.
+   * Missing items are appended first so we have something to reorder.
+   */
+  const reorderRootItem = useCallback((itemId: RootItemId, toIndex: number) => {
+    setRootOrder((prev) => {
+      const without = prev.filter((id) => id !== itemId)
+      // Clamp insert position to the new array's bounds.
+      const clamped = Math.max(0, Math.min(toIndex, without.length))
+      return [...without.slice(0, clamped), itemId, ...without.slice(clamped)]
     })
   }, [])
 
@@ -290,8 +359,8 @@ export function FleetTable({
   }, [])
 
   const resetDrag = useCallback(() => {
-    setDragAgentId(null)
-    setDropFolderId(null)
+    setDragItem(null)
+    setDropTarget(null)
   }, [])
 
   // ── Manual mouse-tracked drag system ──────────────────────────────────────
@@ -299,27 +368,32 @@ export function FleetTable({
   // tables is unreliable across Chromium versions. This uses raw mouse events:
   // mousedown captures origin; once movement exceeds the threshold we commit to
   // a drag and render a floating ghost that follows the cursor. Drop targets
-  // (folders, root zone) signal hover via setDropFolderId. On mouseup we read
-  // the latest drop target from a ref and commit the move.
+  // signal hover via setDropTarget. On mouseup we read the latest target from a
+  // ref (the global handler captured state at effect setup time) and commit.
   const DRAG_THRESHOLD_PX = 4
   const dragPress = useRef<{
-    agentId: string
-    agentName: string
+    kind: RootItemKind
+    id: string
+    label: string
     originX: number
     originY: number
     started: boolean
   } | null>(null)
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null)
-  const [ghostName, setGhostName] = useState<string>('')
+  const [ghostLabel, setGhostLabel] = useState<string>('')
   // Set when a real drag completed; used to swallow the trailing click so the
   // drawer doesn't open on drop.
   const suppressNextClick = useRef(false)
-  // Mirror of dropFolderId for closure-safe reads inside the global mouseup
-  // handler (which captures state at effect setup time).
-  const dropFolderIdRef = useRef<string | 'root' | null>(null)
-  useEffect(() => { dropFolderIdRef.current = dropFolderId }, [dropFolderId])
+  // Mirror of dropTarget so the global mouseup handler reads the latest value.
+  const dropTargetRef = useRef<DropTarget | null>(null)
+  useEffect(() => { dropTargetRef.current = dropTarget }, [dropTarget])
 
-  const beginAgentDragPress = useCallback((agentId: string, agentName: string, e: React.MouseEvent) => {
+  const beginDragPress = useCallback((
+    kind: RootItemKind,
+    id: string,
+    label: string,
+    e: React.MouseEvent,
+  ) => {
     if (e.button !== 0) return
     // Skip if the press lands on an inner control.
     const target = e.target as HTMLElement
@@ -327,8 +401,9 @@ export function FleetTable({
       return
     }
     dragPress.current = {
-      agentId,
-      agentName,
+      kind,
+      id,
+      label,
       originX: e.clientX,
       originY: e.clientY,
       started: false,
@@ -345,8 +420,8 @@ export function FleetTable({
         if (dx < DRAG_THRESHOLD_PX && dy < DRAG_THRESHOLD_PX) return
         // Commit to drag: prevent text selection, set state, switch cursor.
         press.started = true
-        setDragAgentId(press.agentId)
-        setGhostName(press.agentName)
+        setDragItem({ kind: press.kind, id: press.id })
+        setGhostLabel(press.label)
         document.body.style.userSelect = 'none'
         document.body.style.cursor = 'grabbing'
       }
@@ -357,15 +432,19 @@ export function FleetTable({
       const press = dragPress.current
       if (!press) return
       const wasDragging = press.started
-      const agentId = press.agentId
+      const { kind, id } = press
       dragPress.current = null
       if (!wasDragging) return
 
-      const dropTarget = dropFolderIdRef.current
-      if (dropTarget === 'root') {
-        moveAgent(agentId, null)
-      } else if (dropTarget != null) {
-        moveAgent(agentId, dropTarget)
+      const target = dropTargetRef.current
+      if (target?.kind === 'into-folder' && kind === 'agent') {
+        moveAgentToFolder(id, target.folderId)
+      } else if (target?.kind === 'between') {
+        // Reorder at the root level. Agents being moved here implicitly leave
+        // any folder they were in.
+        if (kind === 'agent') moveAgentToFolder(id, null)
+        const itemId = kind === 'folder' ? folderItemId(id) : agentItemId(id)
+        reorderRootItem(itemId, target.index)
       }
 
       resetDrag()
@@ -383,7 +462,7 @@ export function FleetTable({
       document.removeEventListener('mousemove', handleMove)
       document.removeEventListener('mouseup', handleUp)
     }
-  }, [moveAgent, resetDrag])
+  }, [moveAgentToFolder, reorderRootItem, resetDrag])
 
   const activeColumns = useMemo(() => {
     const cols = ALL_COLUMNS.filter((col) => visibleColumns.has(col.key))
@@ -556,32 +635,93 @@ export function FleetTable({
   sortedAgentsRef.current = sortedAgents
 
   // ── Folder tree assembly ──────────────────────────────────────────────────
-  // Group sortedAgents by their folder membership. Folder ordering follows
-  // each folder's sortOrder. Within a folder, agents already arrive sorted
-  // from the sort pass above, so we just partition them.
+  // Group sortedAgents by their folder membership. Folders and top-level
+  // agents share one ordered list at the root, so users can drag them to
+  // interleave freely.
+  //
+  // Root ordering rules:
+  //   - No column sort active: use saved manual rootOrder; new items append.
+  //   - Column sort active: folders come first in their saved order, then
+  //     root-level agents in the column sort's order. Folders stay grouped
+  //     because we lose the meaning of "manually placed an agent here" when
+  //     a sort reorders the world.
   const grouped = useMemo(() => {
     const byFolder = new Map<string, AgentRuntime[]>()
-    const rootAgents: AgentRuntime[] = []
+    const rootAgentsById = new Map<string, AgentRuntime>()
+    const folderById = new Map(folders.map((f) => [f.id, f] as const))
+
+    // sortedAgents preserves column sort order; iterating it preserves that
+    // order for root agents too.
+    const rootAgentsInSortOrder: AgentRuntime[] = []
     for (const agent of sortedAgents) {
       const folderId = agentFolderMap[agent.id]
-      if (folderId && folders.some((f) => f.id === folderId)) {
+      if (folderId && folderById.has(folderId)) {
         const list = byFolder.get(folderId) ?? []
         list.push(agent)
         byFolder.set(folderId, list)
       } else {
-        rootAgents.push(agent)
+        rootAgentsById.set(agent.id, agent)
+        rootAgentsInSortOrder.push(agent)
       }
     }
-    const orderedFolders = [...folders].sort((a, b) => a.sortOrder - b.sortOrder)
-    return { byFolder, rootAgents, orderedFolders }
-  }, [sortedAgents, agentFolderMap, folders])
+
+    const rootItems: Array<{ kind: RootItemKind; id: string }> = []
+
+    if (sortColumn == null) {
+      // Manual order: honor saved rootOrder, drop stale entries, append new.
+      const seen = new Set<RootItemId>()
+      for (const itemId of rootOrder) {
+        const parsed = parseItemId(itemId)
+        if (!parsed) continue
+        const exists = parsed.kind === 'folder'
+          ? folderById.has(parsed.id)
+          : rootAgentsById.has(parsed.id)
+        if (!exists) continue
+        seen.add(itemId)
+        rootItems.push(parsed)
+      }
+      for (const folder of folders) {
+        const id = folderItemId(folder.id)
+        if (seen.has(id)) continue
+        seen.add(id)
+        rootItems.push({ kind: 'folder', id: folder.id })
+      }
+      for (const agent of rootAgentsInSortOrder) {
+        const id = agentItemId(agent.id)
+        if (seen.has(id)) continue
+        seen.add(id)
+        rootItems.push({ kind: 'agent', id: agent.id })
+      }
+    } else {
+      // Sort active: folders first (in saved rootOrder), then root agents
+      // in column sort order.
+      const folderPositions = new Map<string, number>()
+      rootOrder.forEach((itemId, index) => {
+        const parsed = parseItemId(itemId)
+        if (parsed?.kind === 'folder') folderPositions.set(parsed.id, index)
+      })
+      const orderedFolders = [...folders].sort((a, b) => {
+        const aPos = folderPositions.get(a.id) ?? Infinity
+        const bPos = folderPositions.get(b.id) ?? Infinity
+        return aPos - bPos
+      })
+      for (const folder of orderedFolders) {
+        rootItems.push({ kind: 'folder', id: folder.id })
+      }
+      for (const agent of rootAgentsInSortOrder) {
+        rootItems.push({ kind: 'agent', id: agent.id })
+      }
+    }
+
+    return { byFolder, rootAgentsById, folderById, rootItems }
+  }, [sortedAgents, agentFolderMap, folders, rootOrder, sortColumn])
 
   // Auto-expand folders that contain urgent agents (blocked/needs_input/errored).
   // Saved expansion state still applies; this is an override that keeps users
   // from missing urgent work inside a collapsed folder.
   const effectiveExpanded = useMemo(() => {
     const result = new Set(expandedFolders)
-    for (const folder of grouped.orderedFolders) {
+    for (const folder of folders) {
       const children = grouped.byFolder.get(folder.id) ?? []
       if (children.some((a) => isUrgent(a))) result.add(folder.id)
     }
@@ -591,7 +731,7 @@ export function FleetTable({
       if (selectedFolder) result.add(selectedFolder)
     }
     return result
-  }, [grouped, expandedFolders, selectedId, agentFolderMap])
+  }, [grouped, expandedFolders, selectedId, agentFolderMap, folders])
 
   const handleLabelDropdownChange = useCallback((open: boolean) => {
     if (open) {
@@ -618,9 +758,9 @@ export function FleetTable({
       selected={agent.id === selectedId}
       visibleColumns={visibleColumns}
       indented={indented}
-      isDragging={dragAgentId === agent.id}
-      isAnyDragActive={dragAgentId !== null}
-      onMouseDownStartDrag={(e) => beginAgentDragPress(agent.id, agent.name, e)}
+      isDragging={dragItem?.kind === 'agent' && dragItem.id === agent.id}
+      isAnyDragActive={dragItem !== null}
+      onMouseDownStartDrag={(e) => beginDragPress('agent', agent.id, agent.name, e)}
       suppressNextClickRef={suppressNextClick}
       onSelect={() => onSelect(agent.id)}
       onJumpToLastUserMessage={() => onSelect(agent.id, 'last-user-message')}
@@ -665,12 +805,13 @@ export function FleetTable({
   return (
     <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
       {/* Floating drag ghost: follows the cursor while a drag is active. */}
-      {dragAgentId && ghostPos && (
+      {dragItem && ghostPos && (
         <div
-          className="fixed pointer-events-none z-[1000] px-2.5 py-1 text-xs font-semibold text-white bg-kumo-brand rounded-md shadow-lg whitespace-nowrap"
+          className="fixed pointer-events-none z-[1000] px-2.5 py-1 text-xs font-semibold text-white bg-kumo-brand rounded-md shadow-lg whitespace-nowrap flex items-center gap-1.5"
           style={{ left: ghostPos.x + 12, top: ghostPos.y + 12 }}
         >
-          {ghostName}
+          {dragItem.kind === 'folder' && <FolderSimple size={11} weight="fill" />}
+          {ghostLabel}
         </div>
       )}
       <div ref={scrollContainerRef} className="flex-1 overflow-auto">
@@ -705,54 +846,94 @@ export function FleetTable({
             </tr>
           </thead>
           <tbody>
-            {/* Root-level "Top level" drop zone — only visible while dragging */}
-            {dragAgentId && folders.length > 0 && (
-              <RootDropZone
-                colSpan={activeColumns.length + 2}
-                isHovered={dropFolderId === 'root'}
-                onMouseEnter={() => setDropFolderId('root')}
-                onMouseLeave={() => setDropFolderId((cur) => (cur === 'root' ? null : cur))}
-              />
-            )}
+            {grouped.rootItems.map((item, index) => {
+              // Between-item drop zone above each item; the last gap renders
+              // after the loop. Only shown while a drag is active.
+              const gapAbove = dragItem && (
+                <BetweenItemsDropZone
+                  key={`gap-${index}`}
+                  colSpan={activeColumns.length + 2}
+                  isHovered={dropTarget?.kind === 'between' && dropTarget.index === index}
+                  onMouseEnter={() => setDropTarget({ kind: 'between', index })}
+                  onMouseLeave={() => setDropTarget((cur) => (
+                    cur?.kind === 'between' && cur.index === index ? null : cur
+                  ))}
+                />
+              )
 
-            {/* Root-level agents */}
-            {grouped.rootAgents.map((agent) => renderAgentRowFn(agent, /* indented */ false))}
+              if (item.kind === 'agent') {
+                const agent = grouped.rootAgentsById.get(item.id)
+                if (!agent) return null
+                return (
+                  <Fragment key={`a-${item.id}`}>
+                    {gapAbove}
+                    {renderAgentRowFn(agent, /* indented */ false)}
+                  </Fragment>
+                )
+              }
 
-            {/* Folder groups */}
-            {grouped.orderedFolders.map((folder) => {
+              const folder = grouped.folderById.get(item.id)
+              if (!folder) return null
               const children = grouped.byFolder.get(folder.id) ?? []
               const urgentCount = children.filter((a) => isUrgent(a)).length
               const expanded = effectiveExpanded.has(folder.id)
-              const isDropTarget = dropFolderId === folder.id
+              const isFolderDropTarget =
+                dropTarget?.kind === 'into-folder' && dropTarget.folderId === folder.id
               return (
-                <FolderRowGroup
-                  key={folder.id}
-                  folder={folder}
-                  childCount={children.length}
-                  urgentCount={urgentCount}
-                  expanded={expanded}
-                  isRenaming={folderRenameId === folder.id}
-                  isDropTarget={isDropTarget}
-                  isDraggingActive={dragAgentId !== null}
-                  colSpan={activeColumns.length + 2}
-                  onToggle={() => toggleFolderExpanded(folder.id)}
-                  onStartRename={() => setFolderRenameId(folder.id)}
-                  onRename={(name) => {
-                    renameFolder(folder.id, name)
-                    setFolderRenameId(null)
-                  }}
-                  onCancelRename={() => setFolderRenameId(null)}
-                  onDelete={() => deleteFolder(folder.id)}
-                  onMouseEnter={() => { if (dragAgentId) setDropFolderId(folder.id) }}
-                  onMouseLeave={() => setDropFolderId((cur) => (cur === folder.id ? null : cur))}
-                >
-                  {expanded && children.map((agent) => renderAgentRowFn(agent, /* indented */ true))}
-                </FolderRowGroup>
+                <Fragment key={`f-${folder.id}`}>
+                  {gapAbove}
+                  <FolderRowGroup
+                    folder={folder}
+                    childCount={children.length}
+                    urgentCount={urgentCount}
+                    expanded={expanded}
+                    isRenaming={folderRenameId === folder.id}
+                    isDropTarget={isFolderDropTarget}
+                    acceptsAgentDrop={dragItem?.kind === 'agent'}
+                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
+                    colSpan={activeColumns.length + 2}
+                    onMouseDownStartDrag={(e) => beginDragPress('folder', folder.id, folder.name, e)}
+                    suppressNextClickRef={suppressNextClick}
+                    onToggle={() => toggleFolderExpanded(folder.id)}
+                    onStartRename={() => setFolderRenameId(folder.id)}
+                    onRename={(name) => {
+                      renameFolder(folder.id, name)
+                      setFolderRenameId(null)
+                    }}
+                    onCancelRename={() => setFolderRenameId(null)}
+                    onDelete={() => deleteFolder(folder.id)}
+                    onHeaderMouseEnter={() => {
+                      // Only accept folder-drop when an agent is being dragged.
+                      // For folder drags, the header is NOT a drop target — use
+                      // the gap zones to reorder.
+                      if (dragItem?.kind === 'agent') {
+                        setDropTarget({ kind: 'into-folder', folderId: folder.id })
+                      }
+                    }}
+                    onHeaderMouseLeave={() => setDropTarget((cur) => (
+                      cur?.kind === 'into-folder' && cur.folderId === folder.id ? null : cur
+                    ))}
+                  >
+                    {expanded && children.map((agent) => renderAgentRowFn(agent, /* indented */ true))}
+                  </FolderRowGroup>
+                </Fragment>
               )
             })}
 
+            {/* Final between-items gap (after the last item) */}
+            {dragItem && (
+              <BetweenItemsDropZone
+                colSpan={activeColumns.length + 2}
+                isHovered={dropTarget?.kind === 'between' && dropTarget.index === grouped.rootItems.length}
+                onMouseEnter={() => setDropTarget({ kind: 'between', index: grouped.rootItems.length })}
+                onMouseLeave={() => setDropTarget((cur) => (
+                  cur?.kind === 'between' && cur.index === grouped.rootItems.length ? null : cur
+                ))}
+              />
+            )}
+
             {/* "New Folder" button as a final row, only when not dragging */}
-            {!dragAgentId && (
+            {!dragItem && (
               <tr>
                 <td colSpan={activeColumns.length + 2} className="px-3 py-2">
                   <button
@@ -1215,7 +1396,9 @@ function AgentRow({
               ) : (
                 <div
                   onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
-                  className="font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent hover:outline-kumo-subtle/40 transition-[outline-color] truncate"
+                  className={`font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent transition-[outline-color] truncate ${
+                    isAnyDragActive ? '' : 'hover:outline-kumo-subtle/40'
+                  }`}
                   title={agent.name}
                 >
                   {agent.name}
@@ -1498,15 +1681,18 @@ function FolderRowGroup({
   expanded,
   isRenaming,
   isDropTarget,
-  isDraggingActive,
+  acceptsAgentDrop,
+  isDragging,
   colSpan,
   onToggle,
   onStartRename,
   onRename,
   onCancelRename,
   onDelete,
-  onMouseEnter,
-  onMouseLeave,
+  onMouseDownStartDrag,
+  suppressNextClickRef,
+  onHeaderMouseEnter,
+  onHeaderMouseLeave,
   children,
 }: {
   folder: AgentFolder
@@ -1514,17 +1700,25 @@ function FolderRowGroup({
   urgentCount: number
   expanded: boolean
   isRenaming: boolean
+  /** True when this folder is the current into-folder drop target. */
   isDropTarget: boolean
-  /** True while any agent is being dragged anywhere — turns the row into a drop target. */
-  isDraggingActive: boolean
+  /** True only while an agent (not a folder) is being dragged. Folders only
+   * act as drop targets for agents; folder-on-folder drops happen via gaps. */
+  acceptsAgentDrop: boolean
+  /** True when this folder itself is being dragged; dims the header. */
+  isDragging: boolean
   colSpan: number
   onToggle: () => void
   onStartRename: () => void
   onRename: (name: string) => void
   onCancelRename: () => void
   onDelete: () => void
-  onMouseEnter: () => void
-  onMouseLeave: () => void
+  /** Mousedown on the header initiates a folder drag. */
+  onMouseDownStartDrag: (e: React.MouseEvent) => void
+  /** Used to swallow the trailing click after a drag (so toggle doesn't fire). */
+  suppressNextClickRef: React.MutableRefObject<boolean>
+  onHeaderMouseEnter: () => void
+  onHeaderMouseLeave: () => void
   children: React.ReactNode
 }) {
   const [draftName, setDraftName] = useState(folder.name)
@@ -1548,19 +1742,28 @@ function FolderRowGroup({
   let headerStateClass: string
   if (isDropTarget) {
     headerStateClass = 'bg-kumo-brand/20 ring-1 ring-inset ring-kumo-brand/60'
-  } else if (isDraggingActive) {
+  } else if (acceptsAgentDrop) {
     headerStateClass = 'bg-kumo-fill/40 hover:bg-kumo-fill/60 ring-1 ring-inset ring-kumo-brand/20'
   } else {
     headerStateClass = 'bg-kumo-fill/40 hover:bg-kumo-fill/60'
   }
 
+  const draggingClass = isDragging ? 'opacity-40' : ''
+
   return (
     <>
       <tr
+        onMouseDown={onMouseDownStartDrag}
+        onClickCapture={(e) => {
+          if (suppressNextClickRef.current) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }}
         onClick={onToggle}
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
-        className={`group/folder transition-colors border-b border-kumo-line cursor-pointer select-none ${headerStateClass}`}
+        onMouseEnter={onHeaderMouseEnter}
+        onMouseLeave={onHeaderMouseLeave}
+        className={`group/folder transition-colors border-b border-kumo-line cursor-pointer select-none ${headerStateClass} ${draggingClass}`}
       >
         <td colSpan={colSpan} className="px-3 py-1.5">
           <div className="flex items-center gap-2">
@@ -1639,14 +1842,14 @@ function FolderRowGroup({
           </div>
         </td>
       </tr>
-      {expanded && childCount === 0 && isDraggingActive && (
+      {expanded && childCount === 0 && acceptsAgentDrop && (
         <tr
-          onMouseEnter={onMouseEnter}
-          onMouseLeave={onMouseLeave}
+          onMouseEnter={onHeaderMouseEnter}
+          onMouseLeave={onHeaderMouseLeave}
           className={`border-b border-kumo-line ${isDropTarget ? 'bg-kumo-brand/10' : ''}`}
         >
-          <td colSpan={colSpan} className="px-3 py-2 text-center text-[11px] text-kumo-subtle italic">
-            Drop here
+          <td colSpan={colSpan} className="px-3 py-1 text-center text-[10px] text-kumo-subtle/70 italic">
+            Drop agent here
           </td>
         </tr>
       )}
@@ -1656,10 +1859,11 @@ function FolderRowGroup({
 }
 
 /**
- * Visible only while dragging — gives users an explicit "move to top level"
- * target above all folders. Renders as a full-width subtle banner.
+ * Thin horizontal slot between root-level items. Only visible while a drag is
+ * active. The hit area is ~10px tall so it's easy to land in, but the visible
+ * indicator stays as a thin 2px line centered in the slot.
  */
-function RootDropZone({
+function BetweenItemsDropZone({
   colSpan,
   isHovered,
   onMouseEnter,
@@ -1674,15 +1878,16 @@ function RootDropZone({
     <tr
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className={`border-b border-dashed border-kumo-line transition-colors ${
-        isHovered ? 'bg-kumo-brand/15' : 'bg-kumo-overlay/40'
-      }`}
+      className="select-none"
     >
-      <td colSpan={colSpan} className="px-3 py-1.5 text-center text-[10px] uppercase tracking-wide text-kumo-subtle">
-        <span className="inline-flex items-center gap-1.5">
-          <ArrowRight size={10} weight="bold" className="-rotate-90" />
-          Drop here to move to top level
-        </span>
+      <td colSpan={colSpan} className="p-0">
+        <div className="relative h-2.5">
+          <div
+            className={`absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 transition-colors ${
+              isHovered ? 'bg-kumo-brand' : 'bg-transparent'
+            }`}
+          />
+        </div>
       </td>
     </tr>
   )
