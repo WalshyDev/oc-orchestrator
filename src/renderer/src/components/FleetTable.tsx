@@ -1383,7 +1383,7 @@ function AgentRow({
       className={`group cursor-pointer transition-colors border-b border-kumo-line ${rowStateClass} ${flashingClass} ${draggingClass}`}
     >
       {show('agent') && (
-        <td className={`px-3 py-2 overflow-hidden ${indented ? 'pl-7' : ''}`}>
+        <td className={`px-3 py-2 overflow-hidden ${indented ? 'pl-10' : ''}`}>
           <div className="flex items-start gap-1.5">
             {/* Grip is a visual affordance only — the whole row is draggable. */}
             <div
@@ -1817,11 +1817,11 @@ function FolderRowGroup({
                 {folder.name}
               </span>
             )}
-            {/* Spacer pushes count/badges/actions to the right edge */}
-            <div className="flex-1" />
-            <span className="text-[10px] text-kumo-subtle font-mono shrink-0">
-              {childCount}
+            <span className="text-[11px] text-kumo-subtle shrink-0">
+              ({childCount})
             </span>
+            {/* Spacer pushes urgency badge + actions to the right edge */}
+            <div className="flex-1" />
             {urgentCount > 0 && (
               <span
                 className="flex items-center gap-0.5 text-[10px] font-medium text-kumo-danger px-1.5 py-0.5 rounded bg-kumo-danger/10 shrink-0"
