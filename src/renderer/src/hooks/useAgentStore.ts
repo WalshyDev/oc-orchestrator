@@ -359,6 +359,13 @@ function backfillContextLimits(): void {
 // invoked agent and should not overwrite the parent agent's displayed model.
 const sessionStepDepth = new Map<string, number>()
 
+// Maps a sub-agent's child sessionId → parent agentId. The `task` tool runs
+// in a brand-new child session, so streaming events for it never match the
+// parent agent via findAgentBySession. We populate this index whenever a
+// tool part exposes its childSessionId via state.metadata so the parent's
+// lastActivityAt and the stalled-watchdog can see through the indirection.
+const childSessionToAgent = new Map<string, string>()
+
 /** Clear step depth for a session and restore the parent model if it was
  *  overwritten by a sub-agent. Returns true if the model was restored. */
 function resetStepDepthAndRestoreModel(sessionId: string, agent: LiveAgent): boolean {
@@ -923,6 +930,13 @@ function hydrateHistoricalMessages(entries: unknown): void {
     const agent = findAgentBySession(entry.info.sessionID)
     if (!agent) continue
 
+    // Re-index any sub-agent sessions surfaced by this restore so the watchdog
+    // and live-activity tracking can see through task-tool indirection on
+    // cold start.
+    for (const part of message.parts) {
+      if (part.childSessionId) registerChildSession(part.childSessionId, agent.id)
+    }
+
     agent.lastActivityAt = Math.max(agent.lastActivityAt, createdAt)
 
     if (entry.info.role === 'assistant') {
@@ -1379,6 +1393,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
             agentChanged = true
           }
         }
+      } else {
+        // Heartbeat the parent if this is a sub-agent's child session so the
+        // watchdog doesn't fire while a task tool is running.
+        bumpParentActivityForChildSession(sessionId)
       }
 
       // When the server-authoritative user message arrives, adopt the
@@ -1543,6 +1561,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
         let agentChanged = false
         const agent = findAgentBySession(sessionId)
         if (agent) {
+          // Index any sub-agent session this tool just exposed so streaming
+          // events on the child session can still bump the parent's activity.
+          if (partType === 'tool') {
+            const childId = getChildSessionId(toolState)
+            if (childId) registerChildSession(childId, agent.id)
+          }
+
           // Extract PR URL from assistant text and tool output parts, but only
           // when the "Create PR" flow was explicitly triggered by the user.
           if (prExtractEnabled.has(agent.id) && message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
@@ -1578,6 +1603,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
               agentChanged = true
             }
           }
+        } else {
+          // Heartbeat the parent if this is a sub-agent's child session so the
+          // watchdog doesn't fire while a task tool is running.
+          bumpParentActivityForChildSession(sessionId)
         }
 
         emitMessagesThrottled(agentChanged || modelRestored)
@@ -2079,6 +2108,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
 
   // Update agent with new session
   sessionStepDepth.delete(agent.sessionId)
+  clearChildSessionsForAgent(payload.id)
   pendingMessages.delete(payload.id)
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
@@ -2120,6 +2150,7 @@ function removeAgentState(agentId: string): void {
     compactingTimers.delete(agentId)
   }
   sessionStepDepth.delete(agent.sessionId)
+  clearChildSessionsForAgent(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
@@ -2498,6 +2529,56 @@ function findAgentByRuntime(runtimeId: string): LiveAgent | undefined {
     if (agent.runtimeId === runtimeId) return agent
   }
   return undefined
+}
+
+/** Tool states that mean the tool has finished and will emit no further
+ *  activity. Anything else (including unset) is treated as still running. */
+const TERMINAL_TOOL_STATES = new Set(['completed', 'error', 'failed'])
+
+/** Find the parent agent for a sub-agent's child sessionId, or undefined if
+ *  no mapping is known. */
+function findAgentByChildSession(sessionId: string): LiveAgent | undefined {
+  const agentId = childSessionToAgent.get(sessionId)
+  if (!agentId) return undefined
+  return state.agents.get(agentId)
+}
+
+/** Bump lastActivityAt on the parent agent of a sub-agent's child session.
+ *  No-op when `sessionId` doesn't belong to a known sub-agent. Used as a
+ *  heartbeat so the stalled-watchdog doesn't fire while a task tool runs. */
+function bumpParentActivityForChildSession(sessionId: string): void {
+  const parent = findAgentByChildSession(sessionId)
+  if (parent) parent.lastActivityAt = Date.now()
+}
+
+/** Returns true when any tool part in the agent's transcript has a
+ *  childSessionId and has not reached a terminal state. */
+function hasInFlightSubAgent(sessionId: string): boolean {
+  const messages = state.messages.get(sessionId)
+  if (!messages) return false
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== 'tool') continue
+      if (!part.childSessionId) continue
+      if (TERMINAL_TOOL_STATES.has(part.toolState ?? '')) continue
+      return true
+    }
+  }
+  return false
+}
+
+/** Record that `childSessionId` belongs to `parentAgentId` so we can bump the
+ *  parent's lastActivityAt when streaming events arrive for the sub-agent. */
+function registerChildSession(childSessionId: string, parentAgentId: string): void {
+  childSessionToAgent.set(childSessionId, parentAgentId)
+}
+
+/** Remove all child sessions registered to `agentId`. Called on agent removal
+ *  and on session reset. */
+function clearChildSessionsForAgent(agentId: string): void {
+  for (const [childSessionId, parentId] of childSessionToAgent.entries()) {
+    if (parentId === agentId) childSessionToAgent.delete(childSessionId)
+  }
 }
 
 /**
@@ -2947,6 +3028,11 @@ export function useAgentStore() {
         let changed = false
         for (const agent of state.agents.values()) {
           if (agent.status !== 'running') continue
+          // Skip when a sub-agent (task tool) is still in flight. The parent's
+          // own session goes silent for the duration of the child call, so
+          // lastActivityAt alone would falsely flag long-running reviews or
+          // CI watchers as stalled.
+          if (hasInFlightSubAgent(agent.sessionId)) continue
           const last = agent.lastActivityAt ?? 0
           if (last > 0 && now - last >= STALLED_TIMEOUT_MS) {
             // Only flip once; if already blocked, leave as-is
