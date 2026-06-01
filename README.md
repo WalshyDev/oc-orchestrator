@@ -54,9 +54,20 @@ npm run dev
 |---------|-------------|
 | `npm run dev` | Start Electron dev server with hot reload |
 | `npm run build` | Production build |
+| `npm run build:mac` | Build macOS `.app` and `.dmg` artifacts in `dist/` |
+| `npm run build:mac:app` | Build only the macOS `.app` artifact in `dist/` |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | Type check both main and renderer |
 | `npm test` | Run unit tests |
+
+### macOS App
+
+```bash
+npm run build:mac:app
+open dist
+```
+
+Copy `OC Orchestrator.app` from the generated `dist/mac*` folder into `/Applications`.
 
 ### Releases
 
@@ -89,6 +100,10 @@ This repo currently installs dependencies with `legacy-peer-deps=true` via `.npm
 | `OC_ORCHESTRATOR_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `OC_ORCHESTRATOR_DEMO_MODE` | — | Enable demo mode with mock data (for screenshots) |
 | `OC_ORCHESTRATOR_RUNTIME_IDLE_TIMEOUT_MS` | `300000` | Idle timeout before stopping unused runtimes |
+
+### Logs
+
+The main process writes the current launch's logs to `~/.oc-orchestrator/latest.log`, overwriting that file each time the app starts.
 
 ## Architecture
 

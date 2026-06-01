@@ -1,3 +1,4 @@
+import './logger'
 import { app, shell, BrowserWindow, nativeImage, Menu } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc'

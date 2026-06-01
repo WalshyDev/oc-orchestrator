@@ -15,6 +15,10 @@ extraResources:
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   target:
+    - target: dir
+      arch:
+        - arm64
+        - x64
     - target: dmg
       arch:
         - arm64
