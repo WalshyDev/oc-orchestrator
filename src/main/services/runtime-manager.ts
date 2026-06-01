@@ -1,7 +1,10 @@
-import { createOpencodeServer } from '@opencode-ai/sdk/server'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2/client'
 import { BrowserWindow } from 'electron'
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { createServer, createConnection } from 'node:net'
+import { homedir } from 'node:os'
+import { delimiter, dirname, join } from 'node:path'
 
 export interface RuntimeInfo {
   id: string
@@ -20,6 +23,133 @@ const HEALTH_CHECK_INTERVAL_MS = 30_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000
 const AUTO_RESTART_COOLDOWN_MS = 10_000
+
+interface OpencodeServer {
+  url: string
+  close: () => void
+}
+
+interface OpencodeServerOptions {
+  hostname?: string
+  port: number
+  timeout: number
+  signal?: AbortSignal
+  config?: unknown
+}
+
+function getOpencodePathEntries(): string[] {
+  const currentPath = process.env.PATH?.split(delimiter) ?? []
+  const homeDir = homedir()
+
+  return [
+    ...currentPath,
+    join(homeDir, '.opencode', 'bin'),
+    join(homeDir, '.bun', 'bin'),
+    join(homeDir, '.local', 'bin'),
+    join(homeDir, '.npm-global', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin'
+  ].filter(Boolean)
+}
+
+function getOpencodeSpawnOptions(config: unknown): { command: string; env: NodeJS.ProcessEnv } {
+  const pathEntries = Array.from(new Set(getOpencodePathEntries()))
+  const configuredPath = process.env.OPENCODE_PATH?.trim()
+  const command = configuredPath || 'opencode'
+
+  if (configuredPath && configuredPath.includes('/') && existsSync(configuredPath)) {
+    pathEntries.unshift(dirname(configuredPath))
+  }
+
+  return {
+    command,
+    env: {
+      ...process.env,
+      PATH: Array.from(new Set(pathEntries)).join(delimiter),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(config ?? {})
+    }
+  }
+}
+
+function formatOpencodeSpawnError(error: Error, command: string, env: NodeJS.ProcessEnv): Error {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return error
+
+  return new Error(
+    `Unable to start OpenCode server: could not find "${command}". ` +
+      'Install opencode, set OPENCODE_PATH, or ensure PATH includes the opencode binary. ' +
+      `PATH=${env.PATH ?? ''}`
+  )
+}
+
+async function createManagedOpencodeServer(options: OpencodeServerOptions): Promise<OpencodeServer> {
+  const hostname = options.hostname ?? '127.0.0.1'
+  const args = ['serve', `--hostname=${hostname}`, `--port=${options.port}`]
+  const { command, env } = getOpencodeSpawnOptions(options.config)
+  const proc = spawn(command, args, {
+    signal: options.signal,
+    env
+  })
+
+  const url = await new Promise<string>((resolve, reject) => {
+    let settled = false
+    let output = ''
+
+    const done = (callback: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      callback()
+    }
+
+    const timeoutId = setTimeout(() => {
+      done(() => reject(new Error(`Timeout waiting for server to start after ${options.timeout}ms`)))
+    }, options.timeout)
+
+    proc.stdout?.on('data', (chunk) => {
+      output += chunk.toString()
+      const lines = output.split('\n')
+      for (const line of lines) {
+        if (line.startsWith('opencode server listening')) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+          if (!match) {
+            done(() => reject(new Error(`Failed to parse server url from output: ${line}`)))
+            return
+          }
+
+          done(() => resolve(match[1]))
+          return
+        }
+      }
+    })
+
+    proc.stderr?.on('data', (chunk) => {
+      output += chunk.toString()
+    })
+
+    proc.on('exit', (code) => {
+      let message = `Server exited with code ${code}`
+      if (output.trim()) message += `\nServer output: ${output}`
+      done(() => reject(new Error(message)))
+    })
+
+    proc.on('error', (error) => {
+      done(() => reject(formatOpencodeSpawnError(error, command, env)))
+    })
+
+    options.signal?.addEventListener('abort', () => {
+      done(() => reject(new Error('Aborted')))
+    })
+  })
+
+  return {
+    url,
+    close() {
+      proc.kill()
+    }
+  }
+}
 
 /**
  * Manages OpenCode server processes and client connections.
@@ -60,7 +190,7 @@ class RuntimeManager {
 
     const port = await this.getAvailablePort()
 
-    const server = await createOpencodeServer({
+    const server = await createManagedOpencodeServer({
       port,
       timeout: 15000
     })
