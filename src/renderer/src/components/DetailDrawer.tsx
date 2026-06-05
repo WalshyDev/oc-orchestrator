@@ -136,6 +136,7 @@ interface DetailDrawerProps {
   onClose: () => void
   onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
   onApprove?: () => void
+  onApproveAlways?: () => void
   onDeny?: () => void
   onReplyQuestion?: (answers: string[][]) => void
   onRejectQuestion?: () => void
@@ -185,6 +186,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   onClose,
   onSendMessage,
   onApprove,
+  onApproveAlways,
   onDeny,
   onReplyQuestion,
   onRejectQuestion,
@@ -904,7 +906,15 @@ export const DetailDrawer = memo(function DetailDrawer({
                           onClick={onApprove}
                           className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
                         >
-                          <Check size={12} weight="bold" /> Approve
+                          <Check size={12} weight="bold" /> Approve Once
+                        </button>
+                      )}
+                      {onApproveAlways && (
+                        <button
+                          onClick={onApproveAlways}
+                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
+                        >
+                          <CheckCircle size={12} weight="fill" /> Approve Always
                         </button>
                       )}
                       {onDeny && (
@@ -992,7 +1002,10 @@ export const DetailDrawer = memo(function DetailDrawer({
         {/* Action Rail */}
         <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
-            <ActionButton icon={<Check size={12} weight="bold" />} label="Approve" variant="approve" onClick={onApprove} />
+            <ActionButton icon={<Check size={12} weight="bold" />} label="Approve Once" variant="approve" onClick={onApprove} />
+          )}
+          {onApproveAlways && (
+            <ActionButton icon={<CheckCircle size={12} weight="fill" />} label="Approve Always" variant="approve" onClick={onApproveAlways} />
           )}
           {onDeny && (
             <ActionButton icon={<XCircle size={12} />} label="Deny" variant="deny" onClick={onDeny} />

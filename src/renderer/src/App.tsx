@@ -962,6 +962,11 @@ export function App() {
     await storeRespondToPermission(selectedAgentId, permissionId, 'once')
   }, [selectedAgentId, storeRespondToPermission])
 
+  const handleApproveAlways = useCallback(async (permissionId: string) => {
+    if (!selectedAgentId) return
+    await storeRespondToPermission(selectedAgentId, permissionId, 'always')
+  }, [selectedAgentId, storeRespondToPermission])
+
   const handleDeny = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
     await storeRespondToPermission(selectedAgentId, permissionId, 'reject')
@@ -987,6 +992,10 @@ export function App() {
   const handleDrawerApprove = useCallback(() => {
     if (selectedPermission) handleApprove(selectedPermission.id)
   }, [selectedPermission, handleApprove])
+
+  const handleDrawerApproveAlways = useCallback(() => {
+    if (selectedPermission) handleApproveAlways(selectedPermission.id)
+  }, [selectedPermission, handleApproveAlways])
 
   const handleDrawerDeny = useCallback(() => {
     if (selectedPermission) handleDeny(selectedPermission.id)
@@ -1623,6 +1632,7 @@ Then give me a brief summary of what the previous session was working on and whe
           onClose={handleCloseDrawer}
           onSendMessage={handleSendMessage}
           onApprove={selectedPermission ? handleDrawerApprove : undefined}
+          onApproveAlways={selectedPermission ? handleDrawerApproveAlways : undefined}
           onDeny={selectedPermission ? handleDrawerDeny : undefined}
           onReplyQuestion={selectedQuestion ? handleReplyQuestion : undefined}
           onRejectQuestion={selectedQuestion ? handleRejectQuestion : undefined}
