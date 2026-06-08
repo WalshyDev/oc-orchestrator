@@ -31,7 +31,7 @@ import {
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
-import { loadSettings, SETTINGS_CHANGED_EVENT, MAX_QUICK_ACTIONS, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
+import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
 import { StatusBadge } from './StatusBadge'
@@ -104,7 +104,59 @@ function loadInputHeight(): number {
   return Math.max(MIN_INPUT_HEIGHT, Math.round(window.innerHeight * DEFAULT_INPUT_HEIGHT_RATIO))
 }
 
-type TabKey = 'transcript' | 'files' | 'tools' | 'events'
+type TabKey = 'transcript' | 'todos' | 'files' | 'tools' | 'events'
+
+type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+interface AgentTodo {
+  content: string
+  status: TodoStatus
+  priority?: string
+}
+
+const todoStatusLabels: Record<TodoStatus, string> = {
+  pending: 'Pending',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled'
+}
+
+const todoStatusStyles: Record<TodoStatus, string> = {
+  pending: 'border-kumo-line bg-kumo-control text-kumo-subtle',
+  in_progress: 'border-kumo-link/35 bg-kumo-interact/12 text-kumo-link',
+  completed: 'border-kumo-success/30 bg-kumo-success/12 text-kumo-success',
+  cancelled: 'border-kumo-line bg-kumo-fill text-kumo-subtle/70'
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === 'pending'
+    || value === 'in_progress'
+    || value === 'completed'
+    || value === 'cancelled'
+}
+
+function parseTodos(input: string | undefined): AgentTodo[] {
+  if (!input) return []
+
+  try {
+    const parsed = JSON.parse(input) as { todos?: unknown }
+    if (!Array.isArray(parsed.todos)) return []
+
+    return parsed.todos.flatMap((todo): AgentTodo[] => {
+      if (!todo || typeof todo !== 'object') return []
+      const item = todo as Record<string, unknown>
+      if (typeof item.content !== 'string' || !item.content.trim()) return []
+
+      return [{
+        content: item.content,
+        status: isTodoStatus(item.status) ? item.status : 'pending',
+        priority: typeof item.priority === 'string' ? item.priority : undefined
+      }]
+    })
+  } catch {
+    return []
+  }
+}
 
 export interface ChatCommand {
   command: string
@@ -735,8 +787,19 @@ export const DetailDrawer = memo(function DetailDrawer({
   // itself collapses them on render.
   const uniqueFileCount = new Set(files.map((file) => file.path)).size
 
+  const latestTodos = useMemo(() => {
+    for (let i = tools.length - 1; i >= 0; i--) {
+      const tool = tools[i]
+      if (tool.name.toLowerCase() === 'todowrite') {
+        return parseTodos(tool.input)
+      }
+    }
+    return []
+  }, [tools])
+
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'transcript', label: 'Transcript', count: messages.length },
+    { key: 'todos', label: 'TODO', count: latestTodos.length },
     { key: 'files', label: 'Files Changed', count: uniqueFileCount },
     { key: 'tools', label: 'Tools', count: tools.length },
     { key: 'events', label: 'Events', count: events.length }
@@ -956,6 +1019,8 @@ export const DetailDrawer = memo(function DetailDrawer({
                 )}
               </div>
             )}
+
+            {activeTab === 'todos' && <TodoList todos={latestTodos} />}
 
             {activeTab === 'files' && (
               <FilesChanged
@@ -1332,6 +1397,106 @@ export const DetailDrawer = memo(function DetailDrawer({
     </div>
   )
 })
+
+function TodoList({ todos }: { todos: AgentTodo[] }) {
+  const completedCount = todos.filter((todo) => todo.status === 'completed').length
+  const inProgressCount = todos.filter((todo) => todo.status === 'in_progress').length
+  const pendingCount = todos.filter((todo) => todo.status === 'pending').length
+  const cancelledCount = todos.filter((todo) => todo.status === 'cancelled').length
+  const progressPercent = todos.length > 0 ? Math.round((completedCount / todos.length) * 100) : 0
+
+  if (todos.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 text-kumo-subtle py-12">
+        <CheckCircle size={28} weight="duotone" />
+        <span className="text-sm">No TODO list yet</span>
+        <span className="max-w-sm text-center text-xs">
+          The latest todowrite call will appear here when the agent creates or updates its plan.
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3 py-2">
+      <div className="rounded-lg border border-kumo-line bg-kumo-control p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-kumo-strong">Agent TODO</div>
+            <div className="mt-0.5 text-[11px] text-kumo-subtle">
+              {completedCount} of {todos.length} complete
+            </div>
+          </div>
+          <div className="text-lg font-semibold text-kumo-strong">{progressPercent}%</div>
+        </div>
+        <div className="mt-3 h-1.5 rounded-full bg-kumo-overlay overflow-hidden">
+          <div
+            className="h-full rounded-full bg-kumo-success transition-[width]"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <TodoSummaryPill label="In Progress" count={inProgressCount} status="in_progress" />
+          <TodoSummaryPill label="Pending" count={pendingCount} status="pending" />
+          <TodoSummaryPill label="Completed" count={completedCount} status="completed" />
+          <TodoSummaryPill label="Cancelled" count={cancelledCount} status="cancelled" />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        {todos.map((todo, index) => (
+          <div
+            key={`${todo.content}-${index}`}
+            className="rounded-lg border border-kumo-line bg-kumo-control px-3 py-2.5"
+          >
+            <div className="flex items-start gap-2.5">
+              <TodoStatusIcon status={todo.status} />
+              <div className="min-w-0 flex-1">
+                <div className={`text-sm leading-snug ${todo.status === 'cancelled' ? 'line-through text-kumo-subtle' : 'text-kumo-default'}`}>
+                  {todo.content}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${todoStatusStyles[todo.status]}`}>
+                    {todoStatusLabels[todo.status]}
+                  </span>
+                  {todo.priority && (
+                    <span className="inline-flex items-center rounded-full border border-kumo-line bg-kumo-fill px-1.5 py-0.5 text-[10px] font-medium capitalize text-kumo-subtle">
+                      {todo.priority}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TodoSummaryPill({ label, count, status }: { label: string; count: number; status: TodoStatus }) {
+  if (count === 0) return null
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium ${todoStatusStyles[status]}`}>
+      {label}
+      <span className="text-kumo-default">{count}</span>
+    </span>
+  )
+}
+
+function TodoStatusIcon({ status }: { status: TodoStatus }) {
+  if (status === 'completed') {
+    return <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0 text-kumo-success" />
+  }
+  if (status === 'in_progress') {
+    return <CircleNotch size={16} className="mt-0.5 shrink-0 animate-spin text-kumo-link" />
+  }
+  if (status === 'cancelled') {
+    return <XCircle size={16} className="mt-0.5 shrink-0 text-kumo-subtle" />
+  }
+  return <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full border border-kumo-subtle/50" />
+}
 
 function QuestionCard({
   question,
