@@ -60,6 +60,7 @@ export function registerIpcHandlers(): void {
     prompt?: string
     title?: string
     model?: string
+    modelVariant?: string
     attachments?: Attachment[]
   }) => {
     try {

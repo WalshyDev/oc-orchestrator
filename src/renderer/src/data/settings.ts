@@ -29,6 +29,7 @@ export type QuickActionSlots = (QuickAction | null)[]
 
 export interface AppSettings {
   model: string
+  modelVariant: string
   editor: string
   customEditorCommand: string
   terminal: string
@@ -66,6 +67,7 @@ export function parseSlashCommand(text: string): { name: string; args: string } 
 
 export const DEFAULT_SETTINGS: AppSettings = {
   model: 'auto',
+  modelVariant: 'auto',
   editor: 'vscode',
   customEditorCommand: '',
   terminal: 'default',

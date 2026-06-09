@@ -227,7 +227,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
                                   : 'hover:bg-kumo-fill text-kumo-default'
                               }`}
                             >
-                              <span className="text-[12px]">Default</span>
+                              <span className="text-[12px]">Provider Default</span>
                               {isCurrent && !currentVariant && <Check size={12} className="text-kumo-brand shrink-0 ml-2" />}
                               {selecting === modelPath && <CircleNotch size={12} className="animate-spin text-kumo-brand shrink-0 ml-2" />}
                             </button>

@@ -6,6 +6,11 @@ export interface ModelOption {
   label: string
 }
 
+export interface ModelVariantOption {
+  value: string
+  label: string
+}
+
 export interface ProviderData {
   providers: Array<{
     id: string
@@ -14,8 +19,48 @@ export interface ProviderData {
       id: string
       name: string
       limit?: { context?: number; input?: number; output?: number }
+      variants?: Record<string, Record<string, unknown>>
     }>
   }>
+}
+
+export function formatVariantLabel(key: string): string {
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+export function getVariantOptionsForModel(
+  modelValue: string,
+  providers: ProviderData | null,
+  configModel: string | undefined
+): ModelVariantOption[] {
+  const options: ModelVariantOption[] = [{ value: 'auto', label: 'Provider Default' }]
+  if (!providers) return options
+
+  const resolvedModel = modelValue === 'auto' ? configModel : modelValue
+  if (!resolvedModel) return options
+
+  const slashIndex = resolvedModel.indexOf('/')
+  const providerId = slashIndex > 0 ? resolvedModel.slice(0, slashIndex) : undefined
+  const modelId = slashIndex > 0 ? resolvedModel.slice(slashIndex + 1) : resolvedModel
+
+  for (const provider of providers.providers) {
+    if (providerId && provider.id !== providerId) continue
+
+    for (const model of Object.values(provider.models)) {
+      if (model.id !== modelId && model.id !== resolvedModel) continue
+
+      const variantKeys = model.variants ? Object.keys(model.variants) : []
+      return [
+        ...options,
+        ...variantKeys.map((variantKey) => ({
+          value: variantKey,
+          label: formatVariantLabel(variantKey),
+        })),
+      ]
+    }
+  }
+
+  return options
 }
 
 /**
@@ -215,8 +260,10 @@ export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
   return providerFetchPromise
 }
 
-export function useModelOptions(): { options: ModelOption[]; loading: boolean } {
+export function useModelOptions(): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
   const [options, setOptions] = useState<ModelOption[]>(STATIC_MODEL_OPTIONS)
+  const [providerData, setProviderData] = useState<ProviderData | null>(null)
+  const [configModel, setConfigModel] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -235,11 +282,13 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean } 
 
       opts[0] = { value: 'auto', label: resolveSystemDefaultLabel(configModel, providerData) }
       setOptions(opts)
+      setProviderData(providerData)
+      setConfigModel(configModel)
       setLoading(false)
     })
 
     return () => { cancelled = true }
   }, [])
 
-  return { options, loading }
+  return { options, loading, providerData, configModel }
 }

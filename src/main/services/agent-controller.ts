@@ -187,9 +187,10 @@ class AgentController {
     prompt?: string
     title?: string
     model?: string
+    modelVariant?: string
     attachments?: Attachment[]
   }): Promise<AgentHandle> {
-    const { directory, prompt, title, model, attachments } = options
+    const { directory, prompt, title, model, modelVariant, attachments } = options
 
     // Ensure we have a runtime for this directory
     const runtime = await this.ensureBridgeForDirectory(directory)
@@ -216,6 +217,9 @@ class AgentController {
     const modelOverride = model && model !== 'auto'
       ? parseModelString(model)
       : undefined
+    const variantOverride = modelVariant && modelVariant !== 'auto'
+      ? modelVariant
+      : undefined
 
     const handle: AgentHandle = {
       id: agentId,
@@ -231,6 +235,7 @@ class AgentController {
       displayName: '',
       taskSummary: '',
       modelOverride,
+      variantOverride,
       bridge: this.bridges.get(runtime.id)!
     }
 

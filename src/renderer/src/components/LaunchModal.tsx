@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, ChatCircleDots, Play } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
-import { useModelOptions } from '../hooks/useModelOptions'
+import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { LabelDefinition, LabelColorKey } from '../types'
@@ -91,7 +91,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -107,7 +107,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [prompt, setPrompt] = useState('')
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
-  const { options: modelOptions } = useModelOptions()
+  const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
+  const { options: modelOptions, providerData, configModel } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
@@ -149,6 +150,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
 
   const trimmedPrompt = prompt.trim().toLowerCase()
+
+  const effortOptions = useMemo(
+    () => getVariantOptionsForModel(model, providerData, configModel),
+    [model, providerData, configModel]
+  )
+
+  const selectedEffort = effortOptions.some((option) => option.value === modelVariant)
+    ? modelVariant
+    : 'auto'
 
   // Only suggest commands while the user is still typing a single-token command
   // (no space or newline yet). Once they add a space, they've committed to that
@@ -480,7 +490,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
       await persistProjectSettings(directory.trim())
-      await onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
+      await onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
 
       clearAttachments()
       onClose()
@@ -505,7 +516,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
 
   const selectMenuClasses =
-    'overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+    'max-h-[min(24rem,calc(100vh-1rem))] overflow-y-auto rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
@@ -737,7 +748,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 <div className="relative">
                   <SelectField
                     value={model}
-                    onChange={(value) => setModel(value)}
+                    onChange={(value) => { setModel(value); setModelVariant('auto') }}
                     options={modelOptions}
                     searchable
                     searchPlaceholder="Search models…"
@@ -745,6 +756,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     menuClassName={selectMenuClasses}
                   />
                 </div>
+              </div>
+
+              {/* Effort */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Effort Level</label>
+                <div className="relative">
+                  <SelectField
+                    value={selectedEffort}
+                    onChange={(value) => setModelVariant(value)}
+                    options={effortOptions}
+                    buttonClassName={selectButtonClasses}
+                    menuClassName={selectMenuClasses}
+                  />
+                </div>
+                <p className="text-[11px] text-kumo-subtle">
+                  Provider Default sends no override; OpenCode uses the selected model&apos;s default effort.
+                </p>
               </div>
 
               {/* Title (optional) */}

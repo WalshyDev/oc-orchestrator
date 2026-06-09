@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   X,
   GearSix,
@@ -31,7 +31,7 @@ import {
   type QuickActionIcon,
   type QuickActionSlots,
 } from '../data/settings'
-import { useModelOptions } from '../hooks/useModelOptions'
+import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 
 const EDITOR_OPTIONS = [
   { value: 'vscode', label: 'VS Code' },
@@ -100,7 +100,16 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab)
   const [settings, setSettings] = useState(loadSettings)
   const [appVersion, setAppVersion] = useState<string>('')
-  const { options: modelOptions } = useModelOptions()
+  const { options: modelOptions, providerData, configModel } = useModelOptions()
+
+  const effortOptions = useMemo(
+    () => getVariantOptionsForModel(settings.model, providerData, configModel),
+    [settings.model, providerData, configModel]
+  )
+
+  const selectedEffort = effortOptions.some((option) => option.value === settings.modelVariant)
+    ? settings.modelVariant
+    : 'auto'
 
   useEffect(() => {
     window.api.getVersion().then((result) => {
@@ -125,7 +134,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
     'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
 
   const selectMenuClasses =
-    'overflow-hidden rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+    'max-h-[min(24rem,calc(100vh-1rem))] overflow-y-auto rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
 
   const inputClasses =
     'w-full px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle'
@@ -180,7 +189,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 <div className="relative">
                   <SelectField
                     value={settings.model}
-                    onChange={(value) => updateSettings({ model: value })}
+                    onChange={(value) => updateSettings({ model: value, modelVariant: 'auto' })}
                     options={modelOptions}
                     searchable
                     searchPlaceholder="Search models…"
@@ -190,6 +199,26 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
                   Pre-selected model when launching new agents. &quot;System Default&quot; uses the model from the project&apos;s opencode config.
+                </p>
+              </div>
+
+              {/* Default Effort */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Default Effort Level
+                </label>
+                <div className="relative">
+                  <SelectField
+                    value={selectedEffort}
+                    onChange={(value) => updateSettings({ modelVariant: value })}
+                    options={effortOptions}
+                    buttonClassName={selectButtonClasses}
+                    menuClassName={selectMenuClasses}
+                  />
+                </div>
+                <p className="text-[11px] text-kumo-subtle">
+                  Provider Default means no effort override is sent; OpenCode uses the selected model&apos;s provider default.
+                  {effortOptions.length === 1 ? ' This model does not expose explicit effort levels.' : ''}
                 </p>
               </div>
 

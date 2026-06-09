@@ -1143,6 +1143,7 @@ Then give me a brief summary of what the previous session was working on and whe
     prompt?: string,
     title?: string,
     model?: string,
+    modelVariant?: string,
     worktreeStrategy?: string,
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
@@ -1212,9 +1213,9 @@ Then give me a brief summary of what the previous session was working on and whe
         for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
       }
 
-      if (model && model !== 'auto') {
-        store.setAgentModel(agentId, model)
-        try { await window.api.updateConfig(agentId, { model }) }
+      if ((model && model !== 'auto') || modelVariant) {
+        if (model && model !== 'auto') store.setAgentModel(agentId, model, modelVariant)
+        try { await window.api.updateConfig(agentId, { ...(model && model !== 'auto' ? { model } : {}), variant: modelVariant ?? null }) }
         catch { /* best-effort */ }
       }
 
@@ -1237,7 +1238,7 @@ Then give me a brief summary of what the previous session was working on and whe
     // If the prompt needs special handling, launch without it — the
     // runtime must exist before we can route commands or agent mentions.
     const launchPrompt = needsPostLaunchHandling ? undefined : (prompt || undefined)
-    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, attachments)
+    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, modelVariant, attachments)
 
     if (!result?.ok) {
       throw new Error('Failed to launch agent')
@@ -1253,7 +1254,7 @@ Then give me a brief summary of what the previous session was working on and whe
     }
 
     if (model && model !== 'auto') {
-      store.setAgentModel(agentId, model)
+      store.setAgentModel(agentId, model, modelVariant)
     }
 
     if (!needsPostLaunchHandling || !trimmedPrompt) return

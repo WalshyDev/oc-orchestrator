@@ -15,7 +15,7 @@ interface Attachment {
 
 const api = {
   // ── Agent Operations ──
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; attachments?: Attachment[] }): Promise<IpcResult> =>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: Attachment[] }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: Attachment[]): Promise<IpcResult> =>

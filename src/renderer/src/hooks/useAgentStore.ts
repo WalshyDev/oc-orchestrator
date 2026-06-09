@@ -3085,9 +3085,9 @@ export function useAgentStore() {
     [questionsVersion]
   )
 
-  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, attachments?: MessageAttachment[]) => {
+  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, attachments?: MessageAttachment[]) => {
     if (!window.api) return
-    const result = await window.api.launchAgent({ directory, prompt, title, model, attachments })
+    const result = await window.api.launchAgent({ directory, prompt, title, model, modelVariant, attachments })
     if (!result.ok) {
       console.error('Failed to launch agent:', result.error)
     } else if (result.data) {
