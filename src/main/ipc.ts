@@ -1,7 +1,7 @@
 import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
 import os from 'os'
-import { agentController } from './services/agent-controller'
+import { agentController, type AgentHandle } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager, FileWriteConflictError } from './services/workspace-manager'
 import { database } from './services/database'
@@ -14,6 +14,32 @@ interface Attachment {
   mime: string
   dataUrl: string
   filename?: string
+}
+
+function toAgentPayload(handle: AgentHandle): {
+  id: string
+  runtimeId: string
+  sessionId: string
+  directory: string
+  projectName: string
+  branchName: string
+  isWorktree: boolean
+  workspaceName: string
+  prompt: string
+  title: string
+} {
+  return {
+    id: handle.id,
+    runtimeId: handle.runtimeId,
+    sessionId: handle.sessionId,
+    directory: handle.directory,
+    projectName: handle.projectName,
+    branchName: handle.branchName,
+    isWorktree: handle.isWorktree,
+    workspaceName: handle.workspaceName,
+    prompt: handle.prompt,
+    title: handle.title
+  }
 }
 
 /**
@@ -67,18 +93,7 @@ export function registerIpcHandlers(): void {
       const handle = await agentController.launchAgent(options)
       return {
         ok: true,
-        data: {
-          id: handle.id,
-          runtimeId: handle.runtimeId,
-          sessionId: handle.sessionId,
-          directory: handle.directory,
-          projectName: handle.projectName,
-          branchName: handle.branchName,
-          isWorktree: handle.isWorktree,
-          workspaceName: handle.workspaceName,
-          prompt: handle.prompt,
-          title: handle.title
-        }
+        data: toAgentPayload(handle)
       }
     } catch (error) {
       logIpcError('agent:launch', error)
@@ -347,15 +362,22 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('session:fork', async (_event, options: {
+  ipcMain.handle('session:import', async (_event, options: {
     sourceSessionId: string
+    sourceDirectory: string
     targetDirectory: string
+    title?: string
+    model?: string
+    modelVariant?: string
   }) => {
     try {
-      const result = await agentController.forkSession(options)
-      return { ok: true, data: result }
+      const handle = await agentController.importSession(options)
+      return {
+        ok: true,
+        data: toAgentPayload(handle)
+      }
     } catch (error) {
-      logIpcError('session:fork', error)
+      logIpcError('session:import', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -369,18 +391,7 @@ export function registerIpcHandlers(): void {
       const handle = await agentController.resumeAgent(options)
       return {
         ok: true,
-        data: {
-          id: handle.id,
-          runtimeId: handle.runtimeId,
-          sessionId: handle.sessionId,
-          directory: handle.directory,
-          projectName: handle.projectName,
-          branchName: handle.branchName,
-          isWorktree: handle.isWorktree,
-          workspaceName: handle.workspaceName,
-          prompt: handle.prompt,
-          title: handle.title
-        }
+        data: toAgentPayload(handle)
       }
     } catch (error) {
       logIpcError('agent:resume', error)

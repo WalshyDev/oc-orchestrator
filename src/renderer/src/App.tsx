@@ -613,6 +613,10 @@ export function App() {
       let compactionPart: { id: string; auto?: boolean; overflow?: boolean } | null = null
 
       for (const part of msg.parts) {
+        // Synthetic text parts (e.g. imported session seed, system reminders)
+        // are context for the model only; the user shouldn't see a giant
+        // imported-context blob in the transcript.
+        if (part.type === 'text' && part.synthetic) continue
         switch (part.type) {
           case 'text':
             if (part.text) {
@@ -1183,45 +1187,38 @@ Then give me a brief summary of what the previous session was working on and whe
       launchDirectory = worktreeResult.data.worktreePath
     }
 
-    // If importing a session, fork it into the new directory and resume
+    // If importing a session, create a fresh session in the new directory and
+    // seed it with the prior conversation. OpenCode's session.fork can't honor
+    // a target directory (the new session would inherit the source's cwd and
+    // its events would never reach our renderer), so we replay instead.
     if (importSession) {
-      const forkResult = await window.api.forkSession({
+      const importResult = await window.api.importSession({
         sourceSessionId: importSession.sessionId,
-        targetDirectory: launchDirectory
+        sourceDirectory: importSession.sourceDirectory,
+        targetDirectory: launchDirectory,
+        title: title || undefined,
+        model: model && model !== 'auto' ? model : undefined,
+        modelVariant: modelVariant || undefined
       })
 
-      if (!forkResult.ok || !forkResult.data) {
-        throw new Error(forkResult.error || 'Failed to fork session')
+      if (!importResult?.ok || !importResult.data) {
+        throw new Error(importResult?.error || 'Failed to import session')
       }
 
-      const resumeResult = await window.api.resumeAgent({
-        directory: launchDirectory,
-        sessionId: forkResult.data.sessionId,
-        title: title || forkResult.data.title
-      })
-
-      if (!resumeResult?.ok) {
-        throw new Error('Failed to resume forked session')
-      }
-
-      if (!resumeResult.data) return
-
-      const agentId = (resumeResult.data as { id: string }).id
+      const agentId = importResult.data.id
       setSelectedAgentId(agentId)
 
       if (labelIds?.length) {
         for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
       }
 
-      if ((model && model !== 'auto') || modelVariant) {
-        if (model && model !== 'auto') store.setAgentModel(agentId, model, modelVariant)
-        try { await window.api.updateConfig(agentId, { ...(model && model !== 'auto' ? { model } : {}), variant: modelVariant ?? null }) }
-        catch { /* best-effort */ }
+      if (model && model !== 'auto') {
+        store.setAgentModel(agentId, model, modelVariant)
       }
 
       if (prompt?.trim()) {
         try { await store.sendMessage(agentId, prompt.trim(), undefined, attachments) }
-        catch (error) { console.error('[App] Post-fork prompt failed:', error) }
+        catch (error) { console.error('[App] Post-import prompt failed:', error) }
       }
 
       return

@@ -72,6 +72,148 @@ function sanitizeSlug(value: string, fallback: string): string {
   return sanitized || fallback
 }
 
+/** Match OpenCode's fork title style so imported sessions stay easy to scan. */
+function getForkedTitle(title: string): string {
+  const match = title.match(/^(.*?)\s*\(fork(?:\s*#(\d+))?\)\s*$/)
+  if (match) {
+    const base = match[1].trim()
+    const num = match[2] ? parseInt(match[2], 10) + 1 : 2
+    return `${base} (fork #${num})`
+  }
+  return `${title} (fork)`
+}
+
+/** Subset of OpenCode's session.messages response used for import seeding. */
+interface HistoricalMessageInfo {
+  id: string
+  sessionID: string
+  role: 'user' | 'assistant'
+  parentID?: string
+  time?: { created?: number }
+}
+
+interface HistoricalMessagePart {
+  id: string
+  type: string
+  text?: string
+  synthetic?: boolean
+  ignored?: boolean
+  tool?: string
+  state?: {
+    input?: unknown
+    title?: string
+    output?: string
+    error?: string
+    status?: string
+  }
+}
+
+interface HistoricalSessionMessage {
+  info: HistoricalMessageInfo
+  parts: HistoricalMessagePart[]
+}
+
+const IMPORT_SEED_MAX_BYTES = 50 * 1024
+const IMPORT_SEED_MAX_TURNS = 20
+const IMPORT_SEED_TOOL_INPUT_PREVIEW = 120
+
+/**
+ * Build the synthetic context blob seeded into an imported session.
+ *
+ * Keep recent top level text and small tool breadcrumbs. Drop raw tool output
+ * and sub-agent messages so the seed stays useful without flooding context.
+ */
+function buildImportContextBlob(input: {
+  sourceTitle: string
+  sourceDirectory: string
+  targetDirectory: string
+  messages: HistoricalSessionMessage[]
+}): string {
+  const { sourceTitle, sourceDirectory, targetDirectory, messages } = input
+
+  // Top level user message IDs are roots of conversation turns.
+  const topLevelUserIds = new Set<string>()
+  for (const m of messages) {
+    if (m.info.role === 'user') topLevelUserIds.add(m.info.id)
+  }
+
+  const isTopLevel = (m: HistoricalMessageInfo): boolean => {
+    if (m.role === 'user') return true
+    return !!m.parentID && topLevelUserIds.has(m.parentID)
+  }
+
+  const formatToolInput = (input: unknown): string => {
+    if (input == null) return ''
+    let s: string
+    try {
+      s = typeof input === 'string' ? input : JSON.stringify(input)
+    } catch {
+      return ''
+    }
+    s = s.replace(/\s+/g, ' ').trim()
+    return s.length > IMPORT_SEED_TOOL_INPUT_PREVIEW
+      ? s.slice(0, IMPORT_SEED_TOOL_INPUT_PREVIEW) + '...'
+      : s
+  }
+
+  const renderMessage = (m: HistoricalSessionMessage): string | null => {
+    const chunks: string[] = []
+    for (const p of m.parts) {
+      if (p.type === 'text') {
+        if (p.synthetic || p.ignored) continue
+        const t = p.text?.trim()
+        if (t) chunks.push(t)
+      } else if (p.type === 'tool' && m.info.role === 'assistant') {
+        // A breadcrumb is enough. Full tool output would drown the seed.
+        const status = p.state?.status ?? 'unknown'
+        const inputSummary = formatToolInput(p.state?.input)
+        const titleSummary = p.state?.title ? ` - ${p.state.title}` : ''
+        chunks.push(`[tool: ${p.tool ?? 'unknown'} (${status})${inputSummary ? ` ${inputSummary}` : ''}${titleSummary}]`)
+      }
+      // Skip reasoning, step-*, snapshot, patch, file, etc.
+    }
+    if (chunks.length === 0) return null
+    const label = m.info.role === 'user' ? '## User' : '## Assistant'
+    return `${label}\n\n${chunks.join('\n\n')}`
+  }
+
+  // Walk newest first, collect rendered turns until we hit caps, then reverse
+  // back into chronological order for the blob.
+  const collected: string[] = []
+  let bytesUsed = 0
+  for (let i = messages.length - 1; i >= 0 && collected.length < IMPORT_SEED_MAX_TURNS; i--) {
+    const m = messages[i]
+    if (!isTopLevel(m.info)) continue
+    const rendered = renderMessage(m)
+    if (!rendered) continue
+    const size = Buffer.byteLength(rendered, 'utf8') + 2
+    if (bytesUsed + size > IMPORT_SEED_MAX_BYTES) break
+    bytesUsed += size
+    collected.push(rendered)
+  }
+  collected.reverse()
+
+  const header = [
+    `# Imported session context`,
+    ``,
+    `You are resuming work from a prior session titled **${sourceTitle}**.`,
+    `The conversation below ran in **${sourceDirectory}**.`,
+    `This new session is in a different worktree: **${targetDirectory}**.`,
+    ``,
+    `File paths, tool outputs, and changes from the prior session do NOT carry`,
+    `over to this worktree. Use the prior conversation only as context for what`,
+    `the user was trying to accomplish; re-verify file paths and re-run any`,
+    `tools you need in this worktree.`,
+    ``
+  ].join('\n')
+
+  if (collected.length === 0) {
+    return header + '\n_(No prior conversation could be recovered.)_\n'
+  }
+
+  return header + '\n## Prior conversation\n\n' + collected.join('\n\n') + '\n'
+}
+
 export interface AgentHandle {
   id: string
   runtimeId: string
@@ -1105,32 +1247,144 @@ class AgentController {
   }
 
   /**
-   * Fork an existing session into a target directory.
-   * Creates a copy of the session's messages in the new directory context.
+   * Import a past OpenCode session into a fresh target directory.
+   *
+   * OpenCode's `session.fork` pins the new session to the source session's
+   * directory because the URL session ID overrides the request directory. That
+   * makes a fork into a new worktree run in the old worktree, with events on
+   * the old project's stream.
+   *
+   * Instead we replay: create a fresh session in `targetDirectory`, fetch the
+   * source's transcript, and seed the new session with a single synthetic
+   * `noReply` text part that summarises the prior conversation. The model picks
+   * up the context but actually works in the new worktree. Tool history is
+   * compressed to one-line breadcrumbs; large transcripts are clipped to the
+   * most recent turns.
    */
-  async forkSession(options: {
+  async importSession(options: {
     sourceSessionId: string
+    sourceDirectory: string
     targetDirectory: string
-  }): Promise<{ sessionId: string; title: string }> {
-    const { sourceSessionId, targetDirectory } = options
+    title?: string
+    model?: string
+    modelVariant?: string
+  }): Promise<AgentHandle> {
+    const { sourceSessionId, sourceDirectory, targetDirectory, title, model, modelVariant } = options
 
-    const runtime = await this.ensureBridgeForDirectory(targetDirectory)
-    runtimeManager.touchRuntimeActivity(runtime.id)
+    // Target runtime hosts the new session. Source runtime only reads the
+    // transcript. It may be the same runtime, but we do not rely on that.
+    const targetRuntime = await this.ensureBridgeForDirectory(targetDirectory)
+    const targetClient = targetRuntime.client
+    const directoryContext = workspaceManager.getDirectoryContext(targetDirectory)
+    runtimeManager.touchRuntimeActivity(targetRuntime.id)
 
-    const result = await runtime.client.session.fork({
-      sessionID: sourceSessionId,
-      directory: targetDirectory
+    // Fetch source transcript best effort. If this fails, still create the
+    // agent. An empty import is better than stranding a created worktree.
+    let sourceTitle: string | undefined
+    let sourceMessages: HistoricalSessionMessage[] = []
+    try {
+      const sourceRuntime = await this.ensureBridgeForDirectory(sourceDirectory)
+      runtimeManager.touchRuntimeActivity(sourceRuntime.id)
+      const sessionInfo = await sourceRuntime.client.session.get({
+        sessionID: sourceSessionId,
+        directory: sourceDirectory
+      })
+      sourceTitle = (sessionInfo.data as { title?: string } | undefined)?.title
+      const messagesResult = await sourceRuntime.client.session.messages({
+        sessionID: sourceSessionId,
+        directory: sourceDirectory
+      })
+      sourceMessages = (messagesResult.data as HistoricalSessionMessage[] | undefined) ?? []
+    } catch (error) {
+      console.warn(`[AgentController] importSession: failed to fetch source ${sourceSessionId}:`, error)
+    }
+
+    const sessionTitle = title?.trim() || getForkedTitle(sourceTitle ?? sourceSessionId)
+
+    // The agent lives in this target session, so events arrive on the target
+    // runtime's stream.
+    const created = await targetClient.session.create({
+      directory: targetDirectory,
+      title: sessionTitle
+    })
+    const newSession = created.data
+    if (!newSession) throw new Error('Failed to create imported session')
+
+    const modelOverride = model && model !== 'auto' ? parseModelString(model) : undefined
+    const variantOverride = modelVariant && modelVariant !== 'auto' ? modelVariant : undefined
+
+    const agentId = `agent-${this.nextId++}`
+    const handle: AgentHandle = {
+      id: agentId,
+      runtimeId: targetRuntime.id,
+      sessionId: newSession.id,
+      directory: targetDirectory,
+      projectName: directoryContext.repoName,
+      branchName: directoryContext.branchName,
+      isWorktree: directoryContext.isWorktree,
+      workspaceName: directoryContext.workspaceName,
+      prompt: '',
+      title: sessionTitle,
+      displayName: '',
+      taskSummary: '',
+      modelOverride,
+      variantOverride,
+      bridge: this.bridges.get(targetRuntime.id)!
+    }
+
+    this.agents.set(agentId, handle)
+    this.persistAgents()
+
+    if (handle.modelOverride) {
+      await targetClient.config.update({
+        directory: targetDirectory,
+        config: { model }
+      })
+    }
+
+    // Broadcast before seeding so the renderer can attach SSE events to this
+    // agent. This matches `launchAgent`.
+    this.broadcastToRenderer('agent:launched', {
+      id: agentId,
+      runtimeId: targetRuntime.id,
+      sessionId: newSession.id,
+      directory: targetDirectory,
+      projectName: handle.projectName,
+      branchName: handle.branchName,
+      isWorktree: handle.isWorktree,
+      workspaceName: handle.workspaceName,
+      prompt: '',
+      title: sessionTitle
     })
 
-    const session = result.data as { id: string; title?: string } | undefined
-    if (!session) {
-      throw new Error('Failed to fork session')
+    // Seed the new session with the prior conversation as a single synthetic
+    // `noReply` injects context without an assistant response. `synthetic`
+    // lets OpenCode and the renderer treat it as hidden context.
+    const seedText = buildImportContextBlob({
+      sourceTitle: sourceTitle ?? sourceSessionId,
+      sourceDirectory,
+      targetDirectory,
+      messages: sourceMessages
+    })
+
+    if (seedText) {
+      await handle.bridge.ensureStreaming()
+      try {
+        await targetClient.session.prompt({
+          sessionID: newSession.id,
+          directory: targetDirectory,
+          noReply: true,
+          parts: [{ type: 'text', text: seedText, synthetic: true }]
+        })
+      } catch (error) {
+        // Seeding is best effort. A fresh session without context still works.
+        console.warn(`[AgentController] importSession: seeding context failed for ${agentId}:`, error)
+      }
     }
 
-    return {
-      sessionId: session.id,
-      title: session.title ?? `fork-${sourceSessionId.slice(0, 8)}`
-    }
+    console.log(`[AgentController] Imported agent ${agentId} (session ${newSession.id}) from ${sourceSessionId} into ${targetDirectory}`)
+
+    return handle
   }
 
   /**
