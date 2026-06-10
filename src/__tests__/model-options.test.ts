@@ -1,9 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildOptionsFromProviders,
+  ensureProvidersLoaded,
+  invalidateProviderCache,
   resolveSystemDefaultLabel,
   type ProviderData,
 } from '../renderer/src/hooks/useModelOptions'
+
+afterEach(() => {
+  invalidateProviderCache()
+  vi.unstubAllGlobals()
+})
 
 describe('buildOptionsFromProviders', () => {
   it('always includes System Default as the first option', () => {
@@ -131,5 +138,32 @@ describe('resolveSystemDefaultLabel', () => {
   it('truncates long unknown model names via formatModelName', () => {
     expect(resolveSystemDefaultLabel('very-long-unknown-model-name', null))
       .toBe('System Default (very-long-unknow)')
+  })
+})
+
+describe('ensureProvidersLoaded', () => {
+  it('fetches system config fresh while reusing cached provider data', async () => {
+    const listAllProviders = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { providers: [] },
+    })
+    const getSystemConfig = vi.fn()
+      .mockResolvedValueOnce({ ok: true, data: { model: 'anthropic/claude-opus-4-7' } })
+      .mockResolvedValueOnce({ ok: true, data: { model: 'anthropic/claude-opus-4-8' } })
+
+    vi.stubGlobal('window', {
+      api: {
+        listAllProviders,
+        getSystemConfig,
+      },
+    })
+
+    const first = await ensureProvidersLoaded()
+    const second = await ensureProvidersLoaded()
+
+    expect(first.configModel).toBe('anthropic/claude-opus-4-7')
+    expect(second.configModel).toBe('anthropic/claude-opus-4-8')
+    expect(listAllProviders).toHaveBeenCalledOnce()
+    expect(getSystemConfig).toHaveBeenCalledTimes(2)
   })
 })

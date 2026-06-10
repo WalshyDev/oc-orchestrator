@@ -8,7 +8,7 @@ import type {
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
-import { ensureProvidersLoaded, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
+import { ensureProvidersLoaded, invalidateProviderCache, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
 
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
@@ -2963,6 +2963,12 @@ export function useAgentStore() {
           state.initializing = false
           emit({ agents: true })
         }
+      }),
+      // Runtime starts can expose new provider data; notify open model pickers
+      // to refresh against the latest config instead of staying frozen at boot.
+      window.api.onRuntimeStarted(() => {
+        invalidateProviderCache()
+        void ensureProvidersLoaded()
       }),
       // Backfill contextLimit for agents whose modelID was hydrated before the
       // provider fetch completed (common on cold start).

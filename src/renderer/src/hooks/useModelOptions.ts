@@ -172,23 +172,28 @@ export function resolveSystemDefaultLabel(
   return `System Default (${shortName})`
 }
 
-/**
- * Fetches model options dynamically from any active runtime.
- * Falls back to a static list if no runtimes are available.
- * Resolves the system default model name from the opencode config.
- */
-/**
- * Fetch providers + system config once and cache the results so repeated
- * callers (useModelOptions across multiple modals, the agent store's boot
- * backfill) share a single network call. The first call triggers the fetch;
- * subsequent calls during the same in-flight request await the same promise.
- */
+// Provider data is cached because it is relatively stable and feeds global
+// context-limit backfills. Config is fetched fresh so System Default does not
+// stay pinned to the model resolved when the app first started.
 interface ProviderFetchResult {
   providerData: ProviderData | null
   configModel: string | undefined
 }
 
-let providerFetchPromise: Promise<ProviderFetchResult> | null = null
+let providerFetchPromise: Promise<ProviderData | null> | null = null
+
+const configChangeObservers = new Set<() => void>()
+
+export function subscribeToConfigChanges(listener: () => void): () => void {
+  configChangeObservers.add(listener)
+  return () => configChangeObservers.delete(listener)
+}
+
+export function invalidateProviderCache(): void {
+  providerFetchPromise = null
+  resetProviderRetry()
+  for (const listener of configChangeObservers) listener()
+}
 
 // Automatic retry for the common race where ensureProvidersLoaded runs before
 // any runtime exists. We back off exponentially but cap at 5 seconds so we
@@ -216,15 +221,12 @@ function resetProviderRetry(): void {
   retryDelayMs = 500
 }
 
-export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
+function fetchProviderData(): Promise<ProviderData | null> {
   if (providerFetchPromise) return providerFetchPromise
 
   providerFetchPromise = (async () => {
     try {
-      const [providersResult, configResult] = await Promise.all([
-        window.api.listAllProviders(),
-        window.api.getSystemConfig(),
-      ])
+      const providersResult = await window.api.listAllProviders()
 
       const providerData = providersResult.ok && providersResult.data
         ? providersResult.data as ProviderData
@@ -243,21 +245,38 @@ export function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
         scheduleProviderRetry()
       }
 
-      const configModel = configResult.ok && configResult.data
-        ? (configResult.data as { model?: string }).model
-        : undefined
-
-      return { providerData, configModel }
+      return providerData
     } catch (err) {
       console.warn('[ensureProvidersLoaded] fetch failed', err)
       // Reset so a later caller can retry. Without this, a transient failure
       // would permanently disable provider-dependent features.
       providerFetchPromise = null
-      return { providerData: null, configModel: undefined }
+      return null
     }
   })()
 
   return providerFetchPromise
+}
+
+async function fetchConfigModel(): Promise<string | undefined> {
+  try {
+    const configResult = await window.api.getSystemConfig()
+    return configResult.ok && configResult.data
+      ? (configResult.data as { model?: string }).model
+      : undefined
+  } catch (err) {
+    console.warn('[ensureProvidersLoaded] config fetch failed', err)
+    return undefined
+  }
+}
+
+export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
+  const [providerData, configModel] = await Promise.all([
+    fetchProviderData(),
+    fetchConfigModel(),
+  ])
+
+  return { providerData, configModel }
 }
 
 export function useModelOptions(): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
@@ -268,26 +287,38 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean; p
 
   useEffect(() => {
     let cancelled = false
+    let requestSeq = 0
 
-    void ensureProvidersLoaded().then(({ providerData, configModel }) => {
-      if (cancelled) return
+    const load = (): void => {
+      const seq = ++requestSeq
+      void ensureProvidersLoaded().then(({ providerData, configModel }) => {
+        if (cancelled || seq !== requestSeq) return
 
-      let opts: ModelOption[]
-      if (providerData) {
-        const dynamicOptions = buildOptionsFromProviders(providerData)
-        opts = dynamicOptions.length > 1 ? dynamicOptions : [...STATIC_MODEL_OPTIONS]
-      } else {
-        opts = [...STATIC_MODEL_OPTIONS]
-      }
+        let opts: ModelOption[]
+        if (providerData) {
+          const dynamicOptions = buildOptionsFromProviders(providerData)
+          opts = dynamicOptions.length > 1 ? dynamicOptions : [...STATIC_MODEL_OPTIONS]
+        } else {
+          opts = [...STATIC_MODEL_OPTIONS]
+        }
 
-      opts[0] = { value: 'auto', label: resolveSystemDefaultLabel(configModel, providerData) }
-      setOptions(opts)
-      setProviderData(providerData)
-      setConfigModel(configModel)
-      setLoading(false)
-    })
+        opts[0] = { value: 'auto', label: resolveSystemDefaultLabel(configModel, providerData) }
+        setOptions(opts)
+        setProviderData(providerData)
+        setConfigModel(configModel)
+        setLoading(false)
+      })
+    }
 
-    return () => { cancelled = true }
+    load()
+    // Re-fetch when the cache is invalidated (e.g. a runtime restarts after a
+    // config change) so the System Default label reflects the current config.
+    const unsubscribe = subscribeToConfigChanges(load)
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [])
 
   return { options, loading, providerData, configModel }
