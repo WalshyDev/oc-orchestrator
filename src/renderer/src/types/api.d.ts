@@ -34,7 +34,14 @@ export interface OrchestratorApi {
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
   listSessionsByProject: (projectDirectory: string) => Promise<IpcResult<ProjectSessionEntry[]>>
-  forkSession: (options: { sourceSessionId: string; targetDirectory: string }) => Promise<IpcResult<{ sessionId: string; title: string }>>
+  importSession: (options: {
+    sourceSessionId: string
+    sourceDirectory: string
+    targetDirectory: string
+    title?: string
+    model?: string
+    modelVariant?: string
+  }) => Promise<IpcResult<{ id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string }>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   isAgentsRestored: () => Promise<IpcResult<boolean>>

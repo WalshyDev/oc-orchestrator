@@ -48,6 +48,8 @@ interface HistoricalMessagePart {
   id: string
   type: string
   text?: string
+  synthetic?: boolean
+  ignored?: boolean
   tool?: string
   state?: {
     status?: string
@@ -191,6 +193,10 @@ export interface LiveMessagePart {
    *  (not the parent), so the UI has to read from that bucket to show live
    *  output while the task runs. */
   childSessionId?: string
+  /** OpenCode-internal flag: text injected programmatically (e.g. our session
+   *  import seed, or OpenCode's own system reminders). The UI hides these from
+   *  the transcript and skips them when deriving the task summary / agent name. */
+  synthetic?: boolean
 }
 
 export interface FileChangeRecord {
@@ -815,6 +821,10 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
     id: part.id,
     type: part.type,
     text: part.text ?? part.reasoning ?? part.reason ?? part.snapshot
+  }
+
+  if (part.type === 'text' && (part as { synthetic?: boolean }).synthetic) {
+    nextPart.synthetic = true
   }
 
   if (part.type === 'tool') {
@@ -1484,6 +1494,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
         const partText = extractText()
 
+        const isSyntheticText = partType === 'text' && (part as { synthetic?: boolean }).synthetic === true
+
         // If the server's user-text part lands on a message we adopted from
         // an optimistic placeholder, replace the placeholder part instead of
         // appending — otherwise the bubble would show the prompt twice.
@@ -1493,7 +1505,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
             message.parts[optimisticIdx] = {
               id: partId,
               type: partType,
-              text: partText
+              text: partText,
+              ...(isSyntheticText && { synthetic: true })
             }
             // Skip the normal upsert path below — we've already placed the part.
             let agentChanged = false
@@ -1504,7 +1517,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
                 agent.status = 'running'
                 agent.blockedSince = undefined
               }
-              if (partText && partText.length > 0) {
+              // Synthetic text (e.g. import seed) must not seed the task summary
+              // or auto-name — it's a system-injected context dump, not a user
+              // prompt. The next real user prompt should win those slots.
+              if (partText && partText.length > 0 && !isSyntheticText) {
                 if (!taskSummaryLocked.has(agent.id)) {
                   agent.taskSummary = partText.slice(0, 120)
                 }
@@ -1523,6 +1539,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
         if (existingPart) {
           existingPart.text = partText
+          if (isSyntheticText) existingPart.synthetic = true
           if (partType === 'tool') {
             existingPart.toolState = getToolState(toolState)
             existingPart.toolInput = stringifyToolInput(toolState?.input)
@@ -1539,6 +1556,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
             type: partType,
             text: partText
           }
+          if (isSyntheticText) newPart.synthetic = true
           if (partType === 'tool') {
             newPart.toolName = part.tool as string | undefined
             newPart.toolState = getToolState(toolState)
@@ -1585,8 +1603,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
 
           // Update task summary from first user text part, unless an override
-          // label is active (e.g. "Create PR" or a slash command).
-          if (message.role === 'user' && partType === 'text' && part.text) {
+          // label is active (e.g. "Create PR" or a slash command). Synthetic
+          // text (import seed, system reminders) doesn't count — it isn't a
+          // user-authored prompt.
+          if (message.role === 'user' && partType === 'text' && part.text && !isSyntheticText) {
             const text = part.text as string
             if (text.length > 0) {
               if (!taskSummaryLocked.has(agent.id)) {

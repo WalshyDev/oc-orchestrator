@@ -21,6 +21,9 @@ export interface FreshWorktreeConfig {
 export interface ImportSessionConfig {
   sessionId: string
   sessionTitle: string
+  /** The directory the source session was originally created in. Needed so the
+   *  backend can fetch the source transcript from the right project. */
+  sourceDirectory: string
 }
 
 function sanitizePathSegment(value: string, fallback: string): string {
@@ -472,7 +475,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const importConfig: ImportSessionConfig | undefined =
         activeTab === 'import' && selectedSession
-          ? { sessionId: selectedSession.id, sessionTitle: selectedSession.title }
+          ? {
+              sessionId: selectedSession.id,
+              sessionTitle: selectedSession.title,
+              sourceDirectory: selectedSession.directory
+            }
           : undefined
 
       const effectiveTitle = activeTab === 'import'

@@ -13,6 +13,28 @@ interface Attachment {
   filename?: string
 }
 
+interface ImportSessionOptions {
+  sourceSessionId: string
+  sourceDirectory: string
+  targetDirectory: string
+  title?: string
+  model?: string
+  modelVariant?: string
+}
+
+interface AgentPayload {
+  id: string
+  runtimeId: string
+  sessionId: string
+  directory: string
+  projectName: string
+  branchName: string
+  isWorktree: boolean
+  workspaceName: string
+  prompt: string
+  title: string
+}
+
 const api = {
   // ── Agent Operations ──
   launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: Attachment[] }): Promise<IpcResult> =>
@@ -81,8 +103,8 @@ const api = {
   listSessionsByProject: (projectDirectory: string): Promise<IpcResult<Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }>>> =>
     ipcRenderer.invoke('session:list-by-project', projectDirectory),
 
-  forkSession: (options: { sourceSessionId: string; targetDirectory: string }): Promise<IpcResult<{ sessionId: string; title: string }>> =>
-    ipcRenderer.invoke('session:fork', options),
+  importSession: (options: ImportSessionOptions): Promise<IpcResult<AgentPayload>> =>
+    ipcRenderer.invoke('session:import', options),
 
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:resume', options),
