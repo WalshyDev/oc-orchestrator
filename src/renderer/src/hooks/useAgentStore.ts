@@ -2571,15 +2571,24 @@ function bumpParentActivityForChildSession(sessionId: string): void {
   if (parent) parent.lastActivityAt = Date.now()
 }
 
-/** Returns true when any tool part in the agent's transcript has a
- *  childSessionId and has not reached a terminal state. */
-function hasInFlightSubAgent(sessionId: string): boolean {
+/** Returns true when any tool part in the agent's transcript has not reached a
+ *  terminal state — i.e. a tool call is still running.
+ *
+ *  This covers two cases the stalled-watchdog must not flag:
+ *   1. A `task` sub-agent (high-reasoning runs go silent for minutes, and the
+ *      child sessionId metadata can lag, so a childSessionId-only check misses
+ *      the early window).
+ *   2. Any other long-running tool (e.g. a slow bash command) where the parent
+ *      session is legitimately waiting and emits no activity.
+ *
+ *  When a tool is in flight the model isn't hanging — it's blocked on the tool —
+ *  so the "provider overloaded" watchdog does not apply. */
+function hasInFlightToolCall(sessionId: string): boolean {
   const messages = state.messages.get(sessionId)
   if (!messages) return false
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type !== 'tool') continue
-      if (!part.childSessionId) continue
       if (TERMINAL_TOOL_STATES.has(part.toolState ?? '')) continue
       return true
     }
@@ -3020,7 +3029,7 @@ export function useAgentStore() {
     // terminal events, etc.). Without this, agents can appear stuck in 'running'
     // indefinitely when the SSE stream misses a session.idle/completed/error event.
     const RECONCILE_INTERVAL_MS = 30_000
-    const STALLED_TIMEOUT_MS = 5 * 60_000 // 5 minutes without activity → attention
+    const STALLED_TIMEOUT_MS = 10 * 60_000 // 10 minutes without activity → attention
     const reconcileInterval = setInterval(async () => {
       if (cancelled || !window.api) return
       try {
@@ -3054,17 +3063,18 @@ export function useAgentStore() {
         let changed = false
         for (const agent of state.agents.values()) {
           if (agent.status !== 'running') continue
-          // Skip when a sub-agent (task tool) is still in flight. The parent's
-          // own session goes silent for the duration of the child call, so
-          // lastActivityAt alone would falsely flag long-running reviews or
-          // CI watchers as stalled.
-          if (hasInFlightSubAgent(agent.sessionId)) continue
+          // Skip when any tool call (including a `task` sub-agent) is still in
+          // flight. The parent's own session goes silent for the duration of
+          // the tool call — a high-reasoning sub-agent can think for minutes
+          // with no streaming events — so lastActivityAt alone would falsely
+          // flag long-running reviews, CI watchers, or slow tools as stalled.
+          if (hasInFlightToolCall(agent.sessionId)) continue
           const last = agent.lastActivityAt ?? 0
           if (last > 0 && now - last >= STALLED_TIMEOUT_MS) {
             // Only flip once; if already blocked, leave as-is
             agent.lastError = agent.lastError ?? {
               name: 'StalledResponse',
-              message: 'No update from provider for 5 minutes — model may be overloaded or network is unstable. Try again or switch models.',
+              message: 'No update from provider for 10 minutes — model may be overloaded or network is unstable. Try again or switch models.',
               sessionId: agent.sessionId,
               occurredAt: now
             }
