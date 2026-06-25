@@ -7,10 +7,9 @@ import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOpt
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { LabelDefinition, LabelColorKey } from '../types'
-import type { Project, MessageAttachment, ProjectSessionEntry } from '../types/api'
+import type { Project, MessageAttachment, ProjectSessionEntry, WorktreeStrategy } from '../types/api'
 import type { ChatCommand, AgentConfigItem } from './DetailDrawer'
 
-type WorktreeStrategy = 'new-worktree' | 'current-directory'
 type ModalTab = 'new' | 'import'
 
 export interface FreshWorktreeConfig {
@@ -373,7 +372,13 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         if (cancelled) return
         const repoRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
         const matchedProject = savedProjects.find((p) => p.repo_root === repoRoot)
+        const savedWorktreeStrategy = matchedProject?.worktree_strategy
         setFreshWorktree(!!matchedProject?.fresh_worktree)
+        if (savedWorktreeStrategy === 'current-directory' || savedWorktreeStrategy === 'new-worktree') {
+          setWorktreeStrategy(savedWorktreeStrategy)
+        } else {
+          setWorktreeStrategy('new-worktree')
+        }
         if (matchedProject?.default_branch) { setBaseBranch(matchedProject.default_branch); return }
         const branchResult = await window.api.getDefaultBranch(repoRoot)
         if (cancelled) return
@@ -451,7 +456,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       if (!ensureResult.ok) console.warn('Failed to ensure project:', ensureResult.error)
       const settingsResult = await window.api.updateProjectSettings({
         repoRoot: canonicalRoot,
-        settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null }
+        settings: { fresh_worktree: freshWorktree, default_branch: baseBranch || null, worktree_strategy: worktreeStrategy }
       })
       if (!settingsResult.ok) console.warn('Failed to persist worktree settings:', settingsResult.error)
       await window.api.setPreference('launch:last-directory', canonicalRoot)
