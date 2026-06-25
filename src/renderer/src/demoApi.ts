@@ -356,10 +356,10 @@ export function createDemoApi(): OrchestratorApi {
 
     // ── Database: Projects ──
     listProjects: () => ok([]),
-    createProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
-    ensureProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
+    createProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, worktree_strategy: null, created_at: '', updated_at: '' }),
+    ensureProject: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, worktree_strategy: null, created_at: '', updated_at: '' }),
     deleteProject: () => ok(true),
-    updateProjectSettings: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, created_at: '', updated_at: '' }),
+    updateProjectSettings: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, worktree_strategy: null, created_at: '', updated_at: '' }),
 
     // ── Database: Custom Labels ──
     listCustomLabels: () => ok([]),

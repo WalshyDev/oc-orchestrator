@@ -1,3 +1,7 @@
+import type { ProjectSettings, WorktreeStrategy } from '../../../shared/project'
+
+export type { ProjectSettings, WorktreeStrategy }
+
 export interface IpcResult<T = unknown> {
   ok: boolean
   data?: T
@@ -83,7 +87,7 @@ export interface OrchestratorApi {
   createProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   ensureProject: (options: { name: string; repoRoot: string }) => Promise<IpcResult<Project>>
   deleteProject: (projectId: string) => Promise<IpcResult<boolean>>
-  updateProjectSettings: (options: { repoRoot: string; settings: { default_branch?: string | null; fresh_worktree?: boolean } }) => Promise<IpcResult<Project>>
+  updateProjectSettings: (options: { repoRoot: string; settings: ProjectSettings }) => Promise<IpcResult<Project>>
 
   // ── Database: Custom Labels ──
   listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
@@ -192,6 +196,7 @@ export interface Project {
   repo_root: string
   default_branch: string | null
   fresh_worktree: number
+  worktree_strategy: WorktreeStrategy | null
   created_at: string
   updated_at: string
 }

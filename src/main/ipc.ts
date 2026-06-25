@@ -5,6 +5,7 @@ import { agentController, type AgentHandle } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager, FileWriteConflictError } from './services/workspace-manager'
 import { database } from './services/database'
+import { isWorktreeStrategy, type ProjectSettings } from '../shared/project'
 import { notificationService, type NotifiableEventType } from './services/notification-service'
 import { subscribeFileChanges, unsubscribeFileChanges } from './services/file-watcher'
 import { getAppVersion } from './version'
@@ -789,9 +790,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('db:projects:update-settings', async (_event, options: {
     repoRoot: string
-    settings: { default_branch?: string | null; fresh_worktree?: boolean }
+    settings: ProjectSettings
   }) => {
     try {
+      const strategy = options.settings.worktree_strategy
+      if (strategy !== undefined && strategy !== null && !isWorktreeStrategy(strategy)) {
+        return { ok: false, error: `Invalid worktree strategy: ${strategy}` }
+      }
+
       const project = database.updateProjectSettings(options.repoRoot, options.settings)
       if (!project) {
         return { ok: false, error: `No project found for repo root: ${options.repoRoot}` }

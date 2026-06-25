@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ProjectSettings } from '../shared/project'
 
 export interface IpcResult<T = unknown> {
   ok: boolean
@@ -232,7 +233,7 @@ const api = {
   deleteProject: (projectId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:delete', projectId),
 
-  updateProjectSettings: (options: { repoRoot: string; settings: { default_branch?: string | null; fresh_worktree?: boolean } }): Promise<IpcResult> =>
+  updateProjectSettings: (options: { repoRoot: string; settings: ProjectSettings }): Promise<IpcResult> =>
     ipcRenderer.invoke('db:projects:update-settings', options),
 
   // ── Database: Preferences ──

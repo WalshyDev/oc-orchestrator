@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomUUID } from 'crypto'
+import type { ProjectSettings, WorktreeStrategy } from '../../shared/project'
 
 export interface Project {
   id: string
@@ -10,6 +11,7 @@ export interface Project {
   repo_root: string
   default_branch: string | null
   fresh_worktree: number
+  worktree_strategy: WorktreeStrategy | null
   created_at: string
   updated_at: string
 }
@@ -188,6 +190,7 @@ class Database {
     // Add per-project worktree settings columns (safe to re-run)
     this.addColumnIfMissing('projects', 'default_branch', 'TEXT')
     this.addColumnIfMissing('projects', 'fresh_worktree', 'INTEGER DEFAULT 0')
+    this.addColumnIfMissing('projects', 'worktree_strategy', 'TEXT')
 
     saveToDisk()
   }
@@ -275,17 +278,18 @@ class Database {
     return this.createProject(name, repoRoot)
   }
 
-  updateProjectSettings(repoRoot: string, settings: { default_branch?: string | null; fresh_worktree?: boolean }): Project | undefined {
+  updateProjectSettings(repoRoot: string, settings: ProjectSettings): Project | undefined {
     const project = this.getProjectByRepoRoot(repoRoot)
     if (!project) return undefined
 
     const now = new Date().toISOString()
     const branch = settings.default_branch !== undefined ? settings.default_branch : project.default_branch
     const fresh = settings.fresh_worktree !== undefined ? (settings.fresh_worktree ? 1 : 0) : project.fresh_worktree
+    const strategy = settings.worktree_strategy !== undefined ? settings.worktree_strategy : project.worktree_strategy
 
     this.execute(
-      'UPDATE projects SET default_branch = ?, fresh_worktree = ?, updated_at = ? WHERE id = ?',
-      [branch, fresh, now, project.id]
+      'UPDATE projects SET default_branch = ?, fresh_worktree = ?, worktree_strategy = ?, updated_at = ? WHERE id = ?',
+      [branch, fresh, strategy, now, project.id]
     )
     return this.getProject(project.id)
   }
