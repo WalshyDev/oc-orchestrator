@@ -23,7 +23,7 @@ export interface QuickAction {
   prompt: string
 }
 
-export const MAX_QUICK_ACTIONS = 7
+export const MAX_QUICK_ACTIONS = 12
 
 export type QuickActionSlots = (QuickAction | null)[]
 
@@ -118,6 +118,33 @@ export function loadSettings(): AppSettings {
 
 export function isQuickActionValid(qa: QuickAction): boolean {
   return Boolean(qa.label?.trim() && qa.prompt?.trim())
+}
+
+export function calculateQuickActionPlaceholderCount(
+  containerWidth: number,
+  itemWidths: number[],
+  placeholderWidth: number,
+  gap: number,
+  maxCount: number,
+): number {
+  if (containerWidth <= 0 || placeholderWidth <= 0 || maxCount <= 0) return 0
+
+  const occupiedWidth = itemWidths.reduce((total, width) => total + width, 0)
+    + Math.max(0, itemWidths.length - 1) * gap
+  const availableWidth = containerWidth - occupiedWidth + (itemWidths.length === 0 ? gap : 0)
+
+  return Math.max(0, Math.min(maxCount, Math.floor(availableWidth / (placeholderWidth + gap))))
+}
+
+export function getVisibleEmptyQuickActionSlotIndexes(
+  quickActions: QuickActionSlots,
+  visibleCount: number,
+): Set<number> {
+  const indexes = new Set<number>()
+  for (let index = 0; index < quickActions.length && indexes.size < visibleCount; index += 1) {
+    if (quickActions[index] === null) indexes.add(index)
+  }
+  return indexes
 }
 
 const EDITOR_DISPLAY_LABELS: Record<string, string> = {

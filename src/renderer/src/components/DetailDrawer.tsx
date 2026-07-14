@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   X,
   Check,
@@ -31,7 +31,16 @@ import {
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
-import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
+import {
+  calculateQuickActionPlaceholderCount,
+  getVisibleEmptyQuickActionSlotIndexes,
+  loadSettings,
+  MAX_QUICK_ACTIONS,
+  SETTINGS_CHANGED_EVENT,
+  isQuickActionValid,
+  type QuickAction,
+  type QuickActionIcon,
+} from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
 import { StatusBadge } from './StatusBadge'
@@ -60,6 +69,8 @@ const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'paper-plane': PaperPlaneTilt,
   'wrench': Wrench,
 }
+
+const quickActionPlaceholderClass = 'flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed whitespace-nowrap border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors'
 
 const DRAWER_WIDTH_KEY = 'oc-orchestrator:drawer-width'
 const DEFAULT_DRAWER_WIDTH = 600
@@ -309,6 +320,9 @@ export const DetailDrawer = memo(function DetailDrawer({
   // Settings: reactive to changes from SettingsModal
   const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
   const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
+  const [visibleEmptyQuickActionCount, setVisibleEmptyQuickActionCount] = useState(MAX_QUICK_ACTIONS)
+  const actionRailRef = useRef<HTMLDivElement>(null)
+  const quickActionPlaceholderProbeRef = useRef<HTMLButtonElement>(null)
   const editorLabel = useEditorLabel()
   useEffect(() => {
     const onSettingsChanged = () => {
@@ -319,6 +333,43 @@ export const DetailDrawer = memo(function DetailDrawer({
     window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
     return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
   }, [])
+  useLayoutEffect(() => {
+    if (activeTab !== 'transcript') return
+
+    const actionRail = actionRailRef.current
+    const placeholderProbe = quickActionPlaceholderProbeRef.current
+    if (!actionRail || !placeholderProbe) return
+
+    const updateVisibleEmptyQuickActions = () => {
+      const styles = window.getComputedStyle(actionRail)
+      const contentWidth = actionRail.clientWidth
+        - (Number.parseFloat(styles.paddingLeft) || 0)
+        - (Number.parseFloat(styles.paddingRight) || 0)
+      const gap = Number.parseFloat(styles.columnGap) || 0
+      const itemWidths = Array.from(actionRail.querySelectorAll<HTMLElement>('[data-action-rail-item]'))
+        .map((item) => item.getBoundingClientRect().width)
+      const emptySlotCount = quickActions.filter((qa) => qa === null).length
+
+      setVisibleEmptyQuickActionCount(calculateQuickActionPlaceholderCount(
+        contentWidth,
+        itemWidths,
+        placeholderProbe.getBoundingClientRect().width,
+        gap,
+        emptySlotCount,
+      ))
+    }
+
+    updateVisibleEmptyQuickActions()
+    const observer = new ResizeObserver(updateVisibleEmptyQuickActions)
+    observer.observe(actionRail)
+    observer.observe(placeholderProbe)
+    actionRail.querySelectorAll<HTMLElement>('[data-action-rail-item]').forEach((item) => observer.observe(item))
+    return () => observer.disconnect()
+  }, [activeTab, onApprove, onApproveAlways, onDeny, quickActions])
+  const visibleEmptyQuickActionIndexes = useMemo(
+    () => getVisibleEmptyQuickActionSlotIndexes(quickActions, visibleEmptyQuickActionCount),
+    [quickActions, visibleEmptyQuickActionCount],
+  )
   const {
     attachments, isDragOver, fileInputRef,
     removeAttachment, clearAttachments,
@@ -1062,10 +1113,8 @@ export const DetailDrawer = memo(function DetailDrawer({
           <div className="h-px w-8 rounded-full bg-kumo-subtle/30 group-hover:bg-kumo-brand/50 transition-colors" />
         </div>
 
-        {/* Bottom pane — action rail + input, resizable height */}
-        <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
         {/* Action Rail */}
-        <div className="flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
+        <div ref={actionRailRef} className="relative flex flex-wrap gap-1 items-center px-3 py-1.5 border-t border-kumo-line shrink-0">
           {onApprove && (
             <ActionButton icon={<Check size={12} weight="bold" />} label="Approve Once" variant="approve" onClick={onApprove} />
           )}
@@ -1086,12 +1135,14 @@ export const DetailDrawer = memo(function DetailDrawer({
                 />
               )
             }
+            if (!qa && !visibleEmptyQuickActionIndexes.has(i)) return null
             return (
               <button
                 key={`placeholder-${i}`}
                 type="button"
                 onClick={onOpenQuickActionSettings}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-dashed whitespace-nowrap border-kumo-line text-kumo-subtle/50 hover:border-kumo-subtle hover:text-kumo-subtle transition-colors"
+                data-action-rail-item={qa ? true : undefined}
+                className={quickActionPlaceholderClass}
                 title="Configure in Settings → Quick Actions"
               >
                 <Plus size={10} />
@@ -1099,7 +1150,21 @@ export const DetailDrawer = memo(function DetailDrawer({
               </button>
             )
           })}
+          <button
+            ref={quickActionPlaceholderProbeRef}
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            className={`absolute invisible pointer-events-none ${quickActionPlaceholderClass}`}
+          >
+            <Plus size={10} />
+            Custom
+          </button>
         </div>
+
+        {/* Resizable composer pane. The action rail stays outside this height so
+            additional configured actions cannot collapse the message input. */}
+        <div style={{ height: inputHeight }} className="shrink-0 flex flex-col min-h-0">
 
         {/* Status banner — shows compaction in progress or a session-level error. */}
         <StatusBanner
@@ -2185,6 +2250,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
+      data-action-rail-item
       className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border whitespace-nowrap transition-colors ${styles[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${extraClass ?? ''}`}
     >
       {icon}
