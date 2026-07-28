@@ -96,6 +96,9 @@ export interface AgentRuntime {
   contextLimit?: number
   /** Spike: folder this agent belongs to. Undefined or empty = top level. */
   folderId?: string
+  /** Placeholder row for a launch that main hasn't acknowledged yet. It has no
+   *  session, so row actions other than dismissal are unavailable. */
+  pending?: boolean
 }
 
 /**

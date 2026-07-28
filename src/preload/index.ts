@@ -21,6 +21,7 @@ interface ImportSessionOptions {
   title?: string
   model?: string
   modelVariant?: string
+  launchId?: string
 }
 
 interface AgentPayload {
@@ -38,7 +39,7 @@ interface AgentPayload {
 
 const api = {
   // ── Agent Operations ──
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: Attachment[] }): Promise<IpcResult> =>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: Attachment[]; launchId?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:launch', options),
 
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: Attachment[]): Promise<IpcResult> =>
@@ -302,7 +303,7 @@ const api = {
     return () => ipcRenderer.removeListener('opencode:event', handler)
   },
 
-  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string }) => void) => {
+  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string; launchId?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('agent:launched', handler)
     return () => ipcRenderer.removeListener('agent:launched', handler)

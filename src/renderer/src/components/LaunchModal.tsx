@@ -447,7 +447,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   // Project dropdown outside-click handling is delegated to PortaledMenu.
 
-  const persistProjectSettings = async (dir: string) => {
+  /**
+   * `refreshList` is skipped when launching — the modal is already unmounting,
+   * so reloading the project dropdown would only set state on a dead component.
+   */
+  const persistProjectSettings = async (dir: string, refreshList = true) => {
     try {
       const repoRootResult = await window.api.getRepoRoot(dir)
       const canonicalRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
@@ -460,14 +464,19 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       })
       if (!settingsResult.ok) console.warn('Failed to persist worktree settings:', settingsResult.error)
       await window.api.setPreference('launch:last-directory', canonicalRoot)
-      await loadProjects()
+      if (refreshList) await loadProjects()
     } catch (err) {
       console.warn('Failed to persist project settings:', err)
     }
   }
 
-  const handleLaunch = async () => {
-    if (!directory.trim() || dirError || validating) return
+  /**
+   * Closes the modal as soon as the launch is handed off. The launch itself
+   * takes seconds on a cold runtime; the fleet table shows a placeholder row
+   * for it in the meantime, and reports any failure there.
+   */
+  const handleLaunch = () => {
+    if (!directory.trim() || dirError || validating || launching) return
     if (activeTab === 'import' && !selectedSession) return
     setLaunching(true)
     try {
@@ -487,9 +496,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             }
           : undefined
 
+      // Trimmed: main keeps a whitespace-only title verbatim, which would name
+      // the agent with a run of spaces.
       const effectiveTitle = activeTab === 'import'
         ? (importName.trim() || selectedSession?.title || undefined)
-        : (title || undefined)
+        : (title.trim() || undefined)
 
       const effectivePrompt = activeTab === 'import'
         ? (importPrompt.trim() || undefined)
@@ -501,9 +512,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
-      await persistProjectSettings(directory.trim())
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
-      await onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      void persistProjectSettings(directory.trim(), false)
 
       clearAttachments()
       onClose()

@@ -9,6 +9,7 @@ import { isWorktreeStrategy, type ProjectSettings } from '../shared/project'
 import { notificationService, type NotifiableEventType } from './services/notification-service'
 import { subscribeFileChanges, unsubscribeFileChanges } from './services/file-watcher'
 import { getAppVersion } from './version'
+import { buildTerminalTabScript } from './terminal'
 
 interface Attachment {
   id?: string
@@ -89,6 +90,7 @@ export function registerIpcHandlers(): void {
     model?: string
     modelVariant?: string
     attachments?: Attachment[]
+    launchId?: string
   }) => {
     try {
       const handle = await agentController.launchAgent(options)
@@ -370,6 +372,7 @@ export function registerIpcHandlers(): void {
     title?: string
     model?: string
     modelVariant?: string
+    launchId?: string
   }) => {
     try {
       const handle = await agentController.importSession(options)
@@ -993,13 +996,25 @@ export function registerIpcHandlers(): void {
     try {
       const terminal = options.terminal || 'default'
 
-      if (process.platform === 'darwin') {
-        const app = terminal === 'default' ? 'Terminal' : terminal
-        await run('open', ['-a', app, options.path])
-      } else {
+      if (process.platform !== 'darwin') {
         await run('xdg-open', [options.path])
+        return { ok: true }
       }
 
+      const app = terminal === 'default' ? 'Terminal' : terminal
+
+      if (app === 'Terminal') {
+        try {
+          await run('osascript', ['-e', buildTerminalTabScript(options.path)])
+          return { ok: true }
+        } catch (error) {
+          // Most likely Accessibility permission is not granted yet. A new
+          // window still beats doing nothing.
+          console.warn('[ipc] Terminal.app tab failed, opening a window instead:', error)
+        }
+      }
+
+      await run('open', ['-a', app, options.path])
       return { ok: true }
     } catch (error) {
       logIpcError('shell:open-terminal', error)

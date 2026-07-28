@@ -6,6 +6,7 @@ import { notificationService, type NotifiableEventType } from './notification-se
 import { database } from './database'
 import { workspaceManager } from './workspace-manager'
 import { leaseRegistry } from './lease-registry'
+import { getForkedTitle } from '../../shared/project'
 
 interface Attachment {
   id?: string
@@ -70,17 +71,6 @@ function sanitizeSlug(value: string, fallback: string): string {
     .slice(0, 50)
 
   return sanitized || fallback
-}
-
-/** Match OpenCode's fork title style so imported sessions stay easy to scan. */
-function getForkedTitle(title: string): string {
-  const match = title.match(/^(.*?)\s*\(fork(?:\s*#(\d+))?\)\s*$/)
-  if (match) {
-    const base = match[1].trim()
-    const num = match[2] ? parseInt(match[2], 10) + 1 : 2
-    return `${base} (fork #${num})`
-  }
-  return `${title} (fork)`
 }
 
 /** Subset of OpenCode's session.messages response used for import seeding. */
@@ -331,8 +321,11 @@ class AgentController {
     model?: string
     modelVariant?: string
     attachments?: Attachment[]
+    /** Renderer-generated correlation id. Echoed back on `agent:launched` so the
+     *  renderer can retire the optimistic placeholder row it created up front. */
+    launchId?: string
   }): Promise<AgentHandle> {
-    const { directory, prompt, title, model, modelVariant, attachments } = options
+    const { directory, prompt, title, model, modelVariant, attachments, launchId } = options
 
     // Ensure we have a runtime for this directory
     const runtime = await this.ensureBridgeForDirectory(directory)
@@ -405,7 +398,8 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: prompt ?? '',
-      title: sessionTitle
+      title: sessionTitle,
+      launchId
     })
 
     // Only send the initial prompt if one was provided
@@ -1268,8 +1262,10 @@ class AgentController {
     title?: string
     model?: string
     modelVariant?: string
+    /** Renderer-generated correlation id. See `launchAgent`. */
+    launchId?: string
   }): Promise<AgentHandle> {
-    const { sourceSessionId, sourceDirectory, targetDirectory, title, model, modelVariant } = options
+    const { sourceSessionId, sourceDirectory, targetDirectory, title, model, modelVariant, launchId } = options
 
     // Target runtime hosts the new session. Source runtime only reads the
     // transcript. It may be the same runtime, but we do not rely on that.
@@ -1354,7 +1350,8 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: '',
-      title: sessionTitle
+      title: sessionTitle,
+      launchId
     })
 
     // Seed the new session with the prior conversation as a single synthetic

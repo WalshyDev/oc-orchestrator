@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { TopBar } from './components/TopBar'
 import { InterruptBanner } from './components/InterruptBanner'
 import { FilterBar, matchesFilter, EMPTY_FILTER, cycleFilter, loadPersistedFilter, persistFilter, loadPersistedSearch, persistSearch, type FilterState, type StatusFilter } from './components/FilterBar'
@@ -10,6 +10,7 @@ import { SessionBrowser } from './components/SessionBrowser'
 import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
 import { CommandPalette } from './components/CommandPalette'
 import { ModelPickerModal } from './components/ModelPickerModal'
+import { getForkedTitle } from '../../shared/project'
 import { McpModal } from './components/McpModal'
 import { WorkspaceView } from './components/WorkspaceView'
 import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
@@ -147,6 +148,13 @@ export function App() {
       setDrawerScrollRequest(null)
     }
   }, [])
+  // A launch settles long after the render that started it, so it must not yank
+  // the drawer away from an agent the user has since clicked into. Counts
+  // selection changes rather than comparing ids: A→B→A is still a deliberate
+  // choice, and an id comparison would read it as untouched.
+  const selectionEpochRef = useRef(0)
+  useEffect(() => { selectionEpochRef.current += 1 }, [selectedAgentId])
+
   const [showLaunchModal, setShowLaunchModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>('general')
@@ -436,7 +444,8 @@ export function App() {
         } : undefined,
         compacting: agent.compacting,
         contextTokens: agent.contextTokens,
-        contextLimit: agent.contextLimit
+        contextLimit: agent.contextLimit,
+        pending: agent.pending
       }
     })
   }, [store.agents, tick, getMessagesForSession])
@@ -569,6 +578,17 @@ export function App() {
 
     return agents
   }, [displayAgents, filter, searchQuery, sortColumn, sortDirection])
+
+  /**
+   * Rows that can actually be opened. Placeholder launches have no session, so
+   * selecting one would open an empty drawer and fire per-agent IPC against an
+   * id main has never seen. FleetTable blocks clicking them; this list keeps
+   * keyboard navigation and the command palette in step.
+   */
+  const selectableAgents = useMemo(
+    () => filteredAgents.filter((agent) => !agent.pending),
+    [filteredAgents]
+  )
 
   // Look up in displayAgents first (preferred — includes latest derived fields),
   // but fall back to the full unfiltered list so notification-driven navigation
@@ -780,6 +800,13 @@ export function App() {
     [store.agents]
   )
 
+  /** Worktree/repo path for the drawer. Only live agents have one — demo-mode
+   *  agents exist solely as AgentRuntime rows. */
+  const selectedWorkspacePath = useMemo(
+    () => (selectedAgentId ? findLiveAgent(selectedAgentId)?.directory : undefined),
+    [selectedAgentId, findLiveAgent]
+  )
+
   // ── Helper: find permission for agent ──
   const findPermissionForAgent = useCallback(
     (agentId: string) => {
@@ -841,11 +868,15 @@ export function App() {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
 
-    const confirmMessage = liveAgent.isWorktree
-      ? `Remove ${liveAgent.name}? This will clean up the worktree and remove the agent from the UI.`
-      : `Remove ${liveAgent.name} from the UI?`
+    // Confirming a placeholder's removal would be asking about an agent that
+    // never existed. Any worktree it did create is cleaned up by the store.
+    if (!liveAgent.pending) {
+      const confirmMessage = liveAgent.isWorktree
+        ? `Remove ${liveAgent.name}? This will clean up the worktree and remove the agent from the UI.`
+        : `Remove ${liveAgent.name} from the UI?`
 
-    if (!window.confirm(confirmMessage)) return
+      if (!window.confirm(confirmMessage)) return
+    }
 
     storeRemoveAgent(agentId)
 
@@ -1142,7 +1173,14 @@ Then give me a brief summary of what the previous session was working on and whe
   }, [findLiveAgent])
 
   // ── Launch modal actions ──
-  const handleLaunch = useCallback(async (
+  /**
+   * Runs a launch to completion. Cold launches spend seconds spawning a runtime
+   * and creating a worktree, so this never blocks the modal — the caller kicks
+   * it off against an already-visible placeholder row (`launchId`) and failures
+   * land on that row instead of propagating.
+   */
+  const runLaunch = useCallback(async (
+    launchId: string,
     directory: string,
     prompt?: string,
     title?: string,
@@ -1155,6 +1193,12 @@ Then give me a brief summary of what the previous session was working on and whe
     labelIds?: string[]
   ) => {
     let launchDirectory = directory
+    // Auto-selecting the new agent is only welcome if the user hasn't moved on
+    // while the launch ran.
+    const epochAtStart = selectionEpochRef.current
+    const selectNewAgent = (agentId: string): void => {
+      if (selectionEpochRef.current === epochAtStart) setSelectedAgentId(agentId)
+    }
 
     if (worktreeStrategy === 'new-worktree') {
       const repoRootResult = await window.api.getRepoRoot(directory)
@@ -1185,6 +1229,9 @@ Then give me a brief summary of what the previous session was working on and whe
       }
 
       launchDirectory = worktreeResult.data.worktreePath
+      // The worktree exists but no agent owns it yet. Record it so dismissing a
+      // failed launch takes the directory with it.
+      store.noteLaunchWorktree(launchId, repoRootResult.data, launchDirectory)
     }
 
     // If importing a session, create a fresh session in the new directory and
@@ -1198,7 +1245,8 @@ Then give me a brief summary of what the previous session was working on and whe
         targetDirectory: launchDirectory,
         title: title || undefined,
         model: model && model !== 'auto' ? model : undefined,
-        modelVariant: modelVariant || undefined
+        modelVariant: modelVariant || undefined,
+        launchId
       })
 
       if (!importResult?.ok || !importResult.data) {
@@ -1206,7 +1254,8 @@ Then give me a brief summary of what the previous session was working on and whe
       }
 
       const agentId = importResult.data.id
-      setSelectedAgentId(agentId)
+      store.reconcileLaunch({ ...importResult.data, launchId })
+      selectNewAgent(agentId)
 
       if (labelIds?.length) {
         for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
@@ -1235,16 +1284,21 @@ Then give me a brief summary of what the previous session was working on and whe
     // If the prompt needs special handling, launch without it — the
     // runtime must exist before we can route commands or agent mentions.
     const launchPrompt = needsPostLaunchHandling ? undefined : (prompt || undefined)
-    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, modelVariant, attachments)
+    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, modelVariant, attachments, launchId)
 
     if (!result?.ok) {
-      throw new Error('Failed to launch agent')
+      throw new Error(result?.error || 'Failed to launch agent')
     }
 
-    if (!result.data) return
+    if (!result.data) {
+      // Nothing to reconcile the placeholder against — drop it rather than
+      // leaving a row stuck at 'starting' forever.
+      store.discardLaunch(launchId)
+      return
+    }
 
     const agentId = (result.data as { id: string }).id
-    setSelectedAgentId(agentId)
+    selectNewAgent(agentId)
 
     if (labelIds?.length) {
       for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
@@ -1290,9 +1344,45 @@ Then give me a brief summary of what the previous session was working on and whe
     }
   }, [store])
 
+  /**
+   * Entry point for the launch modal. Inserts the placeholder row and returns
+   * immediately so the modal can close, then drives the launch in the
+   * background. Deliberately not async — awaiting it would reintroduce the
+   * lockout it exists to remove.
+   */
+  const handleLaunch = useCallback((
+    directory: string,
+    prompt?: string,
+    title?: string,
+    model?: string,
+    modelVariant?: string,
+    worktreeStrategy?: string,
+    attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
+    freshWorktreeConfig?: FreshWorktreeConfig,
+    importSession?: ImportSessionConfig,
+    labelIds?: string[]
+  ) => {
+    const launchId = store.beginLaunch({
+      directory,
+      prompt,
+      // Imports with no explicit title get main's fork title, so predict the
+      // same string — otherwise the row renames itself on arrival.
+      title: title || (importSession?.sessionTitle ? getForkedTitle(importSession.sessionTitle) : undefined)
+    })
+
+    void runLaunch(
+      launchId, directory, prompt, title, model, modelVariant, worktreeStrategy,
+      attachments, freshWorktreeConfig, importSession, labelIds
+    ).catch((error) => {
+      console.error('[App] Launch failed:', error)
+      store.failLaunch(launchId, error instanceof Error ? error.message : String(error))
+    })
+  }, [store, runLaunch])
+
   const handleQuickLaunch = useCallback(async () => {
     if (quickLaunching) return
     setQuickLaunching(true)
+    let launchId: string | undefined
     try {
       const homeResult = await window.api.getHomeDirectory()
       if (!homeResult.ok || !homeResult.data) {
@@ -1301,14 +1391,28 @@ Then give me a brief summary of what the previous session was working on and whe
       }
 
       const title = `QuickStart-${Math.random().toString(36).slice(2, 10)}`
-      const result = await store.launchAgent(homeResult.data, undefined, title, 'auto')
+      // Same cold-start latency as the modal path, so show a placeholder row
+      // instead of leaving the button spinning with nothing on screen. Once the
+      // row is up the button is free again — progress is visible there.
+      launchId = store.beginLaunch({ directory: homeResult.data, title })
+      setQuickLaunching(false)
+      const epochAtStart = selectionEpochRef.current
+      const result = await store.launchAgent(homeResult.data, undefined, title, 'auto', undefined, undefined, launchId)
 
-      if (!result?.ok || !result.data) return
+      if (!result?.ok) {
+        store.failLaunch(launchId, result?.error || 'Failed to launch agent')
+        return
+      }
+      if (!result.data) {
+        store.discardLaunch(launchId)
+        return
+      }
 
       const agentId = (result.data as { id: string }).id
-      setSelectedAgentId(agentId)
+      if (selectionEpochRef.current === epochAtStart) setSelectedAgentId(agentId)
     } catch (error) {
       console.error('[App] Quick launch failed:', error)
+      if (launchId) store.failLaunch(launchId, error instanceof Error ? error.message : String(error))
     } finally {
       setQuickLaunching(false)
     }
@@ -1431,14 +1535,14 @@ Then give me a brief summary of what the previous session was working on and whe
 
       // J/K -> navigate rows
       if (event.key === 'j' || event.key === 'k') {
-        const currentIndex = filteredAgents.findIndex((agent) => agent.id === selectedAgentId)
+        const currentIndex = selectableAgents.findIndex((agent) => agent.id === selectedAgentId)
         let nextIndex: number
         if (event.key === 'j') {
-          nextIndex = currentIndex < filteredAgents.length - 1 ? currentIndex + 1 : 0
+          nextIndex = currentIndex < selectableAgents.length - 1 ? currentIndex + 1 : 0
         } else {
-          nextIndex = currentIndex > 0 ? currentIndex - 1 : filteredAgents.length - 1
+          nextIndex = currentIndex > 0 ? currentIndex - 1 : selectableAgents.length - 1
         }
-        setSelectedAgentId(filteredAgents[nextIndex]?.id ?? null)
+        setSelectedAgentId(selectableAgents[nextIndex]?.id ?? null)
         return
       }
 
@@ -1479,7 +1583,7 @@ Then give me a brief summary of what the previous session was working on and whe
         return
       }
     },
-    [filteredAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, workspaceAgentId, findPermissionForAgent, store, handleQuickLaunch]
+    [filteredAgents, selectableAgents, selectedAgentId, showLaunchModal, showSettings, showCommandPalette, showSessionBrowser, workspaceAgentId, findPermissionForAgent, store, handleQuickLaunch]
   )
 
   useEffect(() => {
@@ -1618,6 +1722,7 @@ Then give me a brief summary of what the previous session was working on and whe
       {selectedAgent && (
         <DetailDrawer
           agent={selectedAgent}
+          workspacePath={selectedWorkspacePath}
           messages={selectedMessages}
           permission={selectedPermission}
           question={selectedQuestion}
@@ -1734,7 +1839,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
       {showCommandPalette && (
         <CommandPalette
-          agents={displayAgents.map((agent) => ({
+          agents={displayAgents.filter((agent) => !agent.pending).map((agent) => ({
             id: agent.id,
             name: agent.name,
             projectName: agent.projectName,
