@@ -25,6 +25,7 @@ import {
 import type { AgentRuntime, AgentFolder, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths, SortDirection } from '../types'
 import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
 import { isRecentlyAttached } from '../hooks/useAgentStore'
+import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
@@ -750,46 +751,61 @@ export function FleetTable({
 
   // Render helper so we can reuse the AgentRow wiring for both root and
   // folder-nested agents. Keeps the JSX below readable.
-  const renderAgentRowFn = (agent: AgentRuntime, indented: boolean) => (
-    <AgentRow
-      key={agent.id}
-      agent={agent}
-      selected={agent.id === selectedId}
-      visibleColumns={visibleColumns}
-      indented={indented}
-      isDragging={dragItem?.kind === 'agent' && dragItem.id === agent.id}
-      isAnyDragActive={dragItem !== null}
-      onMouseDownStartDrag={(e) => beginDragPress('agent', agent.id, agent.name, e)}
-      suppressNextClickRef={suppressNextClick}
-      onSelect={() => onSelect(agent.id)}
-      onJumpToLastUserMessage={() => onSelect(agent.id, 'last-user-message')}
-      onContextMenu={(event) => handleContextMenu(event, agent.id)}
-      onApprove={onApprove ? () => onApprove(agent.id) : undefined}
-      onReply={onReply ? () => onReply(agent.id) : undefined}
-      onStop={onStop ? () => onStop(agent.id) : undefined}
-      onOpen={onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
-      onRemove={onRemove ? () => onRemove(agent.id) : undefined}
-      onChangeModel={onChangeModel ? () => onChangeModel(agent.id) : undefined}
-      onToggleLabel={onToggleLabel ? (labelId: string) => onToggleLabel(agent.id, labelId) : undefined}
-      onClearLabels={onClearLabels ? () => onClearLabels(agent.id) : undefined}
-      onReplaceLabel={onReplaceLabel ? (oldId: string, newId: string) => onReplaceLabel(agent.id, oldId, newId) : undefined}
-      allLabels={allLabels}
-      onCreateLabel={onCreateLabel}
-      onDeleteLabel={onDeleteLabel}
-      onEditPrLink={() => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
-      onRemovePrLink={onSetPrUrl ? () => onSetPrUrl(agent.id, null) : undefined}
-      onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(agent.id) : undefined}
-      onOpenInEditor={onOpenInEditor ? () => onOpenInEditor(agent.id) : undefined}
-      isInlineEditing={inlineEditId === agent.id}
-      onStartInlineEdit={() => setInlineEditId(agent.id)}
-      onInlineRename={(newName) => {
-        onRename?.(agent.id, newName)
-        setInlineEditId(null)
-      }}
-      onCancelInlineEdit={() => setInlineEditId(null)}
-      onLabelDropdownChange={handleLabelDropdownChange}
-    />
-  )
+  const renderAgentRowFn = (agent: AgentRuntime, indented: boolean) => {
+    // A placeholder row stands in for a launch that hasn't produced a session
+    // yet, so its `pending-N` id means nothing to the main process. Actions are
+    // withheld here so no nested control can route around the gate; AgentRow
+    // additionally hides the controls that would otherwise render dead. The
+    // store refuses pending ids too (getMutableAgent) — that is the real
+    // guarantee, and this layer is what keeps the row from looking operable.
+    // Dismiss is the deliberate exception and rides `onRemove`.
+    const pending = agent.pending === true
+    const noop = (): void => {}
+
+    return (
+      <AgentRow
+        key={agent.id}
+        agent={agent}
+        selected={agent.id === selectedId}
+        visibleColumns={visibleColumns}
+        indented={indented}
+        isDragging={dragItem?.kind === 'agent' && dragItem.id === agent.id}
+        isAnyDragActive={dragItem !== null}
+        onMouseDownStartDrag={pending ? undefined : (e) => beginDragPress('agent', agent.id, agent.name, e)}
+        suppressNextClickRef={suppressNextClick}
+        onSelect={pending ? noop : () => onSelect(agent.id)}
+        onJumpToLastUserMessage={pending ? noop : () => onSelect(agent.id, 'last-user-message')}
+        onContextMenu={pending ? noop : (event) => handleContextMenu(event, agent.id)}
+        onApprove={onApprove && !pending ? () => onApprove(agent.id) : undefined}
+        onReply={onReply && !pending ? () => onReply(agent.id) : undefined}
+        onStop={onStop && !pending ? () => onStop(agent.id) : undefined}
+        onOpen={pending ? noop : onOpen ? () => onOpen(agent.id) : () => onSelect(agent.id)}
+        // Withheld for pending rows so RowActions' Trash button doesn't duplicate
+        // the Dismiss link; the row wires Dismiss to onDismiss instead.
+        onRemove={onRemove && !pending ? () => onRemove(agent.id) : undefined}
+        onDismiss={onRemove && pending ? () => onRemove(agent.id) : undefined}
+        onChangeModel={onChangeModel && !pending ? () => onChangeModel(agent.id) : undefined}
+        onToggleLabel={onToggleLabel && !pending ? (labelId: string) => onToggleLabel(agent.id, labelId) : undefined}
+        onClearLabels={onClearLabels && !pending ? () => onClearLabels(agent.id) : undefined}
+        onReplaceLabel={onReplaceLabel && !pending ? (oldId: string, newId: string) => onReplaceLabel(agent.id, oldId, newId) : undefined}
+        allLabels={allLabels}
+        onCreateLabel={onCreateLabel}
+        onDeleteLabel={onDeleteLabel}
+        onEditPrLink={pending ? noop : () => setPrLinkState({ agentId: agent.id, currentUrl: agent.prUrl ?? '' })}
+        onRemovePrLink={onSetPrUrl && !pending ? () => onSetPrUrl(agent.id, null) : undefined}
+        onOpenTerminal={onOpenTerminal && !pending ? () => onOpenTerminal(agent.id) : undefined}
+        onOpenInEditor={onOpenInEditor && !pending ? () => onOpenInEditor(agent.id) : undefined}
+        isInlineEditing={inlineEditId === agent.id}
+        onStartInlineEdit={pending ? noop : () => setInlineEditId(agent.id)}
+        onInlineRename={(newName) => {
+          if (!pending) onRename?.(agent.id, newName)
+          setInlineEditId(null)
+        }}
+        onCancelInlineEdit={() => setInlineEditId(null)}
+        onLabelDropdownChange={handleLabelDropdownChange}
+      />
+    )
+  }
 
   if (agents.length === 0 && folders.length === 0) {
     return (
@@ -1242,6 +1258,7 @@ function AgentRow({
   onStop,
   onOpen,
   onRemove,
+  onDismiss,
   onChangeModel,
   onToggleLabel,
   onClearLabels,
@@ -1281,6 +1298,9 @@ function AgentRow({
   onStop?: () => void
   onOpen?: () => void
   onRemove?: () => void
+  /** Removal for a pending row. Separate from onRemove so the two never render
+   *  side by side as competing labels for the same operation. */
+  onDismiss?: () => void
   onChangeModel?: () => void
   onToggleLabel?: (labelId: string) => void
   onClearLabels?: () => void
@@ -1301,6 +1321,9 @@ function AgentRow({
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
   const flashing = isRecentlyAttached(agent.id)
+  // A placeholder row has no session behind it yet. Its actions are withheld by
+  // the caller (see renderAgentRowFn); this flag only drives presentation.
+  const isPending = agent.pending === true
   const [inlineValue, setInlineValue] = useState(agent.name)
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const inlineSubmittedRef = useRef(false)
@@ -1380,7 +1403,7 @@ function AgentRow({
       }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
-      className={`group cursor-pointer transition-colors border-b border-kumo-line ${rowStateClass} ${flashingClass} ${draggingClass}`}
+      className={`group transition-colors border-b border-kumo-line ${isPending ? 'cursor-default' : 'cursor-pointer'} ${rowStateClass} ${flashingClass} ${draggingClass}`}
     >
       {show('agent') && (
         <td className={`px-3 py-2 overflow-hidden ${indented ? 'pl-10' : ''}`}>
@@ -1405,10 +1428,13 @@ function AgentRow({
                 />
               ) : (
                 <div
-                  onClick={(event) => { event.stopPropagation(); onStartInlineEdit() }}
-                  className={`font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 cursor-text outline outline-1 outline-transparent transition-[outline-color] truncate ${
-                    isAnyDragActive ? '' : 'hover:outline-kumo-subtle/40'
-                  }`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onStartInlineEdit()
+                  }}
+                  className={`font-semibold text-kumo-strong rounded px-1.5 py-0.5 -mx-1.5 -my-0.5 outline outline-1 outline-transparent transition-[outline-color] truncate ${
+                    isPending ? 'cursor-default' : 'cursor-text'
+                  } ${isAnyDragActive || isPending ? '' : 'hover:outline-kumo-subtle/40'}`}
                   title={agent.name}
                 >
                   {agent.name}
@@ -1448,7 +1474,24 @@ function AgentRow({
       )}
       {show('task') && (
         <td className="px-3 py-2 truncate text-kumo-default">
-          {agent.taskSummary && (
+          {isPending ? (
+            // A placeholder has no transcript to jump to. Dismiss is offered
+            // unconditionally, not just on failure — it's the row's only exit,
+            // so a launch that never settles must not become unremovable.
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="truncate" title={agent.lastError?.message || agent.taskSummary}>
+                {agent.taskSummary}
+              </span>
+              {onDismiss && (
+                <button
+                  onClick={(event) => { event.stopPropagation(); onDismiss() }}
+                  className="shrink-0 text-[10px] text-kumo-subtle hover:text-kumo-default underline"
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          ) : agent.taskSummary && (
             <span
               className="cursor-pointer hover:text-kumo-strong"
               title={`${agent.taskSummary}\n\nClick to jump to your last message`}
@@ -1471,7 +1514,14 @@ function AgentRow({
       )}
       {show('model') && (
         <td className="px-3 py-2 overflow-hidden">
-          {agent.model && agent.model !== 'starting...' && (
+          {agent.model && (agent.model === UNRESOLVED_MODEL_LABEL ? (
+            // There's nothing to switch to until the model is known — on a
+            // placeholder because no session exists, on a real agent until the
+            // first getConfig lands.
+            <span className="font-mono text-[10px] px-1.5 py-0.5 text-kumo-muted max-w-full truncate block">
+              {agent.model}
+            </span>
+          ) : (
             <button
               onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
               className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
@@ -1479,7 +1529,7 @@ function AgentRow({
             >
               {agent.model}
             </button>
-          )}
+          ))}
         </td>
       )}
       {show('context') && (
@@ -1522,7 +1572,7 @@ function AgentRow({
                 <GitPullRequest size={13} weight="bold" />
               </button>
             </Tooltip>
-          ) : (
+          ) : !isPending && (
             <button
               onClick={(event) => { event.stopPropagation(); onEditPrLink?.() }}
               className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle/40 hover:text-kumo-subtle hover:bg-kumo-fill transition-colors cursor-pointer"
@@ -1531,31 +1581,39 @@ function AgentRow({
               <GitPullRequest size={13} />
             </button>
           )}
-          <button
-            onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
-            className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"
-            title="Agent actions"
-          >
-            <GearSix size={13} />
-          </button>
+          {!isPending && (
+            <button
+              onClick={(event) => { event.stopPropagation(); onContextMenu(event) }}
+              className="w-6 h-6 flex items-center justify-center rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill transition-colors cursor-pointer"
+              title="Agent actions"
+            >
+              <GearSix size={13} />
+            </button>
+          )}
         </div>
       </td>
       <td
         ref={arrowMenu.containerRef}
-        className="p-0 border-l border-kumo-line bg-kumo-fill/50 cursor-pointer hover:bg-kumo-fill transition-colors relative"
-        onClick={(event) => { event.stopPropagation(); arrowMenu.toggle() }}
+        className={`p-0 border-l border-kumo-line bg-kumo-fill/50 relative ${
+          isPending ? '' : 'cursor-pointer hover:bg-kumo-fill transition-colors'
+        }`}
+        onClick={isPending ? undefined : (event) => { event.stopPropagation(); arrowMenu.toggle() }}
       >
-        <div className="w-full flex items-center justify-center py-2 text-kumo-subtle group-hover:text-kumo-default">
-          <ArrowRight size={14} weight="bold" />
-        </div>
-        <ArrowMenuPopover
-          open={arrowMenu.open}
-          triggerRef={arrowMenu.containerRef}
-          onDismiss={arrowMenu.close}
-          onOpen={() => { arrowMenu.close(); onOpen?.() }}
-          onOpenTerminal={() => { arrowMenu.close(); onOpenTerminal?.() }}
-          onOpenInEditor={() => { arrowMenu.close(); onOpenInEditor?.() }}
-        />
+        {!isPending && (
+          <>
+            <div className="w-full flex items-center justify-center py-2 text-kumo-subtle group-hover:text-kumo-default">
+              <ArrowRight size={14} weight="bold" />
+            </div>
+            <ArrowMenuPopover
+              open={arrowMenu.open}
+              triggerRef={arrowMenu.containerRef}
+              onDismiss={arrowMenu.close}
+              onOpen={() => { arrowMenu.close(); onOpen?.() }}
+              onOpenTerminal={() => { arrowMenu.close(); onOpenTerminal?.() }}
+              onOpenInEditor={() => { arrowMenu.close(); onOpenInEditor?.() }}
+            />
+          </>
+        )}
       </td>
     </tr>
   )
@@ -1607,8 +1665,9 @@ function RowActions({
         <Square size={12} weight="fill" />
       </button>
       <button
-        className={destructiveButton}
+        className={`${destructiveButton} ${onRemove ? '' : 'invisible'}`}
         title="Remove"
+        disabled={!onRemove}
         onClick={(event) => { event.stopPropagation(); onRemove?.() }}
       >
         <Trash size={12} />

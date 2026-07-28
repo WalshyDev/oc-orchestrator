@@ -16,7 +16,7 @@ export interface MessageAttachment {
 }
 
 export interface OrchestratorApi {
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: MessageAttachment[] }) => Promise<IpcResult>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: MessageAttachment[]; launchId?: string }) => Promise<IpcResult>
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
@@ -45,6 +45,7 @@ export interface OrchestratorApi {
     title?: string
     model?: string
     modelVariant?: string
+    launchId?: string
   }) => Promise<IpcResult<{ id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string }>>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
@@ -252,6 +253,9 @@ export interface AgentLaunchedPayload {
   /** @deprecated Use labelIds. Kept for reading legacy persisted data. */
   labelId?: string
   prUrl?: string
+  /** Correlation id from the renderer's launch request. Present only for
+   *  launches this renderer started; used to retire the placeholder row. */
+  launchId?: string
 }
 
 export interface SessionResetPayload {

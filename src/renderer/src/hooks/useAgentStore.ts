@@ -9,6 +9,18 @@ import type {
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
 import { ensureProvidersLoaded, invalidateProviderCache, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
+import {
+  AbandonedLaunches,
+  applyLaunchFailure,
+  buildPlaceholderAgent,
+  planArrival,
+  PLACEHOLDER_ID_PREFIX,
+  UNRESOLVED_MODEL_LABEL,
+  advanceLaunchCleanup,
+  type LaunchCleanup,
+  type LaunchEvent,
+  type PlaceholderOptions
+} from './placeholderLaunch'
 
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
@@ -122,6 +134,15 @@ export interface LiveAgent {
    *  compaction but session.compacted hasn't arrived yet. Drives the spinner and
    *  disabled states on the Compact buttons so the user can see progress. */
   compacting?: boolean
+  /** True for a placeholder row created the instant the user hits Launch, before
+   *  main has spawned a runtime and created a session. It has no server-side
+   *  counterpart, so callers must not send IPC for it. Retired by
+   *  handleAgentLaunched once the real agent arrives, or flipped to 'errored'
+   *  in place if the launch fails. */
+  pending?: boolean
+  /** Worktree created for a placeholder before the launch reached main. If the
+   *  launch then fails, no agent will ever own this directory, so dismissing the
+   *  row has to clean it up. */
 }
 
 export interface LiveAgentError {
@@ -435,7 +456,7 @@ function persistAgentMeta(agentId: string, meta: { displayName?: string; taskSum
  * Derive a short kebab-case agent name from a prompt string.
  * Takes the first few meaningful words (up to 30 chars).
  */
-function deriveNameFromPrompt(prompt: string): string {
+export function deriveNameFromPrompt(prompt: string): string {
   const cleaned = prompt
     .replace(/[^a-zA-Z0-9\s-]/g, '')
     .trim()
@@ -2060,7 +2081,122 @@ function processEvent(payload: OpenCodeEventPayload): void {
 /** Number of recent messages to pre-load when a session is resumed. */
 const RESUME_MESSAGE_LIMIT = 10
 
+/**
+ * Inserts an optimistic row so the fleet table shows the launch immediately.
+ * Cold launches spend seconds spawning `opencode serve` and creating a worktree
+ * before main can broadcast `agent:launched`; without this the dashboard looks
+ * like nothing happened.
+ */
+function createPlaceholderAgent(options: PlaceholderOptions): string {
+  const launchId = `${PLACEHOLDER_ID_PREFIX}${crypto.randomUUID()}`
+  launchCleanups.set(launchId, { phase: 'live' })
+  state.agents.set(launchId, buildPlaceholderAgent(launchId, options, deriveNameFromPrompt))
+  emit({ agents: true })
+  return launchId
+}
+
+/**
+ * Looks up an agent that is safe to mutate and persist. A placeholder's
+ * `pending-N` id means nothing to the main process, so mutators resolve through
+ * this rather than `state.agents.get` — the guard then can't be bypassed by a UI
+ * control that forgot to check `pending`.
+ *
+ * Reach for this in any new mutator that persists or sends IPC. It doesn't fit
+ * everywhere: the session operations (sendMessage, abortAgent, resetSession) need
+ * their own early return because they key off the id rather than the record, and
+ * the event handlers that mutate on incoming SSE must accept any agent.
+ */
+function getMutableAgent(agentId: string): LiveAgent | undefined {
+  const agent = state.agents.get(agentId)
+  if (!agent || agent.pending) return undefined
+  return agent
+}
+
+const abandonedLaunches = new AbandonedLaunches()
+
+/**
+ * Worktree ownership per launch. Keyed by launchId rather than held on the agent
+ * because a dismissal removes the row while the launch is still running, and the
+ * record has to outlive it. See `advanceLaunchCleanup` for the rule.
+ */
+const launchCleanups = new Map<string, LaunchCleanup>()
+
+function advanceLaunch(launchId: string, event: LaunchEvent): void {
+  const current = launchCleanups.get(launchId)
+  if (!current) return
+
+  const { state: next, effect } = advanceLaunchCleanup(current, event)
+  if (next.phase === 'settled') launchCleanups.delete(launchId)
+  else launchCleanups.set(launchId, next)
+
+  if (effect?.type === 'remove-worktree') {
+    void window.api?.removeWorktree(effect.worktree).then((result) => {
+      if (!result?.ok) console.error('[useAgentStore] failed to remove abandoned launch worktree:', result?.error)
+    })
+  }
+}
+
+/** Drops a placeholder row and everything keyed off its synthetic session. */
+function discardPlaceholderAgent(launchId: string): void {
+  const agent = state.agents.get(launchId)
+  if (!agent?.pending) return
+
+  abandonedLaunches.abandon(launchId)
+  advanceLaunch(launchId, { type: 'dismissed' })
+
+  removeAgentState(launchId)
+  emit({ agents: true, messages: true })
+}
+
+/**
+ * Records a worktree created for a launch, so no outcome strands the directory.
+ * Deliberately not gated on the row still existing — a dismissal during
+ * `git worktree add` is exactly when the path needs remembering.
+ */
+function notePlaceholderWorktree(launchId: string, repoRoot: string, worktreePath: string): void {
+  advanceLaunch(launchId, { type: 'worktree-created', worktree: { repoRoot, worktreePath } })
+}
+
+/**
+ * Keeps a failed placeholder on screen as an errored row so the user sees why
+ * the launch never produced an agent, rather than the row silently vanishing.
+ */
+function failPlaceholderAgent(launchId: string, message: string): void {
+  advanceLaunch(launchId, { type: 'failed' })
+
+  const agent = state.agents.get(launchId)
+  if (!agent?.pending) return
+  applyLaunchFailure(agent, message)
+  emit({ agents: true })
+}
+
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
+  const plan = planArrival(payload, abandonedLaunches, (id) => state.agents.get(id)?.pending === true)
+
+  if (plan.action === 'drop') {
+    // Removing the agent is main's job — it owns the worktree. The renderer just
+    // declines to show a row for a launch the user threw away.
+    if (plan.teardown) {
+      // The launch succeeded, so main owns the worktree and removeAgent takes it
+      // down with the agent. Release this side's claim to avoid a second removal.
+      if (payload.launchId) advanceLaunch(payload.launchId, { type: 'succeeded' })
+      void window.api?.removeAgent(payload.id).then((result) => {
+        // The one failure here that matters: main keeps the worktree on disk and
+        // nothing in the UI refers to it any more.
+        if (!result?.ok) console.error('[handleAgentLaunched] failed to remove dismissed agent:', result?.error)
+      })
+    }
+    return
+  }
+
+  // Retire the optimistic row before inserting the real one so the table never
+  // shows both.
+  if (plan.retirePlaceholderId) {
+    // The real agent takes over the placeholder's worktree along with its row.
+    advanceLaunch(plan.retirePlaceholderId, { type: 'succeeded' })
+    removeAgentState(plan.retirePlaceholderId)
+  }
+
   const existingMsgs = state.messages.get(payload.sessionId)
   console.debug(`[handleAgentLaunched] id=${payload.id} session=${payload.sessionId.slice(-8)} existingMsgs=${existingMsgs?.length ?? 'none'} agentExists=${state.agents.has(payload.id)}`)
   upsertAgent(payload)
@@ -2097,7 +2233,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (!agent || agent.configuredModel) return
       const formatted = formatModelName(config.model)
       agent.configuredModel = formatted
-      if (agent.model === 'starting...') {
+      if (agent.model === UNRESOLVED_MODEL_LABEL) {
         agent.model = formatted
         emit({ agents: true })
       }
@@ -2220,7 +2356,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     labelIds: existingAgent?.labelIds ?? [],
-    model: existingAgent?.model ?? 'starting...',
+    model: existingAgent?.model ?? UNRESOLVED_MODEL_LABEL,
     configuredModel: existingAgent?.configuredModel,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
@@ -3121,9 +3257,35 @@ export function useAgentStore() {
     [questionsVersion]
   )
 
-  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, attachments?: MessageAttachment[]) => {
+  const beginLaunch = useCallback((options: { directory: string; prompt?: string; title?: string }) => {
+    return createPlaceholderAgent(options)
+  }, [])
+
+  const failLaunch = useCallback((launchId: string, message: string) => {
+    failPlaceholderAgent(launchId, message)
+  }, [])
+
+  const discardLaunch = useCallback((launchId: string) => {
+    discardPlaceholderAgent(launchId)
+  }, [])
+
+  const noteLaunchWorktree = useCallback((launchId: string, repoRoot: string, worktreePath: string) => {
+    notePlaceholderWorktree(launchId, repoRoot, worktreePath)
+  }, [])
+
+  /**
+   * Adds a launched agent the `agent:launched` broadcast never delivered — it can
+   * fire before the listener is attached. Without this the placeholder sits at
+   * 'starting' forever and the real agent never appears at all.
+   */
+  const reconcileLaunch = useCallback((payload: AgentLaunchedPayload) => {
+    if (state.agents.has(payload.id)) return
+    handleAgentLaunched(payload)
+  }, [])
+
+  const launchAgent = useCallback(async (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, attachments?: MessageAttachment[], launchId?: string) => {
     if (!window.api) return
-    const result = await window.api.launchAgent({ directory, prompt, title, model, modelVariant, attachments })
+    const result = await window.api.launchAgent({ directory, prompt, title, model, modelVariant, attachments, launchId })
     if (!result.ok) {
       console.error('Failed to launch agent:', result.error)
     } else if (result.data) {
@@ -3142,7 +3304,8 @@ export function useAgentStore() {
           isWorktree: data.isWorktree ?? false,
           workspaceName: data.workspaceName ?? (directory.split('/').pop() ?? directory),
           prompt: data.prompt ?? prompt ?? '',
-          title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug)
+          title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug),
+          launchId
         })
       }
     }
@@ -3151,6 +3314,8 @@ export function useAgentStore() {
 
   const sendMessage = useCallback(async (agentId: string, text: string, agentConfig?: string, attachments?: MessageAttachment[], taskSummaryOverride?: string) => {
     if (!window.api) return
+    // No session exists to send to yet.
+    if (state.agents.get(agentId)?.pending) return
 
     // Queue the message if the agent is still stopping — it will be dispatched
     // automatically once the abort completes.
@@ -3412,6 +3577,8 @@ export function useAgentStore() {
 
   const abortAgent = useCallback(async (agentId: string) => {
     if (!window.api) return
+    // Nothing running to abort. Dismiss is the placeholder's cancel.
+    if (state.agents.get(agentId)?.pending) return
 
     // Optimistically set 'stopping' so the UI reflects intent immediately
     const agent = state.agents.get(agentId)
@@ -3454,11 +3621,20 @@ export function useAgentStore() {
 
   const resetSession = useCallback(async (agentId: string, prompt?: string) => {
     if (!window.api) return
+    // No session exists to reset yet.
+    if (state.agents.get(agentId)?.pending) return
     return window.api.resetSession(agentId, prompt)
   }, [])
 
   const removeAgent = useCallback((agentId: string) => {
     if (!window.api) return
+
+    // Main has no agent under a placeholder's id, so dismissing one takes the
+    // placeholder-specific path rather than the agent teardown below.
+    if (state.agents.get(agentId)?.pending) {
+      discardPlaceholderAgent(agentId)
+      return { ok: true }
+    }
 
     removeAgentState(agentId)
     fileChangesHydrated.delete(agentId)
@@ -3561,7 +3737,7 @@ export function useAgentStore() {
   }, [messagesVersion])
 
   const setAgentModel = useCallback((agentId: string, modelPath: string, variant?: string) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     const formatted = formatModelName(modelPath)
     agent.model = formatted
@@ -3571,7 +3747,7 @@ export function useAgentStore() {
   }, [])
 
   const renameAgent = useCallback((agentId: string, newName: string) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     agent.name = newName
     agent.autoNamed = false
@@ -3580,7 +3756,7 @@ export function useAgentStore() {
   }, [])
 
   const toggleLabel = useCallback((agentId: string, labelId: string) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     const has = agent.labelIds.includes(labelId)
     agent.labelIds = has
@@ -3592,7 +3768,7 @@ export function useAgentStore() {
   }, [])
 
   const clearLabels = useCallback((agentId: string) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     agent.labelIds = []
     agent.lastActivityAt = Date.now()
@@ -3601,7 +3777,7 @@ export function useAgentStore() {
   }, [])
 
   const replaceLabel = useCallback((agentId: string, oldLabelId: string, newLabelId: string) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     agent.labelIds = agent.labelIds.map((id) => id === oldLabelId ? newLabelId : id)
     agent.lastActivityAt = Date.now()
@@ -3614,7 +3790,10 @@ export function useAgentStore() {
    * decides when (and whether) to compact, switch models, or retry.
    */
   const dismissAgentError = useCallback((agentId: string) => {
-    const agent = state.agents.get(agentId)
+    // getMutableAgent excludes placeholders, which is what we want here for a
+    // second reason: a failed placeholder's error is the row's whole reason for
+    // existing, so clearing it would leave a row with no explanation.
+    const agent = getMutableAgent(agentId)
     if (!agent?.lastError) return
     agent.lastError = undefined
     emit({ agents: true })
@@ -3628,7 +3807,7 @@ export function useAgentStore() {
    */
   const compactSession = useCallback(async (agentId: string): Promise<IpcResult | undefined> => {
     if (!window.api) return
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) {
       console.error('[compactSession] agent not found', agentId)
       return
@@ -3674,7 +3853,7 @@ export function useAgentStore() {
   }, [])
 
   const setPrUrl = useCallback((agentId: string, prUrl: string | null) => {
-    const agent = state.agents.get(agentId)
+    const agent = getMutableAgent(agentId)
     if (!agent) return
     agent.prUrl = prUrl
     persistAgentMeta(agentId, { prUrl: prUrl ?? '' })
@@ -3688,6 +3867,11 @@ export function useAgentStore() {
     healthy: storeState.healthy,
     initializing: storeState.initializing,
     launchAgent,
+    beginLaunch,
+    failLaunch,
+    discardLaunch,
+    noteLaunchWorktree,
+    reconcileLaunch,
     sendMessage,
     listCommands,
     listAgentConfigs,
@@ -3715,7 +3899,8 @@ export function useAgentStore() {
     hydrateFileChangesFromGit
   }), [
     agents, permissions, questions, storeState.healthy, storeState.initializing,
-    launchAgent, sendMessage, listCommands, listAgentConfigs,
+    launchAgent, beginLaunch, failLaunch, discardLaunch, noteLaunchWorktree, reconcileLaunch,
+    sendMessage, listCommands, listAgentConfigs,
     executeCommand, prepareFreshAgent, resetSession,
     respondToPermission, replyToQuestion, rejectQuestion,
     abortAgent, removeAgent, renameAgent, setAgentModel,

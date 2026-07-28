@@ -31,6 +31,7 @@ import {
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
+import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
 import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
@@ -170,6 +171,9 @@ export interface AgentConfigItem {
 
 interface DetailDrawerProps {
   agent: AgentRuntime
+  /** Absolute path to the agent's workspace (worktree or repo root). Lives on
+   *  the store's LiveAgent rather than AgentRuntime, so it's passed in. */
+  workspacePath?: string
   messages: Message[]
   permission?: LivePermission | null
   question?: LiveQuestion | null
@@ -225,6 +229,7 @@ interface DetailDrawerProps {
 
 export const DetailDrawer = memo(function DetailDrawer({
   agent,
+  workspacePath,
   messages,
   permission,
   question,
@@ -846,11 +851,11 @@ export const DetailDrawer = memo(function DetailDrawer({
               <span className="truncate">
                 {agent.projectName} · {formatBranchLabel(agent) || agent.taskSummary.slice(0, 40)}
               </span>
-
+              {workspacePath && <CopyPathButton path={workspacePath} />}
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {onChangeModel ? (
+            {onChangeModel && agent.model !== UNRESOLVED_MODEL_LABEL ? (
               <button
                 onClick={onChangeModel}
                 className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap hover:text-kumo-default transition-colors"
@@ -1667,6 +1672,51 @@ function QuestionCard({
         )}
       </div>
     </div>
+  )
+}
+
+/** Copies an absolute path to the clipboard, for pasting into a shell or Finder. */
+function CopyPathButton({ path }: { path: string }) {
+  // The counter restarts the timer on a repeat click; keying the effect on
+  // `result` alone would let a second copy inherit the first one's deadline and
+  // flash the checkmark for a few milliseconds.
+  const [{ result, attempt }, setState] = useState<{ result: 'idle' | 'copied' | 'failed'; attempt: number }>({ result: 'idle', attempt: 0 })
+  const setResult = (next: 'idle' | 'copied' | 'failed'): void =>
+    setState((prev) => ({ result: next, attempt: prev.attempt + 1 }))
+
+  useEffect(() => {
+    if (result === 'idle') return
+    const timer = setTimeout(() => setResult('idle'), 1500)
+    return () => clearTimeout(timer)
+  }, [result, attempt])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(path)
+      setResult('copied')
+    } catch (error) {
+      // A denied clipboard permission looks identical to success unless the icon
+      // changes, and the user would paste stale content without knowing.
+      console.error('[DetailDrawer] Failed to copy path:', error)
+      setResult('failed')
+    }
+  }, [path])
+
+  const label = result === 'copied' ? 'Path copied' : result === 'failed' ? 'Copy failed' : 'Copy workspace path'
+
+  return (
+    <button
+      onClick={handleCopy}
+      aria-label={label}
+      className={`shrink-0 w-4 h-4 flex items-center justify-center rounded transition-colors ${
+        result === 'failed'
+          ? 'text-kumo-danger'
+          : 'text-kumo-subtle hover:text-kumo-default hover:bg-kumo-fill'
+      }`}
+      title={result === 'idle' ? `Copy path\n${path}` : label}
+    >
+      {result === 'copied' ? <Check size={10} /> : result === 'failed' ? <XCircle size={10} /> : <Copy size={10} />}
+    </button>
   )
 }
 
