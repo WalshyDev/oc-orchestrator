@@ -64,6 +64,22 @@ describe('buildTerminalTabScript', () => {
     expect(fallbackLine).not.toContain('in selected tab')
   })
 
+  it('accepts a new tab that arrives as its own window', () => {
+    // Terminal uses the system's window tab groups on macOS 26, where a new tab
+    // is a separate window to AppleScript: the front window id changes and the
+    // tab count stays at 1. Watching the count alone found no tab, so every
+    // launch left a stray tab behind and opened a window as well.
+    const script = buildTerminalTabScript('/tmp')
+    const condition = script.split('\n').find((line) => line.includes('id of front window) is not'))
+    expect(condition).toContain('count of tabs of front window) > tabsBefore')
+    // Both baselines have to be read while the old tab is still the front one.
+    const keystroke = script.indexOf('keystroke "t"')
+    for (const baseline of ['set frontBefore to', 'set tabsBefore to']) {
+      expect(script.indexOf(baseline)).toBeGreaterThan(-1)
+      expect(script.indexOf(baseline)).toBeLessThan(keystroke)
+    }
+  })
+
   it('waits for Terminal to come forward before sending the keystroke', () => {
     // An early keystroke opens a tab in whatever app still holds focus.
     const script = buildTerminalTabScript('/tmp')

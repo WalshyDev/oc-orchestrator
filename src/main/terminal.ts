@@ -34,7 +34,6 @@ tell application "Terminal"
   if (count of windows) is 0 then
     do script ${command}
   else
-    set tabsBefore to count of tabs of front window
     -- Wait for Terminal to actually come forward rather than guessing a delay:
     -- a keystroke sent early lands in whichever app still holds focus, leaving a
     -- stray tab in the user's editor or browser.
@@ -47,10 +46,16 @@ tell application "Terminal"
       delay 0.05
     end repeat
     if not isFront then error "Terminal did not come to the front"
+    -- Two ways a new tab shows up, depending on the macOS version. Terminal now
+    -- uses the system's window tab groups, where each tab is a separate window to
+    -- AppleScript, so the front window id changes and its tab count stays at 1.
+    -- Older releases add the tab to the same window, where only the count moves.
+    set frontBefore to id of front window
+    set tabsBefore to count of tabs of front window
     tell application "System Events" to keystroke "t" using command down
     set madeTab to false
     repeat 40 times
-      if (count of tabs of front window) > tabsBefore then
+      if ((id of front window) is not frontBefore) or ((count of tabs of front window) > tabsBefore) then
         set madeTab to true
         exit repeat
       end if
