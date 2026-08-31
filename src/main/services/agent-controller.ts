@@ -644,11 +644,16 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    const model = handle.modelOverride?.providerID
+      ? `${handle.modelOverride.providerID}/${handle.modelOverride.modelID}`
+      : handle.modelOverride?.modelID
     const result = await runtime.client.session.command({
       sessionID: handle.sessionId,
       directory: handle.directory,
       command,
-      arguments: args
+      arguments: args,
+      ...(model && { model }),
+      ...(handle.variantOverride && { variant: handle.variantOverride })
     })
 
     return result.data
