@@ -345,6 +345,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:get-child-sessions', async (_event, agentId: string) => {
+    try {
+      const sessions = await agentController.getChildSessions(agentId)
+      return { ok: true, data: sessions }
+    } catch (error) {
+      logIpcError('agent:get-child-sessions', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('session:list', async (_event, directory: string) => {
     try {
       const sessions = await agentController.listSessions(directory)

@@ -60,6 +60,9 @@ const api = {
   getMessages: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-messages', agentId),
 
+  getChildSessions: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:get-child-sessions', agentId),
+
   listCommands: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:list-commands', agentId),
 

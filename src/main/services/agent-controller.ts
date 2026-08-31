@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { OpencodeClient, TextPartInput, FilePartInput } from '@opencode-ai/sdk/v2/client'
+import { buildSessionOwnerIndex, collectChildSessionTranscripts, groupRequestsByOwner } from './child-session-hydration'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
@@ -1026,6 +1027,16 @@ class AgentController {
     return result.data
   }
 
+  async getChildSessions(agentId: string): Promise<{ sessions: Array<{ info: unknown; messages: unknown }>; complete: boolean }> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    return collectChildSessionTranscripts(runtime.client, handle.sessionId, handle.directory)
+  }
+
   /**
    * Fetch session status for all active agents.
    */
@@ -1073,8 +1084,8 @@ class AgentController {
   /**
    * Fetch all pending permissions across all agents.
    */
-  async getAllPendingPermissions(): Promise<Array<{ agentId: string; permissions: unknown[] }>> {
-    const result: Array<{ agentId: string; permissions: unknown[] }> = []
+  async getAllPendingPermissions(): Promise<Array<{ agentId: string; permissions: unknown[]; complete: boolean }>> {
+    const result: Array<{ agentId: string; permissions: unknown[]; complete: boolean }> = []
 
     const byRuntime = new Map<string, AgentHandle[]>()
     for (const handle of this.agents.values()) {
@@ -1094,12 +1105,24 @@ class AgentController {
         })
 
         if (permissionsResult.data && Array.isArray(permissionsResult.data)) {
-          for (const perm of permissionsResult.data as Array<{ id: string; sessionID: string }>) {
-            const agent = handles.find((h) => h.sessionId === perm.sessionID)
-            if (agent) {
-              result.push({ agentId: agent.id, permissions: [perm] })
-            }
-          }
+          const permissions = permissionsResult.data as Array<{ id: string; sessionID: string }>
+          const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
+          const ownerResult = permissions.some((permission) => !directOwners.has(permission.sessionID))
+            ? await buildSessionOwnerIndex(
+              runtime.client,
+              handles.map((handle) => ({ agentId: handle.id, sessionId: handle.sessionId })),
+              directory
+            )
+            : { owners: directOwners, incompleteAgentIds: new Set<string>() }
+          result.push(...groupRequestsByOwner(
+            handles.map((handle) => handle.id),
+            ownerResult.owners,
+            permissions
+          ).map((entry) => ({
+            agentId: entry.agentId,
+            permissions: entry.requests,
+            complete: !ownerResult.incompleteAgentIds.has(entry.agentId)
+          })))
         }
       } catch (error) {
         console.error(`[AgentController] Failed to get permissions for runtime ${runtimeId}:`, error)
@@ -1112,8 +1135,8 @@ class AgentController {
   /**
    * Fetch all pending questions across all agents.
    */
-  async getAllPendingQuestions(): Promise<Array<{ agentId: string; questions: unknown[] }>> {
-    const result: Array<{ agentId: string; questions: unknown[] }> = []
+  async getAllPendingQuestions(): Promise<Array<{ agentId: string; questions: unknown[]; complete: boolean }>> {
+    const result: Array<{ agentId: string; questions: unknown[]; complete: boolean }> = []
 
     const byRuntime = new Map<string, AgentHandle[]>()
     for (const handle of this.agents.values()) {
@@ -1133,12 +1156,24 @@ class AgentController {
         })
 
         if (questionsResult.data && Array.isArray(questionsResult.data)) {
-          for (const q of questionsResult.data as Array<{ id: string; sessionID: string }>) {
-            const agent = handles.find((h) => h.sessionId === q.sessionID)
-            if (agent) {
-              result.push({ agentId: agent.id, questions: [q] })
-            }
-          }
+          const questions = questionsResult.data as Array<{ id: string; sessionID: string }>
+          const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
+          const ownerResult = questions.some((question) => !directOwners.has(question.sessionID))
+            ? await buildSessionOwnerIndex(
+              runtime.client,
+              handles.map((handle) => ({ agentId: handle.id, sessionId: handle.sessionId })),
+              directory
+            )
+            : { owners: directOwners, incompleteAgentIds: new Set<string>() }
+          result.push(...groupRequestsByOwner(
+            handles.map((handle) => handle.id),
+            ownerResult.owners,
+            questions
+          ).map((entry) => ({
+            agentId: entry.agentId,
+            questions: entry.requests,
+            complete: !ownerResult.incompleteAgentIds.has(entry.agentId)
+          })))
         }
       } catch (error) {
         console.error(`[AgentController] Failed to get questions for runtime ${runtimeId}:`, error)

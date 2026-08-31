@@ -21,6 +21,16 @@ import {
   type LaunchEvent,
   type PlaceholderOptions
 } from './placeholderLaunch'
+import {
+  appendVisibleTextDelta,
+  associateChildSessions,
+  collectSessionSubtreeIds,
+  getChildSessionId,
+  getToolMetadataOutput,
+  mergeLiveMessagePart,
+  type ChildSessionDescriptor
+} from '../lib/subagent-progress'
+import { getPendingInterruptStatus } from '../lib/interrupt-status'
 
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
@@ -80,6 +90,30 @@ interface HistoricalMessagePart {
 interface HistoricalSessionMessage {
   info: HistoricalMessageInfo
   parts: HistoricalMessagePart[]
+}
+
+type ChildSessionInfo = ChildSessionDescriptor
+
+interface HydratedChildSession {
+  info: ChildSessionInfo
+  messages: unknown
+}
+
+interface ChildSessionHydrationResult {
+  sessions: HydratedChildSession[]
+  complete: boolean
+}
+
+interface PendingQuestionSnapshot {
+  agentId: string
+  questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }>
+  complete?: boolean
+}
+
+interface PendingPermissionSnapshot {
+  agentId: string
+  permissions: PermissionRequestPayload[]
+  complete?: boolean
 }
 
 // ── Agent State ──
@@ -392,6 +426,8 @@ const sessionStepDepth = new Map<string, number>()
 // tool part exposes its childSessionId via state.metadata so the parent's
 // lastActivityAt and the stalled-watchdog can see through the indirection.
 const childSessionToAgent = new Map<string, string>()
+const childSessions = new Map<string, ChildSessionInfo>()
+const childHydrationRetryAgents = new Set<string>()
 
 /** Clear step depth for a session and restore the parent model if it was
  *  overwritten by a sub-agent. Returns true if the model was restored. */
@@ -712,16 +748,6 @@ function getToolState(partState: Record<string, unknown> | undefined): string | 
   return typeof status === 'string' ? status : undefined
 }
 
-/** Extract a sub-agent sessionId from a tool part's state.metadata.
- *  The task tool sets `metadata: { sessionId }` via ctx.metadata() both when
- *  the sub-session is created (running) and in the final return (completed),
- *  so we can read it at any point in the tool's lifecycle. */
-function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
-  const metadata = partState?.metadata as Record<string, unknown> | undefined
-  const sessionId = metadata?.sessionId
-  return typeof sessionId === 'string' ? sessionId : undefined
-}
-
 function stringifyToolInput(input: unknown): string | undefined {
   if (input === undefined) return undefined
   try {
@@ -746,6 +772,9 @@ function getToolOutput(part: Record<string, unknown>, partState: Record<string, 
 
   const raw = partState?.raw
   if (typeof raw === 'string' && raw.trim()) return raw
+
+  const metadataOutput = getToolMetadataOutput(partState)
+  if (metadataOutput !== undefined) return metadataOutput
 
   return undefined
 }
@@ -824,13 +853,7 @@ function upsertMessage(message: LiveMessage): LiveMessage {
 function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): void {
   const existingPart = message.parts.find((candidate) => candidate.id === nextPart.id)
   if (existingPart) {
-    existingPart.type = nextPart.type
-    existingPart.text = nextPart.text
-    existingPart.toolName = nextPart.toolName
-    existingPart.toolState = nextPart.toolState
-    // Don't clobber a known childSessionId with undefined — the parent tool
-    // part may receive updates that omit metadata.
-    if (nextPart.childSessionId) existingPart.childSessionId = nextPart.childSessionId
+    mergeLiveMessagePart(existingPart, nextPart)
     return
   }
 
@@ -852,7 +875,12 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
     nextPart.toolName = part.tool
     nextPart.toolState = part.state?.status
     nextPart.toolInput = stringifyToolInput(part.state?.input)
-    nextPart.text = part.text ?? part.state?.output ?? part.state?.error ?? part.state?.title ?? part.state?.raw
+    nextPart.text = part.text
+      ?? part.state?.output
+      ?? part.state?.error
+      ?? part.state?.title
+      ?? part.state?.raw
+      ?? getToolMetadataOutput(part.state as Record<string, unknown> | undefined)
     nextPart.childSessionId = getChildSessionId(part.state as Record<string, unknown> | undefined)
   }
 
@@ -959,14 +987,17 @@ function hydrateHistoricalMessages(entries: unknown): void {
     }
 
     const agent = findAgentBySession(entry.info.sessionID)
-    if (!agent) continue
+    const owner = agent ?? findAgentByChildSession(entry.info.sessionID)
 
-    // Re-index any sub-agent sessions surfaced by this restore so the watchdog
-    // and live-activity tracking can see through task-tool indirection on
-    // cold start.
-    for (const part of message.parts) {
-      if (part.childSessionId) registerChildSession(part.childSessionId, agent.id)
+    if (owner) {
+      for (const part of message.parts) {
+        if (part.childSessionId) registerChildSession(part.childSessionId, owner.id)
+      }
     }
+
+    associateKnownChildren(entry.info.sessionID)
+
+    if (!agent) continue
 
     agent.lastActivityAt = Math.max(agent.lastActivityAt, createdAt)
 
@@ -1043,6 +1074,44 @@ function hydrateHistoricalMessages(entries: unknown): void {
   }
 }
 
+function hydrateChildSessions(entries: unknown, parentAgentId: string): void {
+  if (!Array.isArray(entries)) return
+
+  for (const entry of entries as HydratedChildSession[]) {
+    if (!entry?.info?.id || !entry.info.parentID) continue
+    childSessions.set(entry.info.id, entry.info)
+  }
+
+  for (const entry of entries as HydratedChildSession[]) {
+    if (!entry?.info?.id || !entry.info.parentID) continue
+    const owner = findAgentBySession(entry.info.parentID)
+      ?? findAgentByChildSession(entry.info.parentID)
+      ?? state.agents.get(parentAgentId)
+    if (owner) registerChildSession(entry.info.id, owner.id)
+  }
+
+  for (const entry of entries as HydratedChildSession[]) {
+    if (!entry?.info?.id) continue
+    hydrateHistoricalMessages(entry.messages)
+    associateKnownChildren(entry.info.parentID)
+  }
+}
+
+function applyChildSessionHydration(result: unknown, parentAgentId: string): void {
+  const hydration = result as ChildSessionHydrationResult | undefined
+  if (!hydration || !Array.isArray(hydration.sessions)) return
+  hydrateChildSessions(hydration.sessions, parentAgentId)
+  if (hydration.complete) childHydrationRetryAgents.delete(parentAgentId)
+  else childHydrationRetryAgents.add(parentAgentId)
+}
+
+async function refetchChildSessions(agentId: string): Promise<void> {
+  if (!window.api) return
+  const result = await window.api.getChildSessions(agentId)
+  if (!result.ok || !result.data) return
+  applyChildSessionHydration(result.data, agentId)
+}
+
 // ── Viewed Agent Suppression ──
 
 let viewedAgentId: string | null = null
@@ -1106,6 +1175,24 @@ function processEvent(payload: OpenCodeEventPayload): void {
   }
 
   switch (type) {
+    case 'session.created': {
+      const info = props.info as Record<string, unknown> | undefined
+      const childSessionId = (info?.id ?? props.sessionID) as string | undefined
+      const parentSessionId = info?.parentID as string | undefined
+      if (!childSessionId || !parentSessionId) break
+
+      childSessions.set(childSessionId, {
+        id: childSessionId,
+        parentID: parentSessionId,
+        title: info?.title as string | undefined
+      })
+      const owner = findAgentBySession(parentSessionId) ?? findAgentByChildSession(parentSessionId)
+      if (owner) registerChildSession(childSessionId, owner.id)
+      associateKnownChildren(parentSessionId)
+      emit({ messages: true })
+      break
+    }
+
     case 'session.status': {
       const sessionId = props.sessionID as string
       const statusInfo = props.status as { type: string }
@@ -1303,6 +1390,17 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const info = props.info as Record<string, unknown> | undefined
       const sessionId = info?.id as string | undefined
       if (!sessionId) break
+      const parentSessionId = info?.parentID as string | undefined
+      if (parentSessionId) {
+        childSessions.set(sessionId, {
+          id: sessionId,
+          parentID: parentSessionId,
+          title: info?.title as string | undefined
+        })
+        const owner = findAgentBySession(parentSessionId) ?? findAgentByChildSession(parentSessionId)
+        if (owner) registerChildSession(sessionId, owner.id)
+        associateKnownChildren(parentSessionId)
+      }
       const agent = findAgentBySession(sessionId)
       if (agent) {
         const time = info?.time as { updated?: number; compacting?: number } | undefined
@@ -1599,14 +1697,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
         // Update agent activity (but don't clobber blocked/stopping/terminal states)
         let agentChanged = false
         const agent = findAgentBySession(sessionId)
+        const owner = agent ?? findAgentByChildSession(sessionId)
+        if (partType === 'tool') {
+          const childId = getChildSessionId(toolState)
+          if (childId && owner) registerChildSession(childId, owner.id)
+          associateKnownChildren(sessionId)
+        }
         if (agent) {
-          // Index any sub-agent session this tool just exposed so streaming
-          // events on the child session can still bump the parent's activity.
-          if (partType === 'tool') {
-            const childId = getChildSessionId(toolState)
-            if (childId) registerChildSession(childId, agent.id)
-          }
-
           // Extract PR URL from assistant text and tool output parts, but only
           // when the "Create PR" flow was explicitly triggered by the user.
           if (prExtractEnabled.has(agent.id) && message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
@@ -1659,6 +1756,20 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
+    case 'message.part.delta': {
+      if (props.field !== 'text' || typeof props.delta !== 'string') break
+      const sessionId = props.sessionID as string
+      const messageId = props.messageID as string
+      const partId = props.partID as string
+      const messages = state.messages.get(sessionId) ?? []
+      if (!appendVisibleTextDelta(messages, messageId, partId, props.delta)) break
+      const agent = findAgentBySession(sessionId)
+      if (agent) agent.lastActivityAt = Date.now()
+      else bumpParentActivityForChildSession(sessionId)
+      emitMessagesThrottled(false)
+      break
+    }
+
     case 'permission.asked': {
       const permissionId = props.id as string
       const sessionId = props.sessionID as string
@@ -1673,17 +1784,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
       // Try session-based lookup first, fall back to runtime-based lookup
       // in case the sessionID doesn't match (e.g. event ordering race)
-      const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
+      const agent = findAgentBySession(sessionId) ?? findAgentByChildSession(sessionId) ?? findAgentByRuntime(runtimeId)
       if (agent) {
-        notifyIfNeeded(agent, 'needs_approval')
-
-        agent.status = 'needs_approval'
-        agent.blockedSince = agent.blockedSince ?? Date.now()
-        agent.lastActivityAt = Date.now()
-        // A new permission request means the server has moved on from whatever
-        // the user previously responded to, so clear the guard.
-        agent.respondedAt = undefined
-
         state.permissions.set(permissionId, {
           id: permissionId,
           agentId: agent.id,
@@ -1693,6 +1795,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
           pattern: patterns,
           createdAt: Date.now()
         })
+        updateAgentAfterInterruptChange(agent, true, false)
+        agent.lastActivityAt = Date.now()
 
         emit({ agents: true, permissions: true })
       }
@@ -1704,14 +1808,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       state.permissions.delete(permissionId)
 
       const sessionId = props.sessionID as string
-      const agent = findAgentBySession(sessionId)
+      const agent = findAgentBySession(sessionId) ?? findAgentByChildSession(sessionId)
       if (agent) {
-        if (agent.status !== 'stopping') {
-          agent.status = 'running'
-          agent.blockedSince = undefined
-        }
+        updateAgentAfterInterruptChange(agent)
         agent.lastActivityAt = Date.now()
-
       }
 
       emit({ agents: true, permissions: true })
@@ -1725,7 +1825,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
       // Try session-based lookup first, fall back to runtime-based lookup
       // in case the sessionID doesn't match (e.g. event ordering race)
-      const agent = findAgentBySession(sessionId) ?? findAgentByRuntime(runtimeId)
+      const agent = findAgentBySession(sessionId) ?? findAgentByChildSession(sessionId) ?? findAgentByRuntime(runtimeId)
 
       if (!agent) {
         // No agent matched — log so we can diagnose. The 30s reconciliation
@@ -1741,13 +1841,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // Without this the agent stays "running" in the UI while the server is
       // actually blocked waiting for an answer, and the user has no way to
       // know a question is pending.
-      notifyIfNeeded(agent, 'needs_input')
-      agent.status = 'needs_input'
-      agent.blockedSince = agent.blockedSince ?? Date.now()
-      agent.lastActivityAt = Date.now()
-      // A new question means the server has moved on, so clear the guard.
-      agent.respondedAt = undefined
-
       const hasUsableQuestions = Array.isArray(questions) && questions.length > 0
       if (hasUsableQuestions) {
         state.questions.set(requestId, {
@@ -1757,7 +1850,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
           questions,
           createdAt: Date.now()
         })
+        updateAgentAfterInterruptChange(agent, true, false)
       } else {
+        notifyIfNeeded(agent, 'needs_input')
+        agent.status = 'needs_input'
+        agent.blockedSince = agent.blockedSince ?? Date.now()
+        agent.respondedAt = undefined
         // Malformed payload: agent went into needs_input but we don't have the
         // structured question content. Schedule a fast reconciliation so the
         // user isn't stuck looking at a bare placeholder. The next periodic
@@ -1767,6 +1865,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         })
         scheduleQuestionReconcile()
       }
+      agent.lastActivityAt = Date.now()
 
       emit({ agents: true, questions: true })
       break
@@ -1777,14 +1876,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       state.questions.delete(requestId)
 
       const sessionId = props.sessionID as string
-      const agent = findAgentBySession(sessionId)
+      const agent = findAgentBySession(sessionId) ?? findAgentByChildSession(sessionId)
       if (agent) {
-        if (agent.status !== 'stopping') {
-          agent.status = 'running'
-          agent.blockedSince = undefined
-        }
+        updateAgentAfterInterruptChange(agent)
         agent.lastActivityAt = Date.now()
-
       }
 
       emit({ agents: true, questions: true })
@@ -1796,14 +1891,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
       state.questions.delete(requestId)
 
       const sessionId = props.sessionID as string
-      const agent = findAgentBySession(sessionId)
+      const agent = findAgentBySession(sessionId) ?? findAgentByChildSession(sessionId)
       if (agent) {
-        if (agent.status !== 'stopping') {
-          agent.status = 'running'
-          agent.blockedSince = undefined
-        }
+        updateAgentAfterInterruptChange(agent)
         agent.lastActivityAt = Date.now()
-
       }
 
       emit({ agents: true, questions: true })
@@ -1987,7 +2078,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // A session was deleted (from another client, or server cleanup).
       // Transition the bound agent to errored so the user knows the session
       // is gone and any further interaction would fail.
-      const sessionId = props.sessionID as string
+      const info = props.info as Record<string, unknown> | undefined
+      const sessionId = (props.sessionID ?? info?.id) as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
         agent.status = 'errored'
@@ -1998,15 +2090,19 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
         // Clean up any pending questions/permissions for this session
         for (const [questionId, question] of state.questions) {
-          if (question.sessionId === sessionId) state.questions.delete(questionId)
+          if (question.agentId === agent.id || question.sessionId === sessionId) state.questions.delete(questionId)
         }
         for (const [permissionId, permission] of state.permissions) {
-          if (permission.sessionId === sessionId) state.permissions.delete(permissionId)
+          if (permission.agentId === agent.id || permission.sessionId === sessionId) state.permissions.delete(permissionId)
         }
 
         state.messages.delete(sessionId)
+        clearChildSessionsForAgent(agent.id)
+        childHydrationRetryAgents.delete(agent.id)
         persistAgentMeta(agent.id, { persistedStatus: 'errored' })
         emit({ agents: true, messages: true, questions: true, permissions: true })
+      } else if (findAgentByChildSession(sessionId) || childSessions.has(sessionId)) {
+        removeChildSessionTree(sessionId)
       }
       break
     }
@@ -2222,6 +2318,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
       emit({ messages: true })
     })
+    void refetchChildSessions(payload.id).then(() => emit({ messages: true }))
 
     // Seed configuredModel from runtime config as an authoritative fallback
     // in case step-depth tracking misses events or the resume window is too small.
@@ -2266,6 +2363,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   sessionStepDepth.delete(agent.sessionId)
   clearChildSessionsForAgent(payload.id)
   pendingMessages.delete(payload.id)
+  childHydrationRetryAgents.delete(payload.id)
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
   agent.prUrl = null
@@ -2300,6 +2398,7 @@ function removeAgentState(agentId: string): void {
   taskSummaryLocked.delete(agentId)
   prExtractEnabled.delete(agentId)
   pendingMessages.delete(agentId)
+  childHydrationRetryAgents.delete(agentId)
   const compactingTimer = compactingTimers.get(agentId)
   if (compactingTimer) {
     clearTimeout(compactingTimer)
@@ -2496,15 +2595,17 @@ function scheduleQuestionReconcile(): void {
  * - Ensures agents with pending questions are in 'needs_input' status
  */
 function reconcileQuestions(
-  serverQuestions: Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>
+  serverQuestions: PendingQuestionSnapshot[]
 ): void {
   let changed = false
 
   // Build a set of all server-reported question IDs and which agents were queried
   const serverQuestionIds = new Set<string>()
   const reconciledAgentIds = new Set<string>()
+  const snapshotAgentIds = new Set<string>()
   for (const entry of serverQuestions) {
-    reconciledAgentIds.add(entry.agentId)
+    snapshotAgentIds.add(entry.agentId)
+    if (entry.complete !== false) reconciledAgentIds.add(entry.agentId)
     for (const q of entry.questions) {
       serverQuestionIds.add(q.id)
     }
@@ -2528,18 +2629,6 @@ function reconcileQuestions(
       }
     }
 
-    // If we have pending questions for this agent, ensure it shows needs_input
-    const agent = state.agents.get(entry.agentId)
-    if (agent && entry.questions.length > 0 && agent.status !== 'needs_input' && agent.status !== 'stopping') {
-      console.warn(
-        `[AgentStore] Reconciliation: agent ${agent.id} has pending questions but status is ${agent.status}, correcting to needs_input`
-      )
-
-      agent.status = 'needs_input'
-      agent.blockedSince = agent.blockedSince ?? Date.now()
-      agent.lastActivityAt = Date.now()
-      changed = true
-    }
   }
 
   // Remove stale local questions that the server no longer reports.
@@ -2556,18 +2645,12 @@ function reconcileQuestions(
     }
   }
 
-  // For agents whose questions were all cleaned up, clear blocked state
-  // so the interrupt guard doesn't permanently lock them in needs_input
-  for (const agentId of reconciledAgentIds) {
+  for (const agentId of snapshotAgentIds) {
     const agent = state.agents.get(agentId)
     if (!agent) continue
-    if (agent.status === 'needs_input' && !agentHasPendingInterrupts(agentId)) {
-      agent.status = 'running'
-      agent.blockedSince = undefined
-      agent.lastActivityAt = Date.now()
-
-      changed = true
-    }
+    const previousStatus = agent.status
+    updateAgentAfterInterruptChange(agent, false, false)
+    if (agent.status !== previousStatus) changed = true
   }
 
   if (changed) emit({ agents: true, questions: true })
@@ -2580,15 +2663,17 @@ function reconcileQuestions(
  * - Ensures agents with pending permissions are in 'needs_approval' status
  */
 function reconcilePermissions(
-  serverPermissions: Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>
+  serverPermissions: PendingPermissionSnapshot[]
 ): void {
   let changed = false
 
   // Build a set of all server-reported permission IDs and which agents were queried
   const serverPermissionIds = new Set<string>()
   const reconciledAgentIds = new Set<string>()
+  const snapshotAgentIds = new Set<string>()
   for (const entry of serverPermissions) {
-    reconciledAgentIds.add(entry.agentId)
+    snapshotAgentIds.add(entry.agentId)
+    if (entry.complete !== false) reconciledAgentIds.add(entry.agentId)
     for (const perm of entry.permissions) {
       serverPermissionIds.add(perm.id)
     }
@@ -2619,18 +2704,6 @@ function reconcilePermissions(
       }
     }
 
-    // If we have pending permissions for this agent, ensure it shows needs_approval
-    const agent = state.agents.get(entry.agentId)
-    if (agent && entry.permissions.length > 0 && agent.status !== 'needs_approval' && agent.status !== 'stopping') {
-      console.warn(
-        `[AgentStore] Reconciliation: agent ${agent.id} has pending permissions but status is ${agent.status}, correcting to needs_approval`
-      )
-
-      agent.status = 'needs_approval'
-      agent.blockedSince = agent.blockedSince ?? Date.now()
-      agent.lastActivityAt = Date.now()
-      changed = true
-    }
   }
 
   // Remove stale local permissions that the server no longer reports.
@@ -2645,18 +2718,12 @@ function reconcilePermissions(
     }
   }
 
-  // For agents whose permissions were all cleaned up, clear blocked state
-  // so the interrupt guard doesn't permanently lock them in needs_approval
-  for (const agentId of reconciledAgentIds) {
+  for (const agentId of snapshotAgentIds) {
     const agent = state.agents.get(agentId)
     if (!agent) continue
-    if (agent.status === 'needs_approval' && !agentHasPendingInterrupts(agentId)) {
-      agent.status = 'running'
-      agent.blockedSince = undefined
-      agent.lastActivityAt = Date.now()
-
-      changed = true
-    }
+    const previousStatus = agent.status
+    updateAgentAfterInterruptChange(agent, false, false)
+    if (agent.status !== previousStatus) changed = true
   }
 
   if (changed) emit({ agents: true, permissions: true })
@@ -2697,6 +2764,14 @@ function findAgentByChildSession(sessionId: string): LiveAgent | undefined {
   const agentId = childSessionToAgent.get(sessionId)
   if (!agentId) return undefined
   return state.agents.get(agentId)
+}
+
+function associateKnownChildren(parentSessionId: string): void {
+  const taskParts = (state.messages.get(parentSessionId) ?? [])
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === 'tool' && part.toolName === 'task')
+  if (taskParts.length === 0) return
+  associateChildSessions(taskParts, [...childSessions.values()], parentSessionId)
 }
 
 /** Bump lastActivityAt on the parent agent of a sub-agent's child session.
@@ -2742,7 +2817,11 @@ function registerChildSession(childSessionId: string, parentAgentId: string): vo
  *  and on session reset. */
 function clearChildSessionsForAgent(agentId: string): void {
   for (const [childSessionId, parentId] of childSessionToAgent.entries()) {
-    if (parentId === agentId) childSessionToAgent.delete(childSessionId)
+    if (parentId !== agentId) continue
+    childSessionToAgent.delete(childSessionId)
+    childSessions.delete(childSessionId)
+    state.messages.delete(childSessionId)
+    state.eventLog.delete(childSessionId)
   }
 }
 
@@ -2778,6 +2857,60 @@ function agentHasPendingInterrupts(agentId: string): boolean {
     if (permission.agentId === agentId) return true
   }
   return false
+}
+
+function updateAgentAfterInterruptChange(
+  agent: LiveAgent,
+  notify = false,
+  markResponded = true
+): void {
+  if (agent.status === 'stopping') return
+  const pendingStatus = getPendingInterruptStatus(agent.id, state.permissions.values(), state.questions.values())
+  if (pendingStatus) {
+    if (notify) notifyIfNeeded(agent, pendingStatus)
+    agent.status = pendingStatus
+    agent.blockedSince = agent.blockedSince ?? Date.now()
+    agent.respondedAt = undefined
+    return
+  }
+  if (!markResponded && agent.status !== 'needs_input' && agent.status !== 'needs_approval') return
+  agent.status = 'running'
+  agent.blockedSince = undefined
+  agent.respondedAt = markResponded ? Date.now() : undefined
+}
+
+function removeChildSessionTree(sessionId: string): void {
+  const owner = findAgentByChildSession(sessionId)
+  const removedIds = collectSessionSubtreeIds(childSessions.values(), sessionId)
+
+  for (const removedId of removedIds) {
+    childSessionToAgent.delete(removedId)
+    childSessions.delete(removedId)
+    state.messages.delete(removedId)
+    state.eventLog.delete(removedId)
+    for (const [questionId, question] of state.questions) {
+      if (question.sessionId === removedId) state.questions.delete(questionId)
+    }
+    for (const [permissionId, permission] of state.permissions) {
+      if (permission.sessionId === removedId) state.permissions.delete(permissionId)
+    }
+  }
+
+  for (const messages of state.messages.values()) {
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (part.childSessionId && removedIds.has(part.childSessionId)) {
+          part.childSessionId = undefined
+        }
+      }
+    }
+  }
+
+  if (owner && (owner.status === 'needs_input' || owner.status === 'needs_approval')) {
+    updateAgentAfterInterruptChange(owner, false, false)
+    owner.lastActivityAt = Date.now()
+  }
+  emit({ agents: true, messages: true, questions: true, permissions: true })
 }
 
 /**
@@ -2887,6 +3020,8 @@ async function refetchSessionMessages(agentId: string): Promise<void> {
       emit({ messages: true })
     }
   }
+  await refetchChildSessions(agentId)
+  emit({ messages: true })
 }
 
 function mapSessionStatus(statusType: string): AgentStatus {
@@ -3014,17 +3149,26 @@ export function useAgentStore() {
         }
 
         const messageResults = await Promise.all(
-          agentsResult.data.map(async (agent) => ({
-            result: await window.api.getMessages(agent.id)
-          }))
+          agentsResult.data.map(async (agent) => {
+            const [messages, children] = await Promise.all([
+              window.api.getMessages(agent.id),
+              window.api.getChildSessions(agent.id)
+            ])
+            return { agentId: agent.id, messages, children }
+          })
         )
 
         if (cancelled) return
 
-        for (const { result } of messageResults) {
-          if (!result.ok) continue
-          hydrateHistoricalMessages(result.data)
-          shouldEmit = true
+        for (const { agentId, messages, children } of messageResults) {
+          if (messages.ok) {
+            hydrateHistoricalMessages(messages.data)
+            shouldEmit = true
+          }
+          if (children.ok) {
+            applyChildSessionHydration(children.data, agentId)
+            shouldEmit = true
+          }
         }
       }
 
@@ -3039,7 +3183,7 @@ export function useAgentStore() {
       try {
         const questionsResult = await window.api.listQuestions()
         if (!cancelled && questionsResult.ok && questionsResult.data) {
-          for (const entry of questionsResult.data as Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>) {
+          for (const entry of questionsResult.data as PendingQuestionSnapshot[]) {
             for (const q of entry.questions) {
               state.questions.set(q.id, {
                 id: q.id,
@@ -3049,8 +3193,10 @@ export function useAgentStore() {
                 createdAt: Date.now()
               })
             }
+            const agent = state.agents.get(entry.agentId)
+            if (agent) updateAgentAfterInterruptChange(agent, false, false)
           }
-          emit({ questions: true })
+          emit({ agents: true, questions: true })
         }
       } catch {
         // Questions API may not be available on older servers
@@ -3060,7 +3206,7 @@ export function useAgentStore() {
       try {
         const permissionsResult = await window.api.listPermissions()
         if (!cancelled && permissionsResult.ok && permissionsResult.data) {
-          for (const entry of permissionsResult.data as Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>) {
+          for (const entry of permissionsResult.data as PendingPermissionSnapshot[]) {
             for (const perm of entry.permissions) {
               const permType = perm.permission ?? 'unknown'
               const title = perm.patterns?.length
@@ -3077,8 +3223,10 @@ export function useAgentStore() {
                 createdAt: Date.now()
               })
             }
+            const agent = state.agents.get(entry.agentId)
+            if (agent) updateAgentAfterInterruptChange(agent, false, false)
           }
-          emit({ permissions: true })
+          emit({ agents: true, permissions: true })
         }
       } catch {
         // Permissions API may not be available on older servers
@@ -3181,7 +3329,7 @@ export function useAgentStore() {
         const questionsResult = await window.api.listQuestions()
         if (cancelled) return
         if (questionsResult.ok && questionsResult.data) {
-          reconcileQuestions(questionsResult.data as Array<{ agentId: string; questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }> }>)
+          reconcileQuestions(questionsResult.data as PendingQuestionSnapshot[])
         }
 
         // Same for permissions — if a permission.asked SSE event was missed,
@@ -3189,7 +3337,13 @@ export function useAgentStore() {
         const permissionsResult = await window.api.listPermissions()
         if (cancelled) return
         if (permissionsResult.ok && permissionsResult.data) {
-          reconcilePermissions(permissionsResult.data as Array<{ agentId: string; permissions: Array<PermissionRequestPayload> }>)
+          reconcilePermissions(permissionsResult.data as PendingPermissionSnapshot[])
+        }
+
+        if (childHydrationRetryAgents.size > 0) {
+          await Promise.all([...childHydrationRetryAgents].map((agentId) => refetchChildSessions(agentId)))
+          if (cancelled) return
+          emit({ messages: true })
         }
 
         // Watchdog: if an agent has been 'running' with no activity for N minutes,
@@ -3462,32 +3616,28 @@ export function useAgentStore() {
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
     const removedPermission = state.permissions.get(permissionId)
 
-    // Optimistically clear permission and set running
     state.permissions.delete(permissionId)
     if (agent) {
-      if (agent.status !== 'stopping') {
-        agent.status = 'running'
-        agent.blockedSince = undefined
-      }
+      updateAgentAfterInterruptChange(agent)
       agent.lastActivityAt = Date.now()
-      agent.respondedAt = Date.now()
-
     }
     emit({ agents: true, permissions: true })
 
     const result = await window.api.respondToPermission(agentId, permissionId, response)
 
     if (result && !result.ok) {
-      const agentAfter = state.agents.get(agentId)
-      if (agentAfter && agentAfter.status === 'running') {
-        agentAfter.status = previousStatus ?? 'idle'
-        agentAfter.blockedSince = previousBlockedSince
-        agentAfter.respondedAt = undefined
-        agentAfter.lastActivityAt = Date.now()
-        agentAfter.labelIds = previousLabelIds
-      }
       if (removedPermission) {
         state.permissions.set(permissionId, removedPermission)
+      }
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter) {
+        updateAgentAfterInterruptChange(agentAfter, false, false)
+        if (!removedPermission) {
+          agentAfter.status = previousStatus ?? 'idle'
+          agentAfter.blockedSince = previousBlockedSince
+        }
+        agentAfter.lastActivityAt = Date.now()
+        agentAfter.labelIds = previousLabelIds
       }
       emit({ agents: true, permissions: true })
     }
@@ -3504,30 +3654,28 @@ export function useAgentStore() {
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
     const removedQuestion = state.questions.get(requestId)
 
-    // Optimistically clear question and set running
     state.questions.delete(requestId)
     if (agent) {
-      agent.status = 'running'
-      agent.blockedSince = undefined
+      updateAgentAfterInterruptChange(agent)
       agent.lastActivityAt = Date.now()
-      agent.respondedAt = Date.now()
-
     }
     emit({ agents: true, questions: true })
 
     const result = await window.api.replyToQuestion(agentId, requestId, answers)
 
     if (result && !result.ok) {
-      const agentAfter = state.agents.get(agentId)
-      if (agentAfter && agentAfter.status === 'running') {
-        agentAfter.status = previousStatus ?? 'idle'
-        agentAfter.blockedSince = previousBlockedSince
-        agentAfter.respondedAt = undefined
-        agentAfter.lastActivityAt = Date.now()
-        agentAfter.labelIds = previousLabelIds
-      }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
+      }
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter) {
+        updateAgentAfterInterruptChange(agentAfter, false, false)
+        if (!removedQuestion) {
+          agentAfter.status = previousStatus ?? 'idle'
+          agentAfter.blockedSince = previousBlockedSince
+        }
+        agentAfter.lastActivityAt = Date.now()
+        agentAfter.labelIds = previousLabelIds
       }
       emit({ agents: true, questions: true })
     }
@@ -3544,30 +3692,28 @@ export function useAgentStore() {
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
     const removedQuestion = state.questions.get(requestId)
 
-    // Optimistically clear question and set running
     state.questions.delete(requestId)
     if (agent) {
-      agent.status = 'running'
-      agent.blockedSince = undefined
+      updateAgentAfterInterruptChange(agent)
       agent.lastActivityAt = Date.now()
-      agent.respondedAt = Date.now()
-
     }
     emit({ agents: true, questions: true })
 
     const result = await window.api.rejectQuestion(agentId, requestId)
 
     if (result && !result.ok) {
-      const agentAfter = state.agents.get(agentId)
-      if (agentAfter && agentAfter.status === 'running') {
-        agentAfter.status = previousStatus ?? 'idle'
-        agentAfter.blockedSince = previousBlockedSince
-        agentAfter.respondedAt = undefined
-        agentAfter.lastActivityAt = Date.now()
-        agentAfter.labelIds = previousLabelIds
-      }
       if (removedQuestion) {
         state.questions.set(requestId, removedQuestion)
+      }
+      const agentAfter = state.agents.get(agentId)
+      if (agentAfter) {
+        updateAgentAfterInterruptChange(agentAfter, false, false)
+        if (!removedQuestion) {
+          agentAfter.status = previousStatus ?? 'idle'
+          agentAfter.blockedSince = previousBlockedSince
+        }
+        agentAfter.lastActivityAt = Date.now()
+        agentAfter.labelIds = previousLabelIds
       }
       emit({ agents: true, questions: true })
     }

@@ -271,10 +271,53 @@ function makeDemoMessages(agentId: string) {
           type: 'tool-invocation',
           tool: 'read_file',
           state: { status: 'completed', title: 'Read src/index.ts' }
-        }
+        },
+        ...(agentId === 'agent-1' ? [{
+          id: 'part-agent-1-task',
+          type: 'tool',
+          tool: 'task',
+          state: {
+            status: 'running',
+            input: { description: 'Inspect rate limiter implementation' },
+            metadata: { sessionId: 'session-1-child' }
+          }
+        }] : [])
       ]
     }
   ]
+}
+
+function makeDemoChildSessions(agentId: string) {
+  if (agentId !== 'agent-1') return []
+  const now = Date.now()
+  return [{
+    info: {
+      id: 'session-1-child',
+      parentID: 'session-1',
+      title: 'Inspect rate limiter implementation (@explore subagent)'
+    },
+    messages: [{
+      info: {
+        id: 'msg-agent-1-child',
+        sessionID: 'session-1-child',
+        role: 'assistant' as const,
+        time: { created: now - 30000 }
+      },
+      parts: [
+        { id: 'part-agent-1-child-text', type: 'text', text: 'Tracing the current request middleware and Redis client setup.' },
+        {
+          id: 'part-agent-1-child-tool',
+          type: 'tool',
+          tool: 'grep',
+          state: {
+            status: 'running',
+            input: { pattern: 'rateLimit', path: 'src' },
+            metadata: { output: 'src/middleware/rateLimit.ts:18' }
+          }
+        }
+      ]
+    }]
+  }]
 }
 
 export function createDemoApi(): OrchestratorApi {
@@ -288,6 +331,7 @@ export function createDemoApi(): OrchestratorApi {
     removeAgent: noop,
     resetSession: noop,
     getMessages: (agentId: string) => ok(makeDemoMessages(agentId)),
+    getChildSessions: (agentId: string) => ok({ sessions: makeDemoChildSessions(agentId), complete: true }),
     listCommands: () => ok([]),
     executeCommand: noop,
     getConfig: (agentId: string) => ok({ model: DEMO_MODELS[agentId] || 'claude-sonnet-4-6' }),

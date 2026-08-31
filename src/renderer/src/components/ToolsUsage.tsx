@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
+import { SubagentProgress } from './SubagentProgress'
+import type { ChildTranscriptEntry } from '../lib/subagent-progress'
 
 export interface ToolCall {
   id: string
@@ -15,21 +17,6 @@ export interface ToolCall {
    *  transcript, computed by the app whenever the parent message list
    *  rebuilds. Populated only when `childSessionId` is set. */
   childTranscript?: ChildTranscriptEntry[]
-}
-
-/** Compact representation of a sub-agent's live activity for display inside
- *  a `task` tool bubble. We flatten text and tool calls into a linear list
- *  because the nested rendering doesn't need the full message grouping. */
-export interface ChildTranscriptEntry {
-  id: string
-  kind: 'text' | 'tool'
-  /** For text entries: the assistant's text. For tool entries: the tool name. */
-  label: string
-  /** For tool entries: the lifecycle state (so we can show a spinner). */
-  toolState?: 'running' | 'completed' | 'failed'
-  /** For tool entries: a short input summary (matches the parent bubble's
-   *  `summarizeToolInput` output). */
-  toolSummary?: string
 }
 
 interface ToolsUsageProps {
@@ -60,21 +47,24 @@ function formatRelativeTime(timestamp: number): string {
   return `${days}d ago`
 }
 
+export function shouldAutoExpandTool(tool: ToolCall, verbose: boolean, manuallyCollapsed: boolean): boolean {
+  return !manuallyCollapsed && (verbose || (tool.name === 'task' && tool.state === 'running'))
+}
+
 export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
-    verbose ? new Set(tools.map((t) => t.id)) : new Set()
-  )
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(
+    tools.filter((tool) => shouldAutoExpandTool(tool, verbose, false)).map((tool) => tool.id)
+  ))
   const [filterQuery, setFilterQuery] = useState('')
   // Track items the user explicitly collapsed so we don't re-expand them
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
 
-  // When verbose is on, auto-expand only *new* items (not manually-collapsed ones)
+  // Auto-expand verbose entries and running tasks unless the user collapsed them.
   useEffect(() => {
-    if (!verbose) return
     setExpandedIds((prev) => {
       const next = new Set(prev)
       for (const tool of tools) {
-        if (!manuallyCollapsedRef.current.has(tool.id)) {
+        if (shouldAutoExpandTool(tool, verbose, manuallyCollapsedRef.current.has(tool.id))) {
           next.add(tool.id)
         }
       }
@@ -101,7 +91,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: T
       const next = new Set(prev)
       if (next.has(toolId)) {
         next.delete(toolId)
-        if (verbose) manuallyCollapsedRef.current.add(toolId)
+        manuallyCollapsedRef.current.add(toolId)
       } else {
         next.add(toolId)
         manuallyCollapsedRef.current.delete(toolId)
@@ -203,6 +193,13 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: T
                       </pre>
                     </div>
                   )}
+                  {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
+                    <SubagentProgress
+                      entries={tool.childTranscript ?? []}
+                      state={tool.state}
+                      childSessionId={tool.childSessionId}
+                    />
+                  )}
                   {tool.output && (
                     <div>
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
@@ -213,7 +210,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: T
                       </pre>
                     </div>
                   )}
-                  {!tool.input && !tool.output && (
+                  {!tool.input && !tool.output && tool.name !== 'task' && (
                     <div className="text-[11px] text-kumo-subtle italic">No input/output data</div>
                   )}
                 </div>

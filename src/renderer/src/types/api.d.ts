@@ -23,6 +23,7 @@ export interface OrchestratorApi {
   removeAgent: (agentId: string) => Promise<IpcResult>
   resetSession: (agentId: string, prompt?: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
+  getChildSessions: (agentId: string) => Promise<IpcResult>
   listCommands: (agentId: string) => Promise<IpcResult>
   executeCommand: (agentId: string, command: string, args: string) => Promise<IpcResult>
   getConfig: (agentId: string) => Promise<IpcResult>
