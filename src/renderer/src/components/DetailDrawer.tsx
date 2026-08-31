@@ -47,6 +47,7 @@ import { EventLog } from './EventLog'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
+import { SubagentProgress } from './SubagentProgress'
 import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
@@ -2023,8 +2024,12 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
                   useAgentStore; we just mirror them inline so the user can
                   watch what the sub-agent is doing. Rendered above the final
                   output so the transcript reads top-to-bottom. */}
-              {tool.name === 'task' && tool.childTranscript && tool.childTranscript.length > 0 && (
-                <ChildTaskTranscript entries={tool.childTranscript} running={tool.state === 'running'} />
+              {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
+                <SubagentProgress
+                  entries={tool.childTranscript ?? []}
+                  state={tool.state}
+                  childSessionId={tool.childSessionId}
+                />
               )}
               {tool.output && (
                 <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
@@ -2043,48 +2048,6 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbose === next.verbose
 )
-
-function ChildTaskTranscript({
-  entries,
-  running
-}: {
-  entries: NonNullable<ToolCall['childTranscript']>
-  running: boolean
-}) {
-  return (
-    <div className="mt-2 rounded-md border border-kumo-line bg-kumo-overlay px-2 py-1.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-kumo-subtle">
-        {running && <CircleNotch size={10} className="animate-spin text-kumo-link" />}
-        <span>sub-agent {running ? 'working' : 'transcript'}</span>
-      </div>
-      <div className="flex flex-col gap-1">
-        {entries.map((entry) => (
-          <div key={entry.id} className="text-[10px] font-mono leading-tight">
-            {entry.kind === 'text' ? (
-              <div className="whitespace-pre-wrap break-words text-kumo-default">
-                {entry.label}
-              </div>
-            ) : (
-              <div className="flex items-start gap-1.5 text-kumo-subtle">
-                <span className={`shrink-0 ${toolIconStyle(entry.toolState)}`}>
-                  {entry.toolState === 'completed'
-                    ? '✓'
-                    : entry.toolState === 'failed'
-                    ? '✗'
-                    : '…'}
-                </span>
-                <span className="text-kumo-link">{entry.label}</span>
-                {entry.toolSummary && (
-                  <span className="truncate text-kumo-subtle">{entry.toolSummary}</span>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 /**
  * Which banner the drawer should render, derived from the agent's transient
