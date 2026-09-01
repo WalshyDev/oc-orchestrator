@@ -2816,6 +2816,7 @@ function findAgentByRuntime(runtimeId: string): LiveAgent | undefined {
 /** Tool states that mean the tool has finished and will emit no further
  *  activity. Anything else (including unset) is treated as still running. */
 const TERMINAL_TOOL_STATES = new Set(['completed', 'error', 'failed'])
+const STALLED_RESPONSE_TIMEOUT_MS = 5 * 60_000
 
 /** Find the parent agent for a sub-agent's child sessionId, or undefined if
  *  no mapping is known. */
@@ -2868,17 +2869,29 @@ function setChildSessionActivity(sessionId: string, updatedAt: number): void {
  *
  *  When a tool is in flight the model isn't hanging — it's blocked on the tool —
  *  so the "provider overloaded" watchdog does not apply. */
-function hasInFlightToolCall(sessionId: string): boolean {
-  const messages = state.messages.get(sessionId)
-  if (!messages) return false
+function hasInFlightToolCall(messages: readonly LiveMessage[] | undefined): boolean {
+  const latestMessage = messages?.[messages.length - 1]
+  if (!messages || !latestMessage) return false
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type !== 'tool') continue
       if (TERMINAL_TOOL_STATES.has(part.toolState ?? '')) continue
+      if (part.toolName === 'task' && message !== latestMessage) continue
       return true
     }
   }
   return false
+}
+
+export function isStalledResponse(
+  agent: Pick<LiveAgent, 'status' | 'lastActivityAt'>,
+  messages: readonly LiveMessage[] | undefined,
+  now: number
+): boolean {
+  return agent.status === 'running'
+    && agent.lastActivityAt > 0
+    && now - agent.lastActivityAt >= STALLED_RESPONSE_TIMEOUT_MS
+    && !hasInFlightToolCall(messages)
 }
 
 /** Record that `childSessionId` belongs to `parentAgentId` so we can bump the
@@ -3387,7 +3400,6 @@ export function useAgentStore() {
     // terminal events, etc.). Without this, agents can appear stuck in 'running'
     // indefinitely when the SSE stream misses a session.idle/completed/error event.
     const RECONCILE_INTERVAL_MS = 30_000
-    const STALLED_TIMEOUT_MS = 10 * 60_000 // 10 minutes without activity → attention
     const reconcileInterval = setInterval(async () => {
       if (cancelled || !window.api) return
       try {
@@ -3426,28 +3438,18 @@ export function useAgentStore() {
         const now = Date.now()
         let changed = false
         for (const agent of state.agents.values()) {
-          if (agent.status !== 'running') continue
-          // Skip when any tool call (including a `task` sub-agent) is still in
-          // flight. The parent's own session goes silent for the duration of
-          // the tool call — a high-reasoning sub-agent can think for minutes
-          // with no streaming events — so lastActivityAt alone would falsely
-          // flag long-running reviews, CI watchers, or slow tools as stalled.
-          if (hasInFlightToolCall(agent.sessionId)) continue
-          const last = agent.lastActivityAt ?? 0
-          if (last > 0 && now - last >= STALLED_TIMEOUT_MS) {
-            // Only flip once; if already blocked, leave as-is
-            agent.lastError = agent.lastError ?? {
-              name: 'StalledResponse',
-              message: 'No update from provider for 10 minutes — model may be overloaded or network is unstable. Try again or switch models.',
-              sessionId: agent.sessionId,
-              occurredAt: now
-            }
-            notifyIfNeeded(agent, 'needs_input')
-            agent.status = 'needs_input'
-            agent.blockedSince = agent.blockedSince ?? now
-            changed = true
-            console.warn('[watchdog] stalled agent marked needs_input', { agentId: agent.id })
+          if (!isStalledResponse(agent, state.messages.get(agent.sessionId), now)) continue
+          agent.lastError = agent.lastError ?? {
+            name: 'StalledResponse',
+            message: 'No update from provider for 5 minutes — model may be overloaded or network is unstable. Try again or switch models.',
+            sessionId: agent.sessionId,
+            occurredAt: now
           }
+          notifyIfNeeded(agent, 'needs_input')
+          agent.status = 'needs_input'
+          agent.blockedSince = agent.blockedSince ?? now
+          changed = true
+          console.warn('[watchdog] stalled agent marked needs_input', { agentId: agent.id })
         }
         if (changed) emit({ agents: true })
       } catch {
