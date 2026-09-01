@@ -49,7 +49,7 @@ function formatRelativeTime(timestamp: number): string {
 }
 
 export function shouldAutoExpandTool(tool: ToolCall, verbose: boolean, manuallyCollapsed: boolean): boolean {
-  return !manuallyCollapsed && (verbose || (tool.name === 'task' && tool.state === 'running'))
+  return !manuallyCollapsed && (verbose || tool.state === 'running')
 }
 
 export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
@@ -60,7 +60,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: T
   // Track items the user explicitly collapsed so we don't re-expand them
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
 
-  // Auto-expand verbose entries and running tasks unless the user collapsed them.
+  // Expand verbose entries and running tools unless the user collapsed them.
   useEffect(() => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
