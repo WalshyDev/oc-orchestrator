@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   sessionCreate: vi.fn(),
   sessionCommand: vi.fn(),
+  sessionStatus: vi.fn(),
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
 }))
@@ -41,6 +42,7 @@ const runtime = {
     session: {
       create: mocks.sessionCreate,
       command: mocks.sessionCommand,
+      status: mocks.sessionStatus,
     },
     config: {
       update: mocks.configUpdate,
@@ -107,6 +109,8 @@ describe('AgentController.executeCommand', () => {
     mocks.sessionCommand.mockResolvedValue({ data: undefined })
     mocks.sessionCreate.mockReset()
     mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
+    mocks.sessionStatus.mockReset()
+    mocks.sessionStatus.mockResolvedValue({ data: {} })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
   })
@@ -183,5 +187,21 @@ describe('AgentController.executeCommand', () => {
       model: 'openai/gpt-5.6-sol',
       variant: 'high',
     }))
+  })
+
+  it('reports sessions omitted from a successful status snapshot as idle', async () => {
+    mocks.sessionStatus.mockResolvedValue({
+      data: {
+        'existing-session': { type: 'busy' },
+      },
+    })
+
+    const statuses = await agentController.getSessionStatuses()
+
+    expect(statuses).toMatchObject({
+      'existing-session': { agentId: 'agent-1', status: { type: 'busy' } },
+      'bare-model-session': { agentId: 'agent-2', status: { type: 'idle' } },
+      'default-model-session': { agentId: 'agent-3', status: { type: 'idle' } },
+    })
   })
 })

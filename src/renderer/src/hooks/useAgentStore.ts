@@ -2551,6 +2551,19 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
   }
 }
 
+export function applyReconciledStatus(
+  agent: Pick<LiveAgent, 'status' | 'blockedSince' | 'respondedAt'>,
+  serverStatus: AgentStatus
+): void {
+  agent.status = serverStatus
+  if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
+    agent.blockedSince = agent.blockedSince ?? Date.now()
+  } else {
+    agent.blockedSince = undefined
+    agent.respondedAt = undefined
+  }
+}
+
 /**
  * Periodic reconciliation: compare local agent statuses against the server's
  * actual session statuses and correct any drift. This catches agents stuck
@@ -2597,16 +2610,7 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     console.warn(
       `[AgentStore] Reconciliation: agent ${agent.id} status ${agent.status} → ${serverStatus} (server says ${statusEntry.status.type})`
     )
-    agent.status = serverStatus
-    agent.lastActivityAt = Date.now()
-    if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
-
-      agent.blockedSince = agent.blockedSince ?? Date.now()
-    } else {
-      agent.blockedSince = undefined
-      agent.respondedAt = undefined
-
-    }
+    applyReconciledStatus(agent, serverStatus)
     changed = true
   }
 

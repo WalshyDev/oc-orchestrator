@@ -26,10 +26,10 @@ export interface TaskPartDescriptor {
   childSessionId?: string
 }
 
-export function mapToolState(toolState?: string): DisplayToolState {
+export function mapToolState(toolState?: string, active = true): DisplayToolState {
   if (toolState === 'completed') return 'completed'
   if (toolState === 'error' || toolState === 'failed') return 'failed'
-  return 'running'
+  return active ? 'running' : 'failed'
 }
 
 export function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
@@ -138,6 +138,7 @@ export function collectSessionSubtreeIds(
 export function buildChildTranscript(
   sessionId: string,
   getMessagesForSession: (sessionId: string) => LiveMessage[],
+  active = true,
   ancestors: ReadonlySet<string> = new Set()
 ): ChildTranscriptEntry[] {
   if (ancestors.has(sessionId)) return []
@@ -145,24 +146,28 @@ export function buildChildTranscript(
   const nextAncestors = new Set(ancestors)
   nextAncestors.add(sessionId)
   const entries: ChildTranscriptEntry[] = []
+  const messages = getMessagesForSession(sessionId)
+  const latestMessage = messages[messages.length - 1]
 
-  for (const message of getMessagesForSession(sessionId)) {
+  for (const message of messages) {
     if (message.role !== 'assistant') continue
+    const messageActive = active && message === latestMessage
 
     for (const part of message.parts) {
       if (part.type === 'text' && part.text) {
         entries.push({ id: part.id, kind: 'text', label: part.text })
       } else if (part.type === 'tool' && part.toolName) {
+        const toolState = mapToolState(part.toolState, messageActive)
         entries.push({
           id: part.id,
           kind: 'tool',
           label: part.toolName,
-          toolState: mapToolState(part.toolState),
+          toolState,
           toolSummary: summarizeChildToolInput(part.toolName, part.toolInput),
           toolOutput: part.text,
           childSessionId: part.childSessionId,
           childTranscript: part.childSessionId
-            ? buildChildTranscript(part.childSessionId, getMessagesForSession, nextAncestors)
+            ? buildChildTranscript(part.childSessionId, getMessagesForSession, toolState === 'running', nextAncestors)
             : undefined
         })
       }
@@ -208,7 +213,7 @@ export function orderTranscriptByActivity(messages: Message[]): Message[] {
       message,
       index,
       activityAt: message.toolCalls
-        ?.filter((tool) => tool.name === 'task')
+        ?.filter((tool) => tool.name === 'task' && tool.state === 'running')
         .reduce((latest, tool) => Math.max(latest, tool.childActivityAt ?? latest), message.activityAt ?? 0)
         ?? message.activityAt
         ?? index

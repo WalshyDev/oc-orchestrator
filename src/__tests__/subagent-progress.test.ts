@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
+import { SubagentProgress } from '../renderer/src/components/SubagentProgress'
 import {
   shouldAutoExpandTool,
   ToolsUsage,
@@ -46,6 +47,45 @@ describe('subagent progress', () => {
 
     expect(getChildSessionId(state)).toBe('child')
     expect(getToolMetadataOutput(state)).toBe('live command output')
+  })
+
+  it('keeps only the latest pending tool running when a session retries', () => {
+    const messages = new Map<string, LiveMessage[]>([
+      ['child', [
+        assistantMessage('child', [{
+          id: 'abandoned', type: 'tool', toolName: 'task', toolState: 'pending', childSessionId: 'abandoned-child'
+        }]),
+        assistantMessage('child', [{
+          id: 'retry', type: 'tool', toolName: 'task', toolState: 'pending', childSessionId: 'retry-child'
+        }])
+      ]],
+      ['abandoned-child', [assistantMessage('abandoned-child', [
+        { id: 'old-command', type: 'tool', toolName: 'bash', toolState: 'pending' }
+      ])]],
+      ['retry-child', [assistantMessage('retry-child', [
+        { id: 'new-command', type: 'tool', toolName: 'bash', toolState: 'pending' }
+      ])]]
+    ])
+    const getToolStates = (active: boolean) => {
+      const transcript = buildChildTranscript('child', (sessionId) => messages.get(sessionId) ?? [], active)
+      return transcript.map((entry) => [entry.toolState, entry.childTranscript?.[0].toolState])
+    }
+
+    expect(getToolStates(true))
+      .toEqual([['failed', 'failed'], ['running', 'running']])
+    expect(getToolStates(false))
+      .toEqual([['failed', 'failed'], ['failed', 'failed']])
+  })
+
+  it('explains when a task failed before creating its child session', () => {
+    const markup = renderToStaticMarkup(createElement(SubagentProgress, {
+      entries: [],
+      state: 'failed'
+    }))
+
+    expect(markup).toContain('sub-agent failed')
+    expect(markup).toContain('Child session was not created.')
+    expect(markup).not.toContain('Creating child session...')
   })
 
   it('streams visible assistant text without exposing reasoning deltas', () => {
@@ -145,7 +185,6 @@ describe('subagent progress', () => {
     ])
 
     const transcript = buildChildTranscript('child', (sessionId) => messages.get(sessionId) ?? [])
-
     expect(transcript[0]).toMatchObject({
       label: 'bash',
       toolState: 'running',
@@ -163,7 +202,7 @@ describe('subagent progress', () => {
     )).toBe(4)
   })
 
-  it('places the most recently updated subagent at the bottom of the transcript', () => {
+  it('moves running subagents by activity without moving completed tasks past later output', () => {
     const userMessage: Message = {
       id: 'user', role: 'user', content: 'continue', timestamp: 'now', activityAt: 15
     }
@@ -171,7 +210,7 @@ describe('subagent progress', () => {
       id: 'tasks', role: 'tool-group', content: '2 tool calls', timestamp: 'now', activityAt: 1,
       toolCalls: [{
         id: 'older', name: 'task', state: 'completed', timestamp: 1,
-        childSessionId: 'older-child', childActivityAt: 10
+        childSessionId: 'older-child', childActivityAt: 30
       }, {
         id: 'newer', name: 'task', state: 'running', timestamp: 2,
         childSessionId: 'newer-child', childActivityAt: 20
@@ -251,6 +290,30 @@ describe('subagent progress', () => {
     expect(shouldAutoExpandTool(ordinaryTool, 'some', false)).toBe(true)
     expect(shouldAutoExpandTool(completedTask, 'some', false)).toBe(false)
     expect(shouldAutoExpandTool(completedTask, 'all', false)).toBe(true)
+  })
+
+  it('shows completed Task results without treating child details as parent output', () => {
+    const transcript = renderToStaticMarkup(createElement(ToolGroupBubble, {
+      message: {
+        id: 'task-result',
+        role: 'tool-group',
+        content: '1 tool call',
+        timestamp: 'now',
+        toolCalls: [{
+          id: 'task',
+          name: 'task',
+          state: 'completed',
+          timestamp: 1,
+          output: '<task_result>Confirm this draft?</task_result>',
+          childSessionId: 'child',
+          childTranscript: [{ id: 'draft', kind: 'text', label: 'full child draft' }]
+        }]
+      },
+      verbosity: 'some'
+    }))
+
+    expect(transcript).toContain('Confirm this draft?')
+    expect(transcript).not.toContain('full child draft')
   })
 
   it('expands running commands after a completed todo update', () => {
