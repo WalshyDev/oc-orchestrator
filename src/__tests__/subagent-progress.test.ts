@@ -13,6 +13,7 @@ import {
   appendVisibleTextDelta,
   associateChildSessions,
   buildChildTranscript,
+  getActiveAssistantMessage,
   getLatestChildActivityAt,
   getChildSessionId,
   getToolMetadataOutput,
@@ -30,7 +31,7 @@ function assistantMessage(sessionId: string, parts: LiveMessage['parts'], update
     id: `message-${sessionId}`,
     role: 'assistant',
     sessionId,
-    createdAt: 1,
+    createdAt: updatedAt,
     updatedAt,
     parts
   }
@@ -58,7 +59,7 @@ describe('subagent progress', () => {
         }]),
         assistantMessage('child', [{
           id: 'retry', type: 'tool', toolName: 'task', toolState: 'pending', childSessionId: 'retry-child'
-        }])
+        }], 2)
       ]],
       ['abandoned-child', [assistantMessage('abandoned-child', [
         { id: 'old-command', type: 'tool', toolName: 'bash', toolState: 'pending' }
@@ -89,6 +90,64 @@ describe('subagent progress', () => {
     const transcript = buildChildTranscript('child', () => messages)
 
     expect(transcript[0]).toMatchObject({ label: 'bash', toolState: 'running' })
+  })
+
+  it('keeps a Task running when the user queues a follow-up', () => {
+    const task = assistantMessage('child', [{
+      id: 'task', type: 'tool', toolName: 'task', toolState: 'pending', childSessionId: 'task-child'
+    }])
+    const followUp: LiveMessage = {
+      id: 'follow-up',
+      role: 'user',
+      sessionId: 'child',
+      createdAt: 2,
+      parts: [{ id: 'text', type: 'text', text: 'Please also check the tests' }]
+    }
+
+    const transcript = buildChildTranscript('child', () => [task, followUp])
+
+    expect(transcript[0]).toMatchObject({ label: 'task', toolState: 'running' })
+  })
+
+  it('selects the newest unfinished assistant by timestamp', () => {
+    const older = { ...assistantMessage('child', []), id: 'older', createdAt: 10 }
+    const newer = { ...assistantMessage('child', []), id: 'newer', createdAt: 20 }
+    const followUp: LiveMessage = {
+      id: 'follow-up',
+      role: 'user',
+      sessionId: 'child',
+      createdAt: 30,
+      parts: []
+    }
+
+    expect(getActiveAssistantMessage([newer, followUp, older])).toBe(newer)
+  })
+
+  it('does not reactivate a terminal assistant response', () => {
+    const completed = { ...assistantMessage('child', []), completedAt: 2 }
+    const errored = { ...assistantMessage('child', []), errored: true }
+
+    expect(getActiveAssistantMessage([completed])).toBeUndefined()
+    expect(getActiveAssistantMessage([errored])).toBeUndefined()
+    expect(getActiveAssistantMessage([assistantMessage('child', [])], false)).toBeUndefined()
+  })
+
+  it('does not revive a completed Task when a new user message is optimistic', () => {
+    const task = {
+      ...assistantMessage('child', [{ id: 'task', type: 'tool', toolName: 'task', toolState: 'pending' }]),
+      completedAt: 2
+    }
+    const followUp: LiveMessage = {
+      id: 'follow-up',
+      role: 'user',
+      sessionId: 'child',
+      createdAt: 3,
+      parts: [{ id: 'text', type: 'text', text: 'Continue' }]
+    }
+
+    const transcript = buildChildTranscript('child', () => [task, followUp])
+
+    expect(transcript[0]).toMatchObject({ label: 'task', toolState: 'failed' })
   })
 
   it('only infers failure for an inactive Task activity', () => {

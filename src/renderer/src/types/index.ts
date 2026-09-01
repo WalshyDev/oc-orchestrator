@@ -90,6 +90,8 @@ export interface AgentRuntime {
   lastMessage?: string
   /** Most recent session-level error from the server (e.g. ContextOverflowError). */
   lastError?: AgentRuntimeError
+  /** Why a needs_input agent needs attention when no structured question exists. */
+  inputReason?: 'question' | 'error'
   /** True while a compaction RPC is running (shows spinner, disables compact buttons). */
   compacting?: boolean
   /** Approximate tokens currently sitting in the model's context window. */

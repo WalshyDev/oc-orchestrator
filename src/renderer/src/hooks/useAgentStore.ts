@@ -26,6 +26,7 @@ import {
   associateChildSessions,
   collectSessionSubtreeIds,
   getChildSessionId,
+  getActiveAssistantMessage,
   getToolMetadataOutput,
   mergeLiveMessagePart,
   type ChildSessionDescriptor
@@ -166,6 +167,7 @@ export interface LiveAgent {
    *  Presence drives an error banner in the detail drawer; cleared by user dismiss
    *  or by a new successful assistant turn. */
   lastError?: LiveAgentError
+  inputReason?: 'question' | 'error'
   /** True while a compactSession RPC is in flight or the server has acknowledged
    *  compaction but session.compacted hasn't arrived yet. Drives the spinner and
    *  disabled states on the Compact buttons so the user can see progress. */
@@ -228,6 +230,8 @@ export interface LiveMessage {
   sessionId: string
   createdAt: number
   updatedAt?: number
+  completedAt?: number
+  errored?: boolean
   parts: LiveMessagePart[]
 }
 
@@ -837,6 +841,7 @@ function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, 
   target.id = serverMessageId
   target.createdAt = createdAt
   target.updatedAt = Date.now()
+  messages.sort((left, right) => left.createdAt - right.createdAt)
   return true
 }
 
@@ -851,6 +856,11 @@ function upsertMessage(message: LiveMessage): LiveMessage {
       existingMessage.updatedAt ?? existingMessage.createdAt,
       message.updatedAt ?? message.createdAt
     )
+    if (message.completedAt !== undefined) {
+      existingMessage.completedAt = Math.max(existingMessage.completedAt ?? 0, message.completedAt)
+    }
+    existingMessage.errored = existingMessage.errored || message.errored || undefined
+    messages.sort((left, right) => left.createdAt - right.createdAt)
     return existingMessage
   }
 
@@ -989,6 +999,8 @@ function hydrateHistoricalMessages(entries: unknown): void {
       sessionId: entry.info.sessionID,
       createdAt,
       updatedAt: entry.info.time?.completed ?? createdAt,
+      completedAt: entry.info.time?.completed,
+      errored: !!entry.info.error?.name,
       parts: []
     })
 
@@ -1254,9 +1266,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.lastActivityAt = Date.now()
           if (newStatus === 'needs_input' || newStatus === 'needs_approval') {
             agent.blockedSince = agent.blockedSince ?? Date.now()
+            agent.inputReason = newStatus === 'needs_input' ? 'question' : undefined
           } else {
             agent.blockedSince = undefined
             agent.respondedAt = undefined
+            agent.inputReason = undefined
           }
           if (newStatus === 'completed') {
             persistAgentMeta(agent.id, { persistedStatus: 'completed' })
@@ -1400,6 +1414,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           target.status = 'needs_input'
           target.blockedSince = target.blockedSince ?? Date.now()
         }
+        target.inputReason = 'error'
         target.lastActivityAt = Date.now()
         // Compactor errors (e.g. "prompt is too long") arrive here. Stop the
         // spinner so the banner flips from "Compacting…" to the error state.
@@ -1477,6 +1492,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const messageId = info.id as string
       const role = info.role as 'user' | 'assistant'
       const createdAt = getMessageCreatedAt(info)
+      const time = info.time as { completed?: number } | undefined
+      const completedAt = typeof time?.completed === 'number' ? time.completed : undefined
+      const msgError = info.error as { name?: string; message?: string; data?: unknown } | undefined
 
       let agentChanged = false
       const agent = findAgentBySession(sessionId)
@@ -1522,7 +1540,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
           // the `error` field. Capture that here — it's the canonical place for
           // ContextOverflowError and similar — since the separate session.error
           // event doesn't always fire reliably.
-          const msgError = info.error as { name?: string; message?: string; data?: unknown } | undefined
           if (msgError?.name) {
             console.error('[message.updated] assistant message carries error', {
               agentId: agent.id,
@@ -1547,8 +1564,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           // placeholder shell before the provider responds, which is when the
           // overflow error lands — clearing on every update would erase the
           // banner before the user sees it.
-          const time = info.time as { completed?: number } | undefined
-          const messageComplete = typeof time?.completed === 'number' && !msgError
+          const messageComplete = completedAt !== undefined && !msgError
           if (messageComplete && agent.lastError) {
             agent.lastError = undefined
             agentChanged = true
@@ -1570,24 +1586,17 @@ function processEvent(payload: OpenCodeEventPayload): void {
         adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt)
       }
 
-      // Store message
-      const messages = state.messages.get(sessionId) ?? []
-      const existing = messages.find((msg) => msg.id === messageId)
-      if (!existing && !adopted) {
-        const now = Date.now()
-        messages.push({
+      if (!adopted) {
+        upsertMessage({
           id: messageId,
           role,
           sessionId,
           createdAt,
-          updatedAt: now,
+          updatedAt: Date.now(),
+          completedAt,
+          errored: !!msgError?.name,
           parts: []
         })
-        state.messages.set(sessionId, messages)
-      } else if (existing) {
-        existing.createdAt = createdAt
-        existing.updatedAt = Date.now()
-        existing.role = role
       }
 
       emit({ messages: true, agents: agentChanged })
@@ -1892,6 +1901,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.status = 'needs_input'
         agent.blockedSince = agent.blockedSince ?? Date.now()
         agent.respondedAt = undefined
+        agent.inputReason = 'question'
         // Malformed payload: agent went into needs_input but we don't have the
         // structured question content. Schedule a fast reconciliation so the
         // user isn't stuck looking at a bare placeholder. The next periodic
@@ -2468,6 +2478,15 @@ function removeAgentState(agentId: string): void {
   }
 }
 
+export function getReconnectedInputReason(
+  existingAgent: Pick<LiveAgent, 'status' | 'inputReason'> | undefined,
+  nextStatus: AgentStatus
+): LiveAgent['inputReason'] {
+  return nextStatus === 'needs_input' && existingAgent?.status === 'needs_input'
+    ? existingAgent.inputReason
+    : undefined
+}
+
 function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus): void {
   const hasPrompt = payload.prompt && payload.prompt.trim().length > 0
   const existingAgent = state.agents.get(payload.id)
@@ -2494,6 +2513,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   const configuredModel = configuredModelPath
     ? formatModelName(configuredModelPath)
     : existingAgent?.configuredModel
+  const status = initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle')
 
   const agent: LiveAgent = {
     id: payload.id,
@@ -2506,7 +2526,8 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
     workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
-    status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
+    status,
+    inputReason: getReconnectedInputReason(existingAgent, status),
     labelIds: existingAgent?.labelIds ?? [],
     model: existingAgent?.model ?? configuredModel ?? UNRESOLVED_MODEL_LABEL,
     configuredModel,
@@ -2544,23 +2565,27 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     if (nextStatus === 'needs_input' || nextStatus === 'needs_approval') {
 
       agent.blockedSince = agent.blockedSince ?? Date.now()
+      agent.inputReason = nextStatus === 'needs_input' ? 'question' : undefined
     } else {
       agent.blockedSince = undefined
+      agent.inputReason = undefined
 
     }
   }
 }
 
 export function applyReconciledStatus(
-  agent: Pick<LiveAgent, 'status' | 'blockedSince' | 'respondedAt'>,
+  agent: Pick<LiveAgent, 'status' | 'blockedSince' | 'respondedAt' | 'inputReason'>,
   serverStatus: AgentStatus
 ): void {
   agent.status = serverStatus
   if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
     agent.blockedSince = agent.blockedSince ?? Date.now()
+    agent.inputReason = serverStatus === 'needs_input' ? 'question' : undefined
   } else {
     agent.blockedSince = undefined
     agent.respondedAt = undefined
+    agent.inputReason = undefined
   }
 }
 
@@ -2870,7 +2895,7 @@ function setChildSessionActivity(sessionId: string, updatedAt: number): void {
  *  When a tool is in flight the model isn't hanging — it's blocked on the tool —
  *  so the "provider overloaded" watchdog does not apply. */
 function hasInFlightToolCall(messages: readonly LiveMessage[] | undefined): boolean {
-  const latestMessage = messages?.[messages.length - 1]
+  const latestMessage = getActiveAssistantMessage(messages)
   if (!messages || !latestMessage) return false
   for (const message of messages) {
     for (const part of message.parts) {
@@ -2958,12 +2983,14 @@ function updateAgentAfterInterruptChange(
     agent.status = pendingStatus
     agent.blockedSince = agent.blockedSince ?? Date.now()
     agent.respondedAt = undefined
+    agent.inputReason = pendingStatus === 'needs_input' ? 'question' : undefined
     return
   }
   if (!markResponded && agent.status !== 'needs_input' && agent.status !== 'needs_approval') return
   agent.status = 'running'
   agent.blockedSince = undefined
   agent.respondedAt = markResponded ? Date.now() : undefined
+  agent.inputReason = undefined
 }
 
 function removeChildSessionTree(sessionId: string): void {
@@ -3021,6 +3048,7 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
   agent.lastActivityAt = Date.now()
   agent.blockedSince = undefined
   agent.respondedAt = Date.now()
+  agent.inputReason = undefined
 
   injectOptimisticUserMessage(agent.sessionId, text)
   persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
@@ -3448,6 +3476,7 @@ export function useAgentStore() {
           notifyIfNeeded(agent, 'needs_input')
           agent.status = 'needs_input'
           agent.blockedSince = agent.blockedSince ?? now
+          agent.inputReason = 'error'
           changed = true
           console.warn('[watchdog] stalled agent marked needs_input', { agentId: agent.id })
         }

@@ -22,6 +22,7 @@ import type { EventEntry } from './components/EventLog'
 import { loadSettings, parseSlashCommand, type QuickAction } from './data/settings'
 import {
   buildChildTranscript,
+  getActiveAssistantMessage,
   getLatestChildActivityAt,
   mapToolState,
   orderTranscriptByActivity
@@ -373,6 +374,7 @@ export function App() {
           message: agent.lastError.message,
           occurredAt: agent.lastError.occurredAt
         } : undefined,
+        inputReason: agent.inputReason,
         compacting: agent.compacting,
         contextTokens: agent.contextTokens,
         contextLimit: agent.contextLimit,
@@ -420,7 +422,9 @@ export function App() {
         agentName: agent.name,
         projectName: agent.projectName,
         kind: 'needs_input',
-        reason: 'Agent is waiting for your response',
+        reason: agent.inputReason === 'error'
+          ? agent.lastError?.message ?? 'Agent needs attention'
+          : 'Agent is waiting for your response',
         createdAt: formatTimeAgo(agent.blockedSince ?? agent.lastActivityAt)
       }))
 
@@ -540,31 +544,35 @@ export function App() {
     if (!liveAgent) return []
 
     const liveMessages = getMessagesForSession(liveAgent.sessionId)
-    const latestLiveMessage = liveMessages[liveMessages.length - 1]
     const sessionActive = liveAgent.status !== 'idle'
       && liveAgent.status !== 'completed'
       && liveAgent.status !== 'errored'
       && liveAgent.status !== 'disconnected'
+    const activeAssistantMessage = getActiveAssistantMessage(liveMessages, sessionActive)
     const transcriptItems: Message[] = []
     let pendingToolCalls: ToolCall[] = []
+    let pendingToolAnchorId = ''
+    let pendingToolTimestamp = 0
 
-    const flushPendingToolCalls = (anchorId: string, timestamp: number) => {
+    const flushPendingToolCalls = () => {
       if (pendingToolCalls.length === 0) return
 
       transcriptItems.push({
-        id: `${anchorId}-tools`,
+        id: `${pendingToolAnchorId}-tools`,
         role: 'tool-group',
         content: `${pendingToolCalls.length} tool call${pendingToolCalls.length === 1 ? '' : 's'}`,
-        timestamp: formatTimeAgo(timestamp),
-        activityAt: timestamp,
+        timestamp: formatTimeAgo(pendingToolTimestamp),
+        activityAt: pendingToolTimestamp,
         toolCalls: pendingToolCalls
       })
 
       pendingToolCalls = []
+      pendingToolAnchorId = ''
+      pendingToolTimestamp = 0
     }
 
     for (const msg of liveMessages) {
-      const messageActive = sessionActive && msg === latestLiveMessage
+      const messageActive = msg === activeAssistantMessage
       const textParts: string[] = []
       const toolCalls: ToolCall[] = []
       const images: Array<{ mime: string; url: string; filename?: string }> = []
@@ -624,7 +632,7 @@ export function App() {
       }
 
       if (compactionPart) {
-        flushPendingToolCalls(msg.id, msg.createdAt)
+        flushPendingToolCalls()
         // A compaction part is still "active" while the session flag is set.
         const liveAgentForCompaction = store.agents.find((a) => a.sessionId === msg.sessionId)
         transcriptItems.push({
@@ -643,7 +651,7 @@ export function App() {
       const textContent = textParts.join('\n')
 
       if (textContent.trim() || images.length > 0) {
-        flushPendingToolCalls(msg.id, msg.createdAt)
+        flushPendingToolCalls()
 
         transcriptItems.push({
           id: msg.id,
@@ -657,16 +665,17 @@ export function App() {
 
       if (toolCalls.length > 0) {
         pendingToolCalls.push(...toolCalls)
+        pendingToolAnchorId = msg.id
+        pendingToolTimestamp = msg.createdAt
       }
 
       if (!textContent.trim() && pendingToolCalls.length > 0 && msg === liveMessages[liveMessages.length - 1]) {
-        flushPendingToolCalls(msg.id, msg.createdAt)
+        flushPendingToolCalls()
       }
     }
 
     if (liveMessages.length > 0) {
-      const lastMessage = liveMessages[liveMessages.length - 1]
-      flushPendingToolCalls(lastMessage.id, lastMessage.createdAt)
+      flushPendingToolCalls()
     }
 
     return orderTranscriptByActivity(transcriptItems)

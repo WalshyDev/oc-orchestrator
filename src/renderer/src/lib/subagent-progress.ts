@@ -36,6 +36,19 @@ export function mapToolState(
   return toolName === 'task' && !active ? 'failed' : 'running'
 }
 
+export function getActiveAssistantMessage(
+  messages: readonly LiveMessage[] | undefined,
+  sessionActive = true
+): LiveMessage | undefined {
+  if (!messages || !sessionActive) return undefined
+  let latest: LiveMessage | undefined
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    if (!latest || message.createdAt > latest.createdAt) latest = message
+  }
+  return latest?.completedAt === undefined && !latest?.errored ? latest : undefined
+}
+
 export function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
   const metadata = partState?.metadata as Record<string, unknown> | undefined
   const sessionId = metadata?.sessionId
@@ -151,11 +164,11 @@ export function buildChildTranscript(
   nextAncestors.add(sessionId)
   const entries: ChildTranscriptEntry[] = []
   const messages = getMessagesForSession(sessionId)
-  const latestMessage = messages[messages.length - 1]
+  const latestMessage = getActiveAssistantMessage(messages, active)
 
   for (const message of messages) {
     if (message.role !== 'assistant') continue
-    const messageActive = active && message === latestMessage
+    const messageActive = message === latestMessage
 
     for (const part of message.parts) {
       if (part.type === 'text' && part.text) {

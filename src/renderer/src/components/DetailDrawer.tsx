@@ -295,6 +295,10 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [cursorPos, setCursorPos] = useState(0)
   const [visibleMessageCount, setVisibleMessageCount] = useState(VISIBLE_MESSAGE_WINDOW)
   const [showPrLinkModal, setShowPrLinkModal] = useState(false)
+  const showQuestionFallback = !permission
+    && (!question || question.questions.length === 0)
+    && agent.status === 'needs_input'
+    && agent.inputReason !== 'error'
 
   // Input history cycling: -1 = not browsing, 0+ = offset from most recent
   const historyIndexRef = useRef(-1)
@@ -1010,7 +1014,7 @@ export const DetailDrawer = memo(function DetailDrawer({
           )}
         </div>
 
-        {activeTab === 'transcript' && (permission || question || agent.status === 'needs_input') && (
+        {activeTab === 'transcript' && (permission || question || showQuestionFallback) && (
           <div
             data-pending-interrupt
             className="min-h-0 shrink max-h-[45%] overflow-y-auto border-t border-kumo-line px-4 py-3"
@@ -1063,9 +1067,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               />
             )}
 
-            {!permission
-              && (!question || question.questions.length === 0)
-              && agent.status === 'needs_input' && (
+            {showQuestionFallback && (
               <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
                 <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
                   <ChatCircleDots size={14} weight="fill" /> Waiting for your response
