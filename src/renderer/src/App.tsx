@@ -549,6 +549,11 @@ export function App() {
     if (!liveAgent) return []
 
     const liveMessages = getMessagesForSession(liveAgent.sessionId)
+    const latestLiveMessage = liveMessages[liveMessages.length - 1]
+    const sessionActive = liveAgent.status !== 'idle'
+      && liveAgent.status !== 'completed'
+      && liveAgent.status !== 'errored'
+      && liveAgent.status !== 'disconnected'
     const transcriptItems: Message[] = []
     let pendingToolCalls: ToolCall[] = []
 
@@ -568,6 +573,7 @@ export function App() {
     }
 
     for (const msg of liveMessages) {
+      const messageActive = sessionActive && msg === latestLiveMessage
       const textParts: string[] = []
       const toolCalls: ToolCall[] = []
       const images: Array<{ mime: string; url: string; filename?: string }> = []
@@ -584,11 +590,12 @@ export function App() {
               textParts.push(part.text)
             }
             break
-          case 'tool':
+          case 'tool': {
+            const toolState = mapToolState(part.toolState, messageActive)
             toolCalls.push({
               id: part.id,
               name: part.toolName ?? 'unknown',
-              state: mapToolState(part.toolState),
+              state: toolState,
               input: part.toolInput,
               output: part.text ?? undefined,
               timestamp: msg.createdAt,
@@ -601,10 +608,11 @@ export function App() {
                   )
                 : undefined,
               childTranscript: part.childSessionId
-                ? buildChildTranscript(part.childSessionId, getMessagesForSession)
+                ? buildChildTranscript(part.childSessionId, getMessagesForSession, toolState === 'running')
                 : undefined
             })
             break
+          }
           case 'file':
             if (part.fileUrl && part.fileMime?.startsWith('image/')) {
               images.push({

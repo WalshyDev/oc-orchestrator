@@ -1053,12 +1053,9 @@ class AgentController {
         if (result.data) {
           const sessionStatuses = result.data as Record<string, { type: string }>
           for (const handle of handles) {
-            const sessionStatus = sessionStatuses[handle.sessionId]
-            if (sessionStatus) {
-              statuses[handle.sessionId] = {
-                agentId: handle.id,
-                status: sessionStatus
-              }
+            statuses[handle.sessionId] = {
+              agentId: handle.id,
+              status: sessionStatuses[handle.sessionId] ?? { type: 'idle' }
             }
           }
         }

@@ -19,6 +19,14 @@ function progressLabel(state: DisplayToolState, childSessionId: string | undefin
   return childSessionId ? 'sub-agent working' : 'sub-agent starting'
 }
 
+function emptyProgressMessage(state: DisplayToolState, childSessionId: string | undefined): string {
+  if (state === 'failed') {
+    return childSessionId ? 'Sub-agent stopped without output.' : 'Child session was not created.'
+  }
+  if (state === 'completed') return 'No sub-agent output was recorded.'
+  return childSessionId ? 'Waiting for live output...' : 'Creating child session...'
+}
+
 export function SubagentProgress({ entries, state, childSessionId }: SubagentProgressProps) {
   const running = state === 'running'
 
@@ -30,7 +38,7 @@ export function SubagentProgress({ entries, state, childSessionId }: SubagentPro
       </div>
       {entries.length === 0 ? (
         <div className="text-[10px] font-mono text-kumo-subtle">
-          {childSessionId ? 'Waiting for live output...' : 'Creating child session...'}
+          {emptyProgressMessage(state, childSessionId)}
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">

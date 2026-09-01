@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { applyReconciledStatus } from '../renderer/src/hooks/useAgentStore'
 
 // ── Extracted logic from src/renderer/src/hooks/useAgentStore.ts ──
 
@@ -168,14 +169,7 @@ function applyReconciliation(agent: MinimalAgent, serverStatusType: string): voi
   if ((serverStatus === 'needs_input' || serverStatus === 'needs_approval') && isWithinOptimisticGuard(agent)) {
     return
   }
-  agent.status = serverStatus
-  agent.lastActivityAt = Date.now()
-  if (serverStatus === 'needs_input' || serverStatus === 'needs_approval') {
-    agent.blockedSince = agent.blockedSince ?? Date.now()
-  } else {
-    agent.blockedSince = undefined
-    agent.respondedAt = undefined
-  }
+  applyReconciledStatus(agent, serverStatus)
 }
 
 // ── Tests ──
@@ -676,6 +670,14 @@ describe('reconcileStatuses: optimistic guard', () => {
     applyReconciliation(agent, 'idle')
     expect(agent.status).toBe('idle')
     expect(agent.respondedAt).toBeUndefined()
+  })
+
+  it('preserves the last real activity time during reconciliation', () => {
+    const agent: MinimalAgent = { status: 'running', lastActivityAt: 123 }
+
+    applyReconciledStatus(agent, 'idle')
+
+    expect(agent.lastActivityAt).toBe(123)
   })
 
   it('skips reconciliation when statuses already match', () => {
