@@ -225,6 +225,7 @@ export interface LiveMessage {
   role: 'user' | 'assistant'
   sessionId: string
   createdAt: number
+  updatedAt?: number
   parts: LiveMessagePart[]
 }
 
@@ -794,11 +795,13 @@ function injectOptimisticUserMessage(sessionId: string, text: string): void {
   if (!text.trim()) return
   const messages = state.messages.get(sessionId) ?? []
   const id = `${OPTIMISTIC_PREFIX}${++optimisticCounter}`
+  const now = Date.now()
   messages.push({
     id,
     role: 'user',
     sessionId,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     parts: [{ id: `${id}-part`, type: 'text', text }]
   })
   state.messages.set(sessionId, messages)
@@ -831,6 +834,7 @@ function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, 
   if (!target) return false
   target.id = serverMessageId
   target.createdAt = createdAt
+  target.updatedAt = Date.now()
   return true
 }
 
@@ -841,6 +845,10 @@ function upsertMessage(message: LiveMessage): LiveMessage {
   if (existingMessage) {
     existingMessage.role = message.role
     existingMessage.createdAt = message.createdAt
+    existingMessage.updatedAt = Math.max(
+      existingMessage.updatedAt ?? existingMessage.createdAt,
+      message.updatedAt ?? message.createdAt
+    )
     return existingMessage
   }
 
@@ -978,6 +986,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
       role: entry.info.role,
       sessionId: entry.info.sessionID,
       createdAt,
+      updatedAt: entry.info.time?.completed ?? createdAt,
       parts: []
     })
 
@@ -1079,7 +1088,19 @@ function hydrateChildSessions(entries: unknown, parentAgentId: string): void {
 
   for (const entry of entries as HydratedChildSession[]) {
     if (!entry?.info?.id || !entry.info.parentID) continue
-    childSessions.set(entry.info.id, entry.info)
+    const rawInfo = entry.info as ChildSessionInfo & { time?: { updated?: number } }
+    const existing = childSessions.get(rawInfo.id)
+    const hydratedUpdatedAt = rawInfo.updatedAt ?? rawInfo.time?.updated
+    childSessions.set(rawInfo.id, {
+      id: rawInfo.id,
+      parentID: rawInfo.parentID,
+      title: rawInfo.title ?? existing?.title,
+      updatedAt: Math.max(existing?.updatedAt ?? 0, hydratedUpdatedAt ?? 0) || undefined
+    })
+  }
+
+  for (const info of childSessions.values()) {
+    if (info.updatedAt !== undefined) setChildSessionActivity(info.id, info.updatedAt)
   }
 
   for (const entry of entries as HydratedChildSession[]) {
@@ -1390,20 +1411,23 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const info = props.info as Record<string, unknown> | undefined
       const sessionId = info?.id as string | undefined
       if (!sessionId) break
+      const time = info?.time as { updated?: number; compacting?: number } | undefined
       const parentSessionId = info?.parentID as string | undefined
       if (parentSessionId) {
+        const existing = childSessions.get(sessionId)
         childSessions.set(sessionId, {
           id: sessionId,
           parentID: parentSessionId,
-          title: info?.title as string | undefined
+          title: (info?.title as string | undefined) ?? existing?.title,
+          updatedAt: Math.max(existing?.updatedAt ?? 0, time?.updated ?? 0) || undefined
         })
+        if (time?.updated !== undefined) setChildSessionActivity(sessionId, time.updated)
         const owner = findAgentBySession(parentSessionId) ?? findAgentByChildSession(parentSessionId)
         if (owner) registerChildSession(sessionId, owner.id)
         associateKnownChildren(parentSessionId)
       }
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        const time = info?.time as { updated?: number; compacting?: number } | undefined
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
 
         // The server sets session.time.compacting to a timestamp while
@@ -1436,6 +1460,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
           persistAgentMeta(agent.id, { taskSummary: agent.taskSummary })
         }
         emit({ agents: true })
+      } else if (parentSessionId) {
+        emit({ messages: true })
       }
       break
     }
@@ -1542,16 +1568,19 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const messages = state.messages.get(sessionId) ?? []
       const existing = messages.find((msg) => msg.id === messageId)
       if (!existing && !adopted) {
+        const now = Date.now()
         messages.push({
           id: messageId,
           role,
           sessionId,
           createdAt,
+          updatedAt: now,
           parts: []
         })
         state.messages.set(sessionId, messages)
       } else if (existing) {
         existing.createdAt = createdAt
+        existing.updatedAt = Date.now()
         existing.role = role
       }
 
@@ -1599,6 +1628,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const message = messages.find((msg) => msg.id === messageId)
 
       if (message) {
+        message.updatedAt = Date.now()
         const existingPart = message.parts.find((partItem) => partItem.id === partId)
         const toolState = part.state as Record<string, unknown> | undefined
 
@@ -2779,7 +2809,22 @@ function associateKnownChildren(parentSessionId: string): void {
  *  heartbeat so the stalled-watchdog doesn't fire while a task tool runs. */
 function bumpParentActivityForChildSession(sessionId: string): void {
   const parent = findAgentByChildSession(sessionId)
-  if (parent) parent.lastActivityAt = Date.now()
+  if (!parent) return
+  const now = Date.now()
+  parent.lastActivityAt = now
+  setChildSessionActivity(sessionId, now)
+}
+
+function setChildSessionActivity(sessionId: string, updatedAt: number): void {
+  const visited = new Set<string>()
+  let currentId: string | undefined = sessionId
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId)
+    const info = childSessions.get(currentId)
+    if (!info) return
+    info.updatedAt = Math.max(info.updatedAt ?? 0, updatedAt)
+    currentId = info.parentID
+  }
 }
 
 /** Returns true when any tool part in the agent's transcript has not reached a
@@ -3807,6 +3852,10 @@ export function useAgentStore() {
     return storeState.messages.get(sessionId) ?? []
   }, [messagesVersion])
 
+  const getChildSessionActivityAt = useCallback((sessionId: string): number | undefined => {
+    return childSessions.get(sessionId)?.updatedAt
+  }, [messagesVersion])
+
   const getFileChangesForSession = useCallback((sessionId: string): FileChangeRecord[] => {
     const raw = storeState.fileChanges.get(sessionId) ?? []
     if (raw.length === 0) return raw
@@ -4039,6 +4088,7 @@ export function useAgentStore() {
     compactSession,
     selectDirectory,
     getMessagesForSession,
+    getChildSessionActivityAt,
     getFileChangesForSession,
     getEventsForSession,
     getToolCallsForSession,
@@ -4052,7 +4102,7 @@ export function useAgentStore() {
     abortAgent, removeAgent, renameAgent, setAgentModel,
     toggleLabel, clearLabels, setPrUrl,
     dismissAgentError, compactSession, selectDirectory,
-    getMessagesForSession, getFileChangesForSession,
+    getMessagesForSession, getChildSessionActivityAt, getFileChangesForSession,
     getEventsForSession, getToolCallsForSession,
     hydrateFileChangesFromGit
   ])

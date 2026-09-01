@@ -1,4 +1,5 @@
 import type { LiveMessage, LiveMessagePart } from '../hooks/useAgentStore'
+import type { Message } from '../types'
 
 export type DisplayToolState = 'running' | 'completed' | 'failed'
 
@@ -17,6 +18,7 @@ export interface ChildSessionDescriptor {
   id: string
   parentID: string
   title?: string
+  updatedAt?: number
 }
 
 export interface TaskPartDescriptor {
@@ -49,9 +51,11 @@ export function appendVisibleTextDelta(
   delta: string
 ): boolean {
   const message = messages.find((candidate) => candidate.id === messageId)
-  const part = message?.parts.find((candidate) => candidate.id === partId)
+  if (!message) return false
+  const part = message.parts.find((candidate) => candidate.id === partId)
   if (!part || part.type !== 'text') return false
   part.text = (part.text ?? '') + delta
+  message.updatedAt = Date.now()
   return true
 }
 
@@ -166,6 +170,76 @@ export function buildChildTranscript(
   }
 
   return entries
+}
+
+export function getLatestChildActivityAt(
+  sessionId: string,
+  getMessagesForSession: (sessionId: string) => LiveMessage[],
+  getSessionUpdatedAt?: (sessionId: string) => number | undefined,
+  ancestors: ReadonlySet<string> = new Set()
+): number | undefined {
+  if (ancestors.has(sessionId)) return undefined
+
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(sessionId)
+  let latest = getSessionUpdatedAt?.(sessionId)
+
+  for (const message of getMessagesForSession(sessionId)) {
+    latest = Math.max(latest ?? 0, message.updatedAt ?? message.createdAt)
+    for (const part of message.parts) {
+      if (!part.childSessionId) continue
+      const nested = getLatestChildActivityAt(
+        part.childSessionId,
+        getMessagesForSession,
+        getSessionUpdatedAt,
+        nextAncestors
+      )
+      if (nested !== undefined) latest = Math.max(latest, nested)
+    }
+  }
+
+  return latest
+}
+
+export function orderTranscriptByActivity(messages: Message[]): Message[] {
+  return messages
+    .flatMap(splitTaskToolGroups)
+    .map((message, index) => ({
+      message,
+      index,
+      activityAt: message.toolCalls
+        ?.filter((tool) => tool.name === 'task')
+        .reduce((latest, tool) => Math.max(latest, tool.childActivityAt ?? latest), message.activityAt ?? 0)
+        ?? message.activityAt
+        ?? index
+    }))
+    .sort((left, right) => left.activityAt - right.activityAt || left.index - right.index)
+    .map(({ message }) => message)
+}
+
+export function splitTaskToolGroups(message: Message): Message[] {
+  const tools = message.toolCalls
+  if (message.role !== 'tool-group' || !tools?.some((tool) => tool.name === 'task')) {
+    return [message]
+  }
+
+  const groups = tools.reduce<Array<typeof tools>>((result, tool) => {
+    const previous = result[result.length - 1]
+    if (tool.name !== 'task' && previous?.every((item) => item.name !== 'task')) {
+      previous.push(tool)
+    } else {
+      result.push([tool])
+    }
+    return result
+  }, [])
+
+  if (groups.length === 1) return [message]
+  return groups.map((toolCalls) => ({
+    ...message,
+    id: `${message.id}-${toolCalls[0].id}`,
+    content: `${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}`,
+    toolCalls
+  }))
 }
 
 export function summarizeChildToolInput(name: string, input: string | undefined): string | undefined {
