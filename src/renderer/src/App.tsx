@@ -20,7 +20,12 @@ import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
 import { loadSettings, parseSlashCommand, type QuickAction } from './data/settings'
-import { buildChildTranscript, mapToolState } from './lib/subagent-progress'
+import {
+  buildChildTranscript,
+  getLatestChildActivityAt,
+  mapToolState,
+  orderTranscriptByActivity
+} from './lib/subagent-progress'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -150,6 +155,7 @@ export function App() {
     listCommands,
     listAgentConfigs,
     getMessagesForSession,
+    getChildSessionActivityAt,
     getFileChangesForSession,
     getEventsForSession,
     hydrateFileChangesFromGit: storeHydrateFileChangesFromGit,
@@ -552,6 +558,7 @@ export function App() {
         role: 'tool-group',
         content: `${pendingToolCalls.length} tool call${pendingToolCalls.length === 1 ? '' : 's'}`,
         timestamp: formatTimeAgo(timestamp),
+        activityAt: timestamp,
         toolCalls: pendingToolCalls
       })
 
@@ -584,6 +591,13 @@ export function App() {
               output: part.text ?? undefined,
               timestamp: msg.createdAt,
               childSessionId: part.childSessionId,
+              childActivityAt: part.childSessionId
+                ? getLatestChildActivityAt(
+                    part.childSessionId,
+                    getMessagesForSession,
+                    getChildSessionActivityAt
+                  )
+                : undefined,
               childTranscript: part.childSessionId
                 ? buildChildTranscript(part.childSessionId, getMessagesForSession)
                 : undefined
@@ -619,6 +633,7 @@ export function App() {
             ? 'Session compacted automatically to free context window'
             : 'Session compacted',
           timestamp: formatTimeAgo(msg.createdAt),
+          activityAt: msg.createdAt,
           compactionActive: !!liveAgentForCompaction?.compacting,
           compactionAuto: compactionPart.auto
         })
@@ -634,6 +649,7 @@ export function App() {
           role: msg.role,
           content: textContent,
           timestamp: formatTimeAgo(msg.createdAt),
+          activityAt: msg.createdAt,
           ...(images.length > 0 ? { images } : {})
         })
       }
@@ -652,8 +668,8 @@ export function App() {
       flushPendingToolCalls(lastMessage.id, lastMessage.createdAt)
     }
 
-    return transcriptItems
-  }, [selectedAgent, store.agents, getMessagesForSession])
+    return orderTranscriptByActivity(transcriptItems)
+  }, [selectedAgent, store.agents, getMessagesForSession, getChildSessionActivityAt])
 
   // ── File changes for selected agent ──
   const selectedFiles: FileChange[] = useMemo(() => {

@@ -226,6 +226,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool' | 'tool-group' | 'compaction'
   content: string
   timestamp: string
+  activityAt?: number
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]

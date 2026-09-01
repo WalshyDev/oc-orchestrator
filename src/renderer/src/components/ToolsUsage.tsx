@@ -10,6 +10,7 @@ export interface ToolCall {
   input?: string
   output?: string
   timestamp: number
+  childActivityAt?: number
   /** For the `task` tool — sessionId of the sub-agent, so the UI can
    *  render live progress by reading the child session's messages. */
   childSessionId?: string

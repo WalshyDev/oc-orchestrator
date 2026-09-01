@@ -7,20 +7,24 @@ import {
   appendVisibleTextDelta,
   associateChildSessions,
   buildChildTranscript,
+  getLatestChildActivityAt,
   getChildSessionId,
   getToolMetadataOutput,
   collectSessionSubtreeIds,
   mergeLiveMessagePart,
+  orderTranscriptByActivity,
   type TaskPartDescriptor
 } from '../renderer/src/lib/subagent-progress'
 import { getPendingInterruptStatus } from '../renderer/src/lib/interrupt-status'
+import type { Message } from '../renderer/src/types'
 
-function assistantMessage(sessionId: string, parts: LiveMessage['parts']): LiveMessage {
+function assistantMessage(sessionId: string, parts: LiveMessage['parts'], updatedAt = 1): LiveMessage {
   return {
     id: `message-${sessionId}`,
     role: 'assistant',
     sessionId,
     createdAt: 1,
+    updatedAt,
     parts
   }
 }
@@ -129,10 +133,10 @@ describe('subagent progress', () => {
           toolState: 'completed',
           childSessionId: 'grandchild'
         }
-      ])]],
+      ], 2)]],
       ['grandchild', [assistantMessage('grandchild', [
         { id: 'final', type: 'text', text: 'nested final output' }
-      ])]]
+      ], 3)]]
     ])
 
     const transcript = buildChildTranscript('child', (sessionId) => messages.get(sessionId) ?? [])
@@ -147,6 +151,30 @@ describe('subagent progress', () => {
       kind: 'text',
       label: 'nested final output'
     })
+    expect(getLatestChildActivityAt(
+      'child',
+      (sessionId) => messages.get(sessionId) ?? [],
+      (sessionId) => sessionId === 'child' ? 4 : undefined
+    )).toBe(4)
+  })
+
+  it('places the most recently updated subagent at the bottom of the transcript', () => {
+    const userMessage: Message = {
+      id: 'user', role: 'user', content: 'continue', timestamp: 'now', activityAt: 15
+    }
+    const taskGroup: Message = {
+      id: 'tasks', role: 'tool-group', content: '2 tool calls', timestamp: 'now', activityAt: 1,
+      toolCalls: [{
+        id: 'older', name: 'task', state: 'completed', timestamp: 1,
+        childSessionId: 'older-child', childActivityAt: 10
+      }, {
+        id: 'newer', name: 'task', state: 'running', timestamp: 2,
+        childSessionId: 'newer-child', childActivityAt: 20
+      }]
+    }
+
+    expect(orderTranscriptByActivity([taskGroup, userMessage]).map((message) => message.id))
+      .toEqual(['tasks-older', 'user', 'tasks-newer'])
   })
 
   it('expands running tasks immediately and keeps completed transcripts collapsible', () => {
