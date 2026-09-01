@@ -55,6 +55,7 @@ import { FilesChanged } from './FilesChanged'
 import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
 import { SelectField } from './SelectField'
+import { findLastTranscriptMessageId } from '../lib/last-message'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
@@ -199,7 +200,7 @@ interface DetailDrawerProps {
    * each request so repeated clicks retrigger the scroll even when the target
    * is unchanged.
    */
-  scrollRequest?: { target: 'last-user-message' | 'bottom'; seq: number } | null
+  scrollRequest?: { target: 'last-user-message' | 'last-assistant-message' | 'bottom'; seq: number } | null
   onClose: () => void
   onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
   onApprove?: () => void
@@ -581,17 +582,10 @@ export const DetailDrawer = memo(function DetailDrawer({
       return
     }
 
-    if (scrollRequest.target !== 'last-user-message') return
-
-    let targetIndex = -1
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        targetIndex = i
-        break
-      }
-    }
+    const targetId = findLastTranscriptMessageId(messages, scrollRequest.target)
+    if (!targetId) return
+    const targetIndex = messages.findIndex((message) => message.id === targetId)
     if (targetIndex < 0) return
-    const targetId = messages[targetIndex].id
 
     // Expand the visible window if the target is outside it so the node renders.
     const neededCount = messages.length - targetIndex
