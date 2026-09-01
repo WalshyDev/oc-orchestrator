@@ -511,6 +511,7 @@ export const DetailDrawer = memo(function DetailDrawer({
       }
     })
     ro.observe(content)
+    ro.observe(container)
 
     requestAnimationFrame(() => scrollToBottom(container))
     return () => ro.disconnect()
@@ -924,6 +925,7 @@ export const DetailDrawer = memo(function DetailDrawer({
         <div className="flex-1 relative overflow-hidden">
           <div
             ref={transcriptScrollRef}
+            data-transcript-scroll
             className="absolute inset-0 overflow-y-auto px-4 py-3 flex flex-col gap-2"
           >
             {activeTab === 'transcript' && (
@@ -975,72 +977,6 @@ export const DetailDrawer = memo(function DetailDrawer({
                   </div>
                 )}
 
-                {/* Permission request inline card */}
-                {permission && (
-                  <div className="bg-kumo-brand/[0.06] border border-kumo-brand/20 rounded-lg p-3 flex flex-col gap-2">
-                    <div className="text-xs font-semibold text-kumo-brand flex items-center gap-1.5">
-                      &#128274; Permission Request
-                    </div>
-                    <div className="text-xs text-kumo-default">{permission.title}</div>
-                    {permission.pattern && (
-                      <div className="font-mono text-[11px] px-2 py-1 bg-kumo-overlay rounded text-kumo-subtle">
-                        {Array.isArray(permission.pattern) ? permission.pattern.join(', ') : permission.pattern}
-                      </div>
-                    )}
-                    <div className="flex gap-1.5">
-                      {onApprove && (
-                        <button
-                          onClick={onApprove}
-                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
-                        >
-                          <Check size={12} weight="bold" /> Approve Once
-                        </button>
-                      )}
-                      {onApproveAlways && (
-                        <button
-                          onClick={onApproveAlways}
-                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
-                        >
-                          <CheckCircle size={12} weight="fill" /> Approve Always
-                        </button>
-                      )}
-                      {onDeny && (
-                        <button
-                          onClick={onDeny}
-                          className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
-                        >
-                          <XCircle size={12} /> Deny
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Question card — show only when we actually have structured question
-                    content. If the server delivered a malformed event with an empty
-                    `questions` array, fall through to the "Waiting for your response"
-                    placeholder so the user isn't stuck staring at a bare header. */}
-                {!permission && question && question.questions.length > 0 && (
-                  <QuestionCard
-                    question={question}
-                    onReply={onReplyQuestion}
-                    onReject={onRejectQuestion}
-                  />
-                )}
-
-                {/* Waiting for input (no structured question, or question payload was empty) */}
-                {!permission
-                  && (!question || question.questions.length === 0)
-                  && agent.status === 'needs_input' && (
-                  <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
-                    <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
-                      <ChatCircleDots size={14} weight="fill" /> Waiting for your response
-                    </div>
-                    <div className="text-xs text-kumo-default">
-                      This agent has asked a question and is waiting for your reply. Use the input below to respond.
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
@@ -1079,6 +1015,74 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           )}
         </div>
+
+        {activeTab === 'transcript' && (permission || question || agent.status === 'needs_input') && (
+          <div
+            data-pending-interrupt
+            className="min-h-0 shrink max-h-[45%] overflow-y-auto border-t border-kumo-line px-4 py-3"
+          >
+            {permission && (
+              <div className="bg-kumo-brand/[0.06] border border-kumo-brand/20 rounded-lg p-3 flex flex-col gap-2">
+                <div className="text-xs font-semibold text-kumo-brand flex items-center gap-1.5">
+                  &#128274; Permission Request
+                </div>
+                <div className="text-xs text-kumo-default">{permission.title}</div>
+                {permission.pattern && (
+                  <div className="font-mono text-[11px] px-2 py-1 bg-kumo-overlay rounded text-kumo-subtle">
+                    {Array.isArray(permission.pattern) ? permission.pattern.join(', ') : permission.pattern}
+                  </div>
+                )}
+                <div className="flex gap-1.5">
+                  {onApprove && (
+                    <button
+                      onClick={onApprove}
+                      className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
+                    >
+                      <Check size={12} weight="bold" /> Approve Once
+                    </button>
+                  )}
+                  {onApproveAlways && (
+                    <button
+                      onClick={onApproveAlways}
+                      className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-success/12 border border-kumo-success/25 text-kumo-success hover:bg-kumo-success/20 transition-colors"
+                    >
+                      <CheckCircle size={12} weight="fill" /> Approve Always
+                    </button>
+                  )}
+                  {onDeny && (
+                    <button
+                      onClick={onDeny}
+                      className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-kumo-danger/10 border border-kumo-danger/20 text-kumo-danger hover:bg-kumo-danger/20 transition-colors"
+                    >
+                      <XCircle size={12} /> Deny
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!permission && question && question.questions.length > 0 && (
+              <QuestionCard
+                question={question}
+                onReply={onReplyQuestion}
+                onReject={onRejectQuestion}
+              />
+            )}
+
+            {!permission
+              && (!question || question.questions.length === 0)
+              && agent.status === 'needs_input' && (
+              <div className="bg-status-input-bg/30 border border-status-input/20 rounded-lg p-3 flex flex-col gap-2">
+                <div className="text-xs font-semibold text-status-input flex items-center gap-1.5">
+                  <ChatCircleDots size={14} weight="fill" /> Waiting for your response
+                </div>
+                <div className="text-xs text-kumo-default">
+                  This agent has asked a question and is waiting for your reply. Use the input below to respond.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Vertical resize handle */}
         {/* Resize handle + bottom pane (chat input + action rail) only show
