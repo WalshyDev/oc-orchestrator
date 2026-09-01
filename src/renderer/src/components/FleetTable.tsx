@@ -72,11 +72,13 @@ const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
  * Where to land in the transcript when opening the drawer.
  *  - 'last-user-message': scroll the last user message to the top of the
  *    viewport. Used when jumping back from a notification or quick-action.
+ *  - 'last-assistant-message': scroll the message shown in the Last Message
+ *    column to the top of the viewport.
  *  - 'bottom': scroll all the way to the bottom and re-engage follow-mode
  *    so the next streaming reply auto-scrolls into view. Used after sending
  *    from the workspace's highlight-to-ask popover.
  */
-export type DrawerScrollTarget = 'last-user-message' | 'bottom'
+export type DrawerScrollTarget = 'last-user-message' | 'last-assistant-message' | 'bottom'
 
 interface FleetTableProps {
   agents: AgentRuntime[]
@@ -217,6 +219,38 @@ interface RenameState {
 interface PrLinkState {
   agentId: string
   currentUrl: string
+}
+
+export function LastMessageCell({
+  agentId,
+  message,
+  onSelect
+}: {
+  agentId: string
+  message?: string
+  onSelect?: FleetTableProps['onSelect']
+}) {
+  return (
+    <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]">
+      {message && onSelect ? (
+        <button
+          type="button"
+          className="max-w-full truncate text-left cursor-pointer hover:text-kumo-strong"
+          title={`${message}\n\nClick to jump to this message`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onSelect(agentId, 'last-assistant-message')
+          }}
+        >
+          {message}
+        </button>
+      ) : message ? (
+        <span title={message}>{message}</span>
+      ) : (
+        <span className="text-kumo-muted italic">--</span>
+      )}
+    </td>
+  )
 }
 
 export function FleetTable({
@@ -775,6 +809,7 @@ export function FleetTable({
         suppressNextClickRef={suppressNextClick}
         onSelect={pending ? noop : () => onSelect(agent.id)}
         onJumpToLastUserMessage={pending ? noop : () => onSelect(agent.id, 'last-user-message')}
+        onSelectLastMessage={pending ? undefined : onSelect}
         onContextMenu={pending ? noop : (event) => handleContextMenu(event, agent.id)}
         onApprove={onApprove && !pending ? () => onApprove(agent.id) : undefined}
         onReply={onReply && !pending ? () => onReply(agent.id) : undefined}
@@ -1252,6 +1287,7 @@ function AgentRow({
   suppressNextClickRef,
   onSelect,
   onJumpToLastUserMessage,
+  onSelectLastMessage,
   onContextMenu,
   onApprove,
   onReply,
@@ -1292,6 +1328,7 @@ function AgentRow({
   suppressNextClickRef?: React.MutableRefObject<boolean>
   onSelect: () => void
   onJumpToLastUserMessage: () => void
+  onSelectLastMessage?: FleetTableProps['onSelect']
   onContextMenu: (event: React.MouseEvent) => void
   onApprove?: () => void
   onReply?: () => void
@@ -1503,9 +1540,7 @@ function AgentRow({
         </td>
       )}
       {show('lastMessage') && (
-        <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]" title={agent.lastMessage || undefined}>
-          {agent.lastMessage || <span className="text-kumo-muted italic">--</span>}
-        </td>
+        <LastMessageCell agentId={agent.id} message={agent.lastMessage} onSelect={onSelectLastMessage} />
       )}
       {show('branch') && (
         <td className="px-3 py-2 font-mono text-[11px] text-kumo-subtle truncate" title={formatBranchLabel(agent)}>

@@ -26,6 +26,7 @@ import {
   mapToolState,
   orderTranscriptByActivity
 } from './lib/subagent-progress'
+import { extractLastAssistantMessage } from './lib/last-message'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -40,18 +41,6 @@ function sanitizeSlugSegment(value: string, fallback: string): string {
     .slice(0, 50)
 
   return sanitized || fallback
-}
-
-function extractLastAssistantMessage(messages: { role: string; parts: { type: string; text?: string }[] }[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role !== 'assistant') continue
-    const text = messages[i].parts
-      .filter((p) => p.type === 'text' && p.text)
-      .map((p) => p.text!)
-      .join(' ')
-    if (text) return text.slice(0, 200)
-  }
-  return undefined
 }
 
 export function App() {
@@ -72,13 +61,15 @@ export function App() {
   }, [])
 
   const [selectedAgentId, setSelectedAgentIdRaw] = useState<string | null>(null)
+  const drawerScrollSeqRef = useRef(0)
   // Scroll request signal for DetailDrawer. `seq` bumps on every request so
   // clicking the same cell twice in a row still retriggers the scroll.
   const [drawerScrollRequest, setDrawerScrollRequest] = useState<{ target: DrawerScrollTarget; seq: number } | null>(null)
   const setSelectedAgentId = useCallback((id: string | null, scrollTarget?: DrawerScrollTarget) => {
     setSelectedAgentIdRaw(id)
     if (id && scrollTarget) {
-      setDrawerScrollRequest((prev) => ({ target: scrollTarget, seq: (prev?.seq ?? 0) + 1 }))
+      drawerScrollSeqRef.current += 1
+      setDrawerScrollRequest({ target: scrollTarget, seq: drawerScrollSeqRef.current })
     } else {
       // Clear any stale scroll request so plain row clicks (or drawer close)
       // don't trigger a jump when the drawer remounts for a new agent.
