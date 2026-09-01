@@ -1,7 +1,12 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { shouldAutoExpandTool, ToolsUsage } from '../renderer/src/components/ToolsUsage'
+import { ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
+import {
+  shouldAutoExpandTool,
+  ToolsUsage,
+  type ToolCall
+} from '../renderer/src/components/ToolsUsage'
 import type { LiveMessage } from '../renderer/src/hooks/useAgentStore'
 import {
   appendVisibleTextDelta,
@@ -207,5 +212,51 @@ describe('subagent progress', () => {
       state: 'running',
       timestamp: 0
     }, false, true)).toBe(false)
+  })
+
+  it('expands running commands after a completed todo update', () => {
+    const tools: ToolCall[] = [{
+      id: 'todo',
+      name: 'todowrite',
+      state: 'completed',
+      timestamp: 1,
+      input: JSON.stringify({ todos: [{ content: 'Run checks', status: 'in_progress' }] })
+    }, {
+      id: 'format',
+      name: 'bash',
+      state: 'running',
+      timestamp: 2,
+      input: JSON.stringify({ command: 'pnpm -w format:check' })
+    }, {
+      id: 'lint',
+      name: 'bash',
+      state: 'running',
+      timestamp: 2,
+      input: JSON.stringify({ command: 'pnpm -w lint' })
+    }, {
+      id: 'typecheck',
+      name: 'bash',
+      state: 'running',
+      timestamp: 2,
+      input: JSON.stringify({ command: 'pnpm -w type-check:go' })
+    }]
+
+    const toolsTab = renderToStaticMarkup(createElement(ToolsUsage, { tools }))
+    const transcript = renderToStaticMarkup(createElement(ToolGroupBubble, {
+      message: {
+        id: 'tools',
+        role: 'tool-group',
+        content: '4 tool calls',
+        timestamp: 'now',
+        toolCalls: tools
+      }
+    }))
+
+    expect(shouldAutoExpandTool(tools[0], false, false)).toBe(false)
+    expect(shouldAutoExpandTool(tools[1], false, false)).toBe(true)
+    for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {
+      expect(toolsTab).toContain(command)
+      expect(transcript).toContain(command)
+    }
   })
 })

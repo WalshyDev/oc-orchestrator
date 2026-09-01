@@ -1960,7 +1960,7 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
   }
 }
 
-const ToolGroupBubble = memo(function ToolGroupBubble({
+export const ToolGroupBubble = memo(function ToolGroupBubble({
   message,
   verbose = false,
   rootRef
@@ -1971,25 +1971,12 @@ const ToolGroupBubble = memo(function ToolGroupBubble({
 }) {
   const toolCalls = message.toolCalls ?? []
 
-  // Auto-expand the bubble when a `task` tool is still running so the user
-  // can see sub-agent progress without having to click. Otherwise the bubble
-  // looks frozen ("tool completed" only appears at the very end) and the user
-  // has no feedback until the child session finishes — which for CI-watching
-  // tasks can be many minutes.
-  const hasRunningTask = toolCalls.some((tool) => tool.name === 'task' && tool.state === 'running')
-  const [expanded, setExpanded] = useState(verbose || hasRunningTask)
+  const hasRunningTool = toolCalls.some((tool) => tool.state === 'running')
+  const [expanded, setExpanded] = useState(verbose || hasRunningTool)
 
-  // Sync with verbose prop changes (e.g. user toggles verbose mode)
   useEffect(() => {
-    if (verbose) setExpanded(true)
-  }, [verbose])
-
-  // Once a task starts running inside this group, force the bubble open.
-  // We don't collapse it again when the task finishes — the user may want to
-  // scroll back through the progress.
-  useEffect(() => {
-    if (hasRunningTask) setExpanded(true)
-  }, [hasRunningTask])
+    if (verbose || hasRunningTool) setExpanded(true)
+  }, [verbose, hasRunningTool])
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
