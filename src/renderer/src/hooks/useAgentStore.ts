@@ -136,6 +136,8 @@ export interface LiveAgent {
    *  Used to restore the displayed model after an invoked agent
    *  (which may use a different model) finishes. */
   configuredModel?: string
+  /** Full provider/model value used by model selectors and prompt overrides. */
+  configuredModelPath?: string
   /** The currently selected model variant (thinking level). */
   variant?: string
   lastActivityAt: number
@@ -1045,6 +1047,9 @@ function hydrateHistoricalMessages(entries: unknown): void {
         if (!agent.configuredModel) {
           agent.configuredModel = formatted
         }
+        if (!agent.configuredModelPath) {
+          agent.configuredModelPath = entry.info.modelID
+        }
       }
 
       // PR URLs are only extracted during the live "Create PR" flow and
@@ -1505,7 +1510,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
           if (modelId && depth === 0) {
             const formatted = formatModelName(modelId)
             agent.model = formatted
-            agent.configuredModel = formatted
+            if (!agent.configuredModel) agent.configuredModel = formatted
+            if (!agent.configuredModelPath) agent.configuredModelPath = modelId
             agent.rawModelId = modelId
             const limit = lookupContextLimit(modelId)
             if (limit !== undefined) agent.contextLimit = limit
@@ -2357,13 +2363,21 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       const config = result.data as { model?: string }
       if (!config.model) return
       const agent = state.agents.get(payload.id)
-      if (!agent || agent.configuredModel) return
-      const formatted = formatModelName(config.model)
-      agent.configuredModel = formatted
-      if (agent.model === UNRESOLVED_MODEL_LABEL) {
-        agent.model = formatted
-        emit({ agents: true })
+      if (!agent) return
+      let agentChanged = false
+      if (!agent.configuredModelPath) {
+        agent.configuredModelPath = config.model
+        agentChanged = true
       }
+      if (!agent.configuredModel) {
+        agent.configuredModel = formatModelName(config.model)
+        agentChanged = true
+      }
+      if (agent.model === UNRESOLVED_MODEL_LABEL) {
+        agent.model = agent.configuredModel
+        agentChanged = true
+      }
+      if (agentChanged) emit({ agents: true })
     })
   }
 }
@@ -2472,6 +2486,15 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     ? existingAgent.autoNamed
     : isAutoTitle
 
+  const configuredModelPath = payload.modelOverride
+    ? payload.modelOverride.providerID
+      ? `${payload.modelOverride.providerID}/${payload.modelOverride.modelID}`
+      : payload.modelOverride.modelID
+    : existingAgent?.configuredModelPath
+  const configuredModel = configuredModelPath
+    ? formatModelName(configuredModelPath)
+    : existingAgent?.configuredModel
+
   const agent: LiveAgent = {
     id: payload.id,
     runtimeId: payload.runtimeId,
@@ -2485,8 +2508,10 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
     status: initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle'),
     labelIds: existingAgent?.labelIds ?? [],
-    model: existingAgent?.model ?? UNRESOLVED_MODEL_LABEL,
-    configuredModel: existingAgent?.configuredModel,
+    model: existingAgent?.model ?? configuredModel ?? UNRESOLVED_MODEL_LABEL,
+    configuredModel,
+    configuredModelPath,
+    variant: payload.variantOverride ?? existingAgent?.variant,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
@@ -3937,6 +3962,7 @@ export function useAgentStore() {
     const formatted = formatModelName(modelPath)
     agent.model = formatted
     agent.configuredModel = formatted
+    agent.configuredModelPath = modelPath
     agent.variant = variant
     emit({ agents: true })
   }, [])

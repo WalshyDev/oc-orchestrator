@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 import { SubagentProgress } from './SubagentProgress'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
+import type { OutputVerbosity } from '../data/settings'
 
 export interface ToolCall {
   id: string
@@ -22,7 +23,7 @@ export interface ToolCall {
 
 interface ToolsUsageProps {
   tools: ToolCall[]
-  verbose?: boolean
+  verbosity?: OutputVerbosity
 }
 
 const stateStyles: Record<ToolCall['state'], string> = {
@@ -48,30 +49,82 @@ function formatRelativeTime(timestamp: number): string {
   return `${days}d ago`
 }
 
-export function shouldAutoExpandTool(tool: ToolCall, verbose: boolean, manuallyCollapsed: boolean): boolean {
-  return !manuallyCollapsed && (verbose || tool.state === 'running')
+export function shouldAutoExpandTool(tool: ToolCall, verbosity: OutputVerbosity, manuallyCollapsed: boolean): boolean {
+  return !manuallyCollapsed && (
+    (verbosity !== 'none' && tool.name !== 'task')
+    || verbosity === 'all'
+    || tool.state === 'running'
+  )
 }
 
-export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: ToolsUsageProps) {
+export function CollapsibleSubagentProgress({
+  tool,
+  verbosity
+}: {
+  tool: ToolCall
+  verbosity: OutputVerbosity
+}) {
+  const [expanded, setExpanded] = useState(
+    verbosity === 'all' || (verbosity === 'none' && tool.state === 'running')
+  )
+  const previousVerbosityRef = useRef(verbosity)
+
+  useEffect(() => {
+    if (previousVerbosityRef.current !== verbosity) {
+      setExpanded(verbosity === 'all')
+      previousVerbosityRef.current = verbosity
+    } else if (verbosity === 'none' && tool.state === 'running') {
+      setExpanded(true)
+    }
+  }, [tool.state, verbosity])
+
+  return (
+    <div className="rounded-md border border-kumo-line bg-kumo-overlay">
+      <button
+        type="button"
+        onClick={() => setExpanded((previous) => !previous)}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[10px] text-kumo-subtle hover:text-kumo-default"
+      >
+        {expanded ? <CaretDown size={10} /> : <CaretRight size={10} />}
+        <span className="font-medium">Subagent output</span>
+        <span className="ml-auto">{tool.state === 'running' ? 'Running' : 'Completed'}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-kumo-line p-2">
+          <SubagentProgress
+            entries={tool.childTranscript ?? []}
+            state={tool.state}
+            childSessionId={tool.childSessionId}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }: ToolsUsageProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(
-    tools.filter((tool) => shouldAutoExpandTool(tool, verbose, false)).map((tool) => tool.id)
+    tools.filter((tool) => shouldAutoExpandTool(tool, verbosity, false)).map((tool) => tool.id)
   ))
   const [filterQuery, setFilterQuery] = useState('')
-  // Track items the user explicitly collapsed so we don't re-expand them
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
+  const previousVerbosityRef = useRef(verbosity)
 
-  // Expand verbose entries and running tools unless the user collapsed them.
+  // Expand verbose entries and running tools unless the user collapsed them;
+  // reset manual collapses when verbosity changes.
   useEffect(() => {
+    const verbosityChanged = previousVerbosityRef.current !== verbosity
     setExpandedIds((prev) => {
-      const next = new Set(prev)
+      const next = verbosityChanged ? new Set<string>() : new Set(prev)
       for (const tool of tools) {
-        if (shouldAutoExpandTool(tool, verbose, manuallyCollapsedRef.current.has(tool.id))) {
+        if (shouldAutoExpandTool(tool, verbosity, manuallyCollapsedRef.current.has(tool.id))) {
           next.add(tool.id)
         }
       }
       return next
     })
-  }, [verbose, tools])
+    previousVerbosityRef.current = verbosity
+  }, [verbosity, tools])
 
   const toolNameCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -195,11 +248,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbose = false }: T
                     </div>
                   )}
                   {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
-                    <SubagentProgress
-                      entries={tool.childTranscript ?? []}
-                      state={tool.state}
-                      childSessionId={tool.childSessionId}
-                    />
+                    <CollapsibleSubagentProgress tool={tool} verbosity={verbosity} />
                   )}
                   {tool.output && (
                     <div>

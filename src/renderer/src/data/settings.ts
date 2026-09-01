@@ -27,6 +27,14 @@ export const MAX_QUICK_ACTIONS = 7
 
 export type QuickActionSlots = (QuickAction | null)[]
 
+export type OutputVerbosity = 'none' | 'some' | 'all'
+
+export const OUTPUT_VERBOSITY_OPTIONS: ReadonlyArray<{ value: OutputVerbosity; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'some', label: 'Some' },
+  { value: 'all', label: 'All' },
+]
+
 export interface AppSettings {
   model: string
   modelVariant: string
@@ -36,7 +44,7 @@ export interface AppSettings {
   createPrPrompt: string
   quickActions: QuickActionSlots
   notifications: NotificationPrefs
-  verboseMode: boolean
+  outputVerbosity: OutputVerbosity
   soundEnabled: boolean
 }
 
@@ -80,7 +88,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     completed: false,
     external_attached: true,
   },
-  verboseMode: false,
+  outputVerbosity: 'none',
   soundEnabled: true,
 }
 
@@ -89,7 +97,14 @@ export function loadSettings(): AppSettings {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
     if (!stored) return DEFAULT_SETTINGS
 
-    const parsed = JSON.parse(stored) as Partial<AppSettings>
+    const parsed = JSON.parse(stored) as Partial<AppSettings> & { verboseMode?: boolean }
+    const currentSettings = { ...parsed }
+    delete currentSettings.verboseMode
+    const outputVerbosity = isOutputVerbosity(parsed.outputVerbosity)
+      ? parsed.outputVerbosity
+      : parsed.verboseMode === true
+        ? 'all'
+        : DEFAULT_SETTINGS.outputVerbosity
 
     // Quick actions: fixed-length slots array. Migrate old dense arrays and
     // pad/trim to exactly MAX_QUICK_ACTIONS slots.
@@ -103,17 +118,22 @@ export function loadSettings(): AppSettings {
 
     return {
       ...DEFAULT_SETTINGS,
-      ...parsed,
+      ...currentSettings,
       notifications: {
         ...DEFAULT_SETTINGS.notifications,
         ...(parsed.notifications ?? {}),
       },
       createPrPrompt: parsed.createPrPrompt?.trim() ? parsed.createPrPrompt : DEFAULT_CREATE_PR_PROMPT,
       quickActions,
+      outputVerbosity,
     }
   } catch {
     return DEFAULT_SETTINGS
   }
+}
+
+export function isOutputVerbosity(value: unknown): value is OutputVerbosity {
+  return value === 'none' || value === 'some' || value === 'all'
 }
 
 export function isQuickActionValid(qa: QuickAction): boolean {

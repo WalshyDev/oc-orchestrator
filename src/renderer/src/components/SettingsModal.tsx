@@ -22,6 +22,7 @@ import { PortaledMenu } from './PortaledMenu'
 import {
   DEFAULT_CREATE_PR_PROMPT,
   MAX_QUICK_ACTIONS,
+  OUTPUT_VERBOSITY_OPTIONS,
   isQuickActionValid,
   loadSettings,
   saveSettings,
@@ -314,24 +315,20 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 </label>
               </div>
 
-              {/* Verbose Mode */}
+              {/* Output visibility */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                   Output Visibility
                 </label>
-                <label className="flex items-center gap-2.5 cursor-pointer group pl-1">
-                  <input
-                    type="checkbox"
-                    checked={settings.verboseMode}
-                    onChange={(event) => updateSettings({ verboseMode: event.target.checked })}
-                    className="w-3.5 h-3.5 rounded border-kumo-line bg-kumo-control accent-kumo-brand"
-                  />
-                  <span className="text-sm text-kumo-default group-hover:text-kumo-strong transition-colors">
-                    Verbose Mode
-                  </span>
-                </label>
+                <SelectField
+                  value={settings.outputVerbosity}
+                  onChange={(value) => updateSettings({ outputVerbosity: value as AppSettings['outputVerbosity'] })}
+                  options={OUTPUT_VERBOSITY_OPTIONS}
+                  buttonClassName={selectButtonClasses}
+                  menuClassName={selectMenuClasses}
+                />
                 <p className="text-[11px] text-kumo-subtle">
-                  Auto-expand all tool calls, tool output, and events in agent detail views. Can be toggled per-agent in the drawer header.
+                  None keeps details collapsed. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
                 </p>
               </div>
 

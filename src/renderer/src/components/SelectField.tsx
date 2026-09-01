@@ -11,6 +11,7 @@ interface SelectFieldProps {
   value: string
   options: readonly SelectOption[]
   onChange: (value: string) => void
+  disabled?: boolean
   searchable?: boolean
   searchPlaceholder?: string
   buttonClassName?: string
@@ -26,6 +27,7 @@ export function SelectField({
   value,
   options,
   onChange,
+  disabled = false,
   searchable = false,
   searchPlaceholder = 'Search…',
   buttonClassName,
@@ -64,6 +66,7 @@ export function SelectField({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        disabled={disabled}
         onClick={() => setIsOpen((previous) => !previous)}
         className={buttonClassName}
       >
@@ -72,7 +75,7 @@ export function SelectField({
       </button>
 
       <PortaledMenu
-        open={isOpen}
+        open={isOpen && !disabled}
         triggerRef={buttonRef}
         placement="bottom-left"
         matchTriggerWidth

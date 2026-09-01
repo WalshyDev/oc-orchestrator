@@ -279,7 +279,7 @@ export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
   return { providerData, configModel }
 }
 
-export function useModelOptions(): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
+export function useModelOptions(agentId?: string): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
   const [options, setOptions] = useState<ModelOption[]>(STATIC_MODEL_OPTIONS)
   const [providerData, setProviderData] = useState<ProviderData | null>(null)
   const [configModel, setConfigModel] = useState<string | undefined>(undefined)
@@ -291,11 +291,23 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean; p
 
     const load = (): void => {
       const seq = ++requestSeq
-      void ensureProvidersLoaded().then(({ providerData, configModel }) => {
+      const fetchResult = agentId
+        ? Promise.all([window.api.getProviders(agentId), window.api.getConfig(agentId)]).then(([providersResult, configResult]) => ({
+            providerData: providersResult.ok && providersResult.data
+              ? providersResult.data as ProviderData
+              : null,
+            configModel: configResult.ok && configResult.data
+              ? (configResult.data as { model?: string }).model
+              : undefined
+          }))
+        : ensureProvidersLoaded()
+
+      void fetchResult.then(({ providerData, configModel }) => {
         if (cancelled || seq !== requestSeq) return
 
         let opts: ModelOption[]
         if (providerData) {
+          recordContextLimitsFromProviders(providerData)
           const dynamicOptions = buildOptionsFromProviders(providerData)
           opts = dynamicOptions.length > 1 ? dynamicOptions : [...STATIC_MODEL_OPTIONS]
         } else {
@@ -311,15 +323,13 @@ export function useModelOptions(): { options: ModelOption[]; loading: boolean; p
     }
 
     load()
-    // Re-fetch when the cache is invalidated (e.g. a runtime restarts after a
-    // config change) so the System Default label reflects the current config.
-    const unsubscribe = subscribeToConfigChanges(load)
+    const unsubscribe = agentId ? () => {} : subscribeToConfigChanges(load)
 
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [])
+  }, [agentId])
 
   return { options, loading, providerData, configModel }
 }

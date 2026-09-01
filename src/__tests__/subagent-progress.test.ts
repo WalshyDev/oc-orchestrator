@@ -211,7 +211,46 @@ describe('subagent progress', () => {
       name: 'task',
       state: 'running',
       timestamp: 0
-    }, false, true)).toBe(false)
+    }, 'none', true)).toBe(false)
+  })
+
+  it('uses Some for parent output and All for completed subagent output', () => {
+    const ordinaryTool = {
+      id: 'bash',
+      name: 'bash',
+      state: 'completed' as const,
+      timestamp: Date.now(),
+      input: 'npm test',
+      output: 'tests passed'
+    }
+    const completedTask = {
+      id: 'task',
+      name: 'task',
+      state: 'completed' as const,
+      timestamp: Date.now(),
+      childSessionId: 'child',
+      childTranscript: [{ id: 'final', kind: 'text' as const, label: 'final child output' }]
+    }
+
+    const someOrdinary = renderToStaticMarkup(createElement(ToolsUsage, {
+      tools: [ordinaryTool],
+      verbosity: 'some'
+    }))
+    const someTask = renderToStaticMarkup(createElement(ToolsUsage, {
+      tools: [completedTask],
+      verbosity: 'some'
+    }))
+    const allTask = renderToStaticMarkup(createElement(ToolsUsage, {
+      tools: [completedTask],
+      verbosity: 'all'
+    }))
+
+    expect(someOrdinary).toContain('tests passed')
+    expect(someTask).not.toContain('final child output')
+    expect(allTask).toContain('final child output')
+    expect(shouldAutoExpandTool(ordinaryTool, 'some', false)).toBe(true)
+    expect(shouldAutoExpandTool(completedTask, 'some', false)).toBe(false)
+    expect(shouldAutoExpandTool(completedTask, 'all', false)).toBe(true)
   })
 
   it('expands running commands after a completed todo update', () => {
@@ -252,8 +291,8 @@ describe('subagent progress', () => {
       }
     }))
 
-    expect(shouldAutoExpandTool(tools[0], false, false)).toBe(false)
-    expect(shouldAutoExpandTool(tools[1], false, false)).toBe(true)
+    expect(shouldAutoExpandTool(tools[0], 'none', false)).toBe(false)
+    expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(true)
     for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {
       expect(toolsTab).toContain(command)
       expect(transcript).toContain(command)
