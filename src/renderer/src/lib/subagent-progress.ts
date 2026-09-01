@@ -26,10 +26,14 @@ export interface TaskPartDescriptor {
   childSessionId?: string
 }
 
-export function mapToolState(toolState?: string, active = true): DisplayToolState {
+export function mapToolState(
+  toolName: string | undefined,
+  toolState?: string,
+  active = true
+): DisplayToolState {
   if (toolState === 'completed') return 'completed'
   if (toolState === 'error' || toolState === 'failed') return 'failed'
-  return active ? 'running' : 'failed'
+  return toolName === 'task' && !active ? 'failed' : 'running'
 }
 
 export function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
@@ -157,7 +161,7 @@ export function buildChildTranscript(
       if (part.type === 'text' && part.text) {
         entries.push({ id: part.id, kind: 'text', label: part.text })
       } else if (part.type === 'tool' && part.toolName) {
-        const toolState = mapToolState(part.toolState, messageActive)
+        const toolState = mapToolState(part.toolName, part.toolState, messageActive)
         entries.push({
           id: part.id,
           kind: 'tool',
