@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { applyReconciledStatus } from '../renderer/src/hooks/useAgentStore'
+import {
+  applyReconciledStatus,
+  isStalledResponse,
+  type LiveMessage
+} from '../renderer/src/hooks/useAgentStore'
 
 // ── Extracted logic from src/renderer/src/hooks/useAgentStore.ts ──
 
@@ -687,5 +691,43 @@ describe('reconcileStatuses: optimistic guard', () => {
     applyReconciliation(agent, 'busy')
     expect(agent.status).toBe('running')
     expect(agent.respondedAt).toBeDefined()
+  })
+})
+
+describe('stalled response watchdog', () => {
+  const now = 1_000_000
+
+  function toolMessage(toolName: string, toolState: string, id = 'assistant'): LiveMessage {
+    return {
+      id,
+      role: 'assistant',
+      sessionId: 'session',
+      createdAt: now - 8 * 60_000,
+      parts: [{ id: 'tool', type: 'tool', toolName, toolState }]
+    }
+  }
+
+  it('flags a completed skill response at the five-minute boundary', () => {
+    const messages = [toolMessage('skill', 'completed')]
+
+    expect(isStalledResponse({ status: 'running', lastActivityAt: now - 5 * 60_000 + 1 }, messages, now)).toBe(false)
+    expect(isStalledResponse({ status: 'running', lastActivityAt: now - 5 * 60_000 }, messages, now)).toBe(true)
+  })
+
+  it('keeps pending Bash and the latest Task response running', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+
+    expect(isStalledResponse(agent, [toolMessage('bash', 'pending')], now)).toBe(false)
+    expect(isStalledResponse(agent, [toolMessage('task', 'running')], now)).toBe(false)
+  })
+
+  it('ignores an abandoned Task when a later skill call completed', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+    const messages = [
+      toolMessage('task', 'pending', 'abandoned-task'),
+      toolMessage('skill', 'completed', 'latest-response')
+    ]
+
+    expect(isStalledResponse(agent, messages, now)).toBe(true)
   })
 })
