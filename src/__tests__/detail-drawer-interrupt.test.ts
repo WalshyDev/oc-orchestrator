@@ -21,6 +21,26 @@ function getElementContents(markup: string, attribute: string): string {
   throw new Error(`Could not find closing div for ${attribute}`)
 }
 
+function createAgent(status: AgentRuntime['status']): AgentRuntime {
+  return {
+    id: 'agent-1',
+    sessionId: 'session-1',
+    name: 'Agent 1',
+    projectId: 'project-1',
+    projectName: 'Project',
+    branchName: 'branch',
+    isWorktree: true,
+    workspaceName: 'workspace',
+    taskSummary: 'Task',
+    status,
+    labelIds: [],
+    model: 'model',
+    prUrl: null,
+    lastActivityAt: 'now',
+    lastActivityAtMs: 1
+  }
+}
+
 describe('DetailDrawer pending interrupts', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -69,23 +89,7 @@ describe('DetailDrawer pending interrupts', () => {
     vi.stubGlobal('window', { innerHeight: 1000 })
     vi.stubGlobal('localStorage', { getItem: () => null })
 
-    const agent: AgentRuntime = {
-      id: 'agent-1',
-      sessionId: 'session-1',
-      name: 'Agent 1',
-      projectId: 'project-1',
-      projectName: 'Project',
-      branchName: 'branch',
-      isWorktree: true,
-      workspaceName: 'workspace',
-      taskSummary: 'Task',
-      status,
-      labelIds: [],
-      model: 'model',
-      prUrl: null,
-      lastActivityAt: 'now',
-      lastActivityAtMs: 1
-    }
+    const agent = createAgent(status)
     const markup = renderToStaticMarkup(createElement(DetailDrawer, {
       agent,
       messages: [{
@@ -110,5 +114,40 @@ describe('DetailDrawer pending interrupts', () => {
     const interrupt = getElementContents(markup, 'data-pending-interrupt')
     expect(transcript).not.toContain(expected)
     expect(interrupt).toContain(expected)
+  })
+
+  it('does not claim a stalled response asked a question', () => {
+    vi.stubGlobal('window', { innerHeight: 1000 })
+    vi.stubGlobal('localStorage', { getItem: () => null })
+
+    const agent: AgentRuntime = {
+      ...createAgent('needs_input'),
+      lastActivityAt: '5m ago',
+      inputReason: 'error',
+      lastError: {
+        name: 'StalledResponse',
+        message: 'No update from provider for 5 minutes.',
+        sessionId: 'session-1',
+        occurredAt: 1
+      }
+    }
+
+    const markup = renderToStaticMarkup(createElement(DetailDrawer, {
+      agent,
+      messages: [],
+      onClose: () => {}
+    }))
+
+    expect(markup).toContain('StalledResponse')
+    expect(markup).not.toContain('Waiting for your response')
+    expect(markup).not.toContain('data-pending-interrupt')
+
+    const dismissedMarkup = renderToStaticMarkup(createElement(DetailDrawer, {
+      agent: { ...agent, lastError: undefined },
+      messages: [],
+      onClose: () => {}
+    }))
+    expect(dismissedMarkup).not.toContain('Waiting for your response')
+    expect(dismissedMarkup).not.toContain('data-pending-interrupt')
   })
 })

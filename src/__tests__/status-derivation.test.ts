@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyReconciledStatus,
+  getReconnectedInputReason,
   isStalledResponse,
   type LiveMessage
 } from '../renderer/src/hooks/useAgentStore'
@@ -694,15 +695,33 @@ describe('reconcileStatuses: optimistic guard', () => {
   })
 })
 
+describe('agent reconnection', () => {
+  it('preserves error provenance only while needs_input remains preserved', () => {
+    const existing = {
+      status: 'needs_input' as const,
+      inputReason: 'error' as const
+    }
+
+    expect(getReconnectedInputReason(existing, 'needs_input')).toBe('error')
+    expect(getReconnectedInputReason(existing, 'running')).toBeUndefined()
+    expect(getReconnectedInputReason({ ...existing, status: 'running' }, 'needs_input')).toBeUndefined()
+  })
+})
+
 describe('stalled response watchdog', () => {
   const now = 1_000_000
 
-  function toolMessage(toolName: string, toolState: string, id = 'assistant'): LiveMessage {
+  function toolMessage(
+    toolName: string,
+    toolState: string,
+    id = 'assistant',
+    createdAt = now - 8 * 60_000
+  ): LiveMessage {
     return {
       id,
       role: 'assistant',
       sessionId: 'session',
-      createdAt: now - 8 * 60_000,
+      createdAt,
       parts: [{ id: 'tool', type: 'tool', toolName, toolState }]
     }
   }
@@ -721,11 +740,31 @@ describe('stalled response watchdog', () => {
     expect(isStalledResponse(agent, [toolMessage('task', 'running')], now)).toBe(false)
   })
 
+  it('keeps the active Task running when the user queues a follow-up', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+    const followUp: LiveMessage = {
+      id: 'follow-up',
+      role: 'user',
+      sessionId: 'session',
+      createdAt: now - 6 * 60_000,
+      parts: [{ id: 'text', type: 'text', text: 'Please also check the tests' }]
+    }
+
+    expect(isStalledResponse(agent, [toolMessage('task', 'pending'), followUp], now)).toBe(false)
+  })
+
+  it('flags a stale pending Task on a completed response', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+    const completedTask = { ...toolMessage('task', 'pending'), completedAt: now - 6 * 60_000 }
+
+    expect(isStalledResponse(agent, [completedTask], now)).toBe(true)
+  })
+
   it('ignores an abandoned Task when a later skill call completed', () => {
     const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
     const messages = [
       toolMessage('task', 'pending', 'abandoned-task'),
-      toolMessage('skill', 'completed', 'latest-response')
+      { ...toolMessage('skill', 'completed', 'latest-response', now - 6 * 60_000), completedAt: now - 6 * 60_000 }
     ]
 
     expect(isStalledResponse(agent, messages, now)).toBe(true)
