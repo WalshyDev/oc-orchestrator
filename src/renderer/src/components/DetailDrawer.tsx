@@ -12,7 +12,6 @@ import {
   CaretRight,
   Trash,
   ChatCircleDots,
-  Brain,
   PaperPlaneTilt,
   ArrowUp,
   Stop,
@@ -27,14 +26,25 @@ import {
   Warning,
   ArrowsInLineHorizontal,
   Copy,
+  SlidersHorizontal,
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
 import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
 import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
-import { loadSettings, SETTINGS_CHANGED_EVENT, isQuickActionValid, type QuickAction, type QuickActionIcon } from '../data/settings'
+import {
+  loadSettings,
+  OUTPUT_VERBOSITY_OPTIONS,
+  SETTINGS_CHANGED_EVENT,
+  isQuickActionValid,
+  type OutputVerbosity,
+  type QuickAction,
+  type QuickActionIcon
+} from '../data/settings'
+import { loadAgentOutputVerbosity, saveAgentOutputVerbosity } from '../data/agentSettings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
+import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -42,12 +52,12 @@ import { PortaledMenu } from './PortaledMenu'
 import { TextInputModal } from './TextInputModal'
 import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
-import { ToolsUsage } from './ToolsUsage'
+import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
+import { SelectField } from './SelectField'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
-import { SubagentProgress } from './SubagentProgress'
 import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
@@ -106,7 +116,7 @@ function loadInputHeight(): number {
   return Math.max(MIN_INPUT_HEIGHT, Math.round(window.innerHeight * DEFAULT_INPUT_HEIGHT_RATIO))
 }
 
-type TabKey = 'transcript' | 'todos' | 'files' | 'tools' | 'events'
+type TabKey = 'transcript' | 'todos' | 'files' | 'tools' | 'events' | 'config'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -210,7 +220,7 @@ interface DetailDrawerProps {
    *  an optional file path to pre-select (used when the user clicks a row
    *  in Files Changed). */
   onOpenWorkspace?: (filePath?: string) => void
-  onChangeModel?: () => void
+  onChangeModel?: (modelPath: string, variant?: string) => Promise<boolean>
   onOpenTerminal?: () => void
   onToggleLabel?: (labelId: string) => void
   onClearLabels?: () => void
@@ -312,19 +322,26 @@ export const DetailDrawer = memo(function DetailDrawer({
     setVisibleMessageCount((prev) => prev + LOAD_MORE_INCREMENT)
   }, [])
 
-  // Settings: reactive to changes from SettingsModal
-  const [isVerbose, setIsVerbose] = useState(() => loadSettings().verboseMode)
+  // Global settings provide the default; a drawer choice is persisted per agent.
+  const [outputVerbosity, setOutputVerbosity] = useState<OutputVerbosity>(() =>
+    loadAgentOutputVerbosity(agent.sessionId ?? agent.id) ?? loadSettings().outputVerbosity
+  )
   const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
   const editorLabel = useEditorLabel()
   useEffect(() => {
     const onSettingsChanged = () => {
       const s = loadSettings()
-      setIsVerbose(s.verboseMode)
+      if (!loadAgentOutputVerbosity(agent.sessionId ?? agent.id)) setOutputVerbosity(s.outputVerbosity)
       setQuickActions(s.quickActions)
     }
     window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
     return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
-  }, [])
+  }, [agent.id, agent.sessionId])
+
+  const handleOutputVerbosityChange = useCallback((value: OutputVerbosity) => {
+    setOutputVerbosity(value)
+    saveAgentOutputVerbosity(agent.sessionId ?? agent.id, value)
+  }, [agent.id, agent.sessionId])
   const {
     attachments, isDragOver, fileInputRef,
     removeAttachment, clearAttachments,
@@ -808,7 +825,8 @@ export const DetailDrawer = memo(function DetailDrawer({
     { key: 'todos', label: 'TODO', count: latestTodos.length },
     { key: 'files', label: 'Files Changed', count: uniqueFileCount },
     { key: 'tools', label: 'Tools', count: tools.length },
-    { key: 'events', label: 'Events', count: events.length }
+    { key: 'events', label: 'Events', count: events.length },
+    { key: 'config', label: 'Config' }
   ]
 
   return (
@@ -856,9 +874,9 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {onChangeModel && agent.model !== UNRESOLVED_MODEL_LABEL ? (
+            {agent.model !== UNRESOLVED_MODEL_LABEL ? (
               <button
-                onClick={onChangeModel}
+                onClick={() => setActiveTab('config')}
                 className="text-[10px] text-kumo-subtle font-mono whitespace-nowrap hover:text-kumo-default transition-colors"
                 title="Change model"
               >
@@ -888,7 +906,7 @@ export const DetailDrawer = memo(function DetailDrawer({
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-kumo-line shrink-0">
+        <div className="flex overflow-x-auto border-b border-kumo-line shrink-0">
           {tabs.map((tab) => (
             <Tab
               key={tab.key}
@@ -938,7 +956,7 @@ export const DetailDrawer = memo(function DetailDrawer({
                       <MessageBubble
                         key={message.id}
                         message={message}
-                        verbose={isVerbose}
+                        verbosity={outputVerbosity}
                         registerRef={registerMessageRef}
                       />
                     ))}
@@ -1034,8 +1052,16 @@ export const DetailDrawer = memo(function DetailDrawer({
                 onFileClick={onOpenWorkspace ? (path) => onOpenWorkspace(path) : undefined}
               />
             )}
-            {activeTab === 'tools' && <ToolsUsage tools={tools} verbose={isVerbose} />}
-            {activeTab === 'events' && <EventLog events={events} verbose={isVerbose} />}
+            {activeTab === 'tools' && <ToolsUsage tools={tools} verbosity={outputVerbosity} />}
+            {activeTab === 'events' && <EventLog events={events} verbosity={outputVerbosity} />}
+            {activeTab === 'config' && (
+              <AgentConfigPanel
+                agent={agent}
+                outputVerbosity={outputVerbosity}
+                onOutputVerbosityChange={handleOutputVerbosityChange}
+                onChangeModel={onChangeModel}
+              />
+            )}
           </div>
 
           {/* Jump to latest — absolutely positioned over the scroll area
@@ -1329,9 +1355,9 @@ export const DetailDrawer = memo(function DetailDrawer({
               />
               {onChangeModel && (
                 <ActionButton
-                  icon={<Brain size={12} />}
-                  label="Model"
-                  onClick={onChangeModel}
+                  icon={<SlidersHorizontal size={12} />}
+                  label="Config"
+                  onClick={() => setActiveTab('config')}
                   className="w-full"
                 />
               )}
@@ -1735,7 +1761,7 @@ function Tab({
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 text-xs font-medium cursor-pointer border-b-2 transition-colors flex items-center gap-1.5 ${
+      className={`shrink-0 px-4 py-2 text-xs font-medium cursor-pointer border-b-2 transition-colors flex items-center gap-1.5 ${
         active
           ? 'text-kumo-strong border-kumo-brand'
           : 'text-kumo-subtle border-transparent hover:text-kumo-default'
@@ -1757,15 +1783,160 @@ function Tab({
   )
 }
 
+const outputVerbosityDescriptions: Record<OutputVerbosity, string> = {
+  none: 'Keep tool and event details collapsed.',
+  some: 'Expand parent tools and events, but collapse subagent transcripts.',
+  all: 'Expand parent tools, events, and subagent transcripts.'
+}
+
+function AgentConfigPanel({
+  agent,
+  outputVerbosity,
+  onOutputVerbosityChange,
+  onChangeModel
+}: {
+  agent: AgentRuntime
+  outputVerbosity: OutputVerbosity
+  onOutputVerbosityChange: (value: OutputVerbosity) => void
+  onChangeModel?: (modelPath: string, variant?: string) => Promise<boolean>
+}) {
+  const { options, loading, providerData, configModel } = useModelOptions(agent.id)
+  const [selectedModel, setSelectedModel] = useState(agent.configuredModelPath ?? agent.model)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savingRef = useRef(false)
+
+  useEffect(() => {
+    setSelectedModel(agent.configuredModelPath ?? configModel ?? agent.model)
+    setSaveError(null)
+  }, [agent.id, agent.configuredModelPath, agent.model, configModel])
+
+  const modelOptions = useMemo(() => {
+    const concreteOptions = options.filter((option) => option.value !== 'auto')
+    if (concreteOptions.some((option) => option.value === selectedModel)) return concreteOptions
+    return [
+      { value: selectedModel, label: `Current (${agent.model})` },
+      ...concreteOptions
+    ]
+  }, [agent.model, options, selectedModel])
+
+  const effortOptions = useMemo(
+    () => getVariantOptionsForModel(selectedModel, providerData, configModel),
+    [selectedModel, providerData, configModel]
+  )
+  const selectedEffort = effortOptions.some((option) => option.value === agent.variant)
+    ? agent.variant ?? 'auto'
+    : 'auto'
+
+  const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
+    if (!onChangeModel || savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const updated = await onChangeModel(modelPath, variant)
+      if (updated) {
+        setSelectedModel(modelPath)
+        return
+      }
+      setSaveError('Could not update this agent. Its current configuration is unchanged.')
+    } catch {
+      setSaveError('Could not update this agent. Its current configuration is unchanged.')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  const selectButtonClasses =
+    'flex w-full items-center justify-between gap-3 rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-sm text-kumo-default outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring'
+  const selectMenuClasses =
+    'max-h-[min(24rem,calc(100vh-1rem))] overflow-y-auto rounded-md border border-kumo-line bg-kumo-overlay shadow-xl'
+
+  return (
+    <div className="flex flex-col gap-6 py-2">
+      <section className="flex flex-col gap-2">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-kumo-subtle">Output Detail</h3>
+          <p className="mt-1 text-[11px] text-kumo-subtle">Applies only to this agent.</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {OUTPUT_VERBOSITY_OPTIONS.map((option) => {
+            const selected = outputVerbosity === option.value
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => onOutputVerbosityChange(option.value)}
+                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  selected
+                    ? 'border-kumo-brand/40 bg-kumo-brand/10 text-kumo-strong'
+                    : 'border-kumo-line bg-kumo-control text-kumo-default hover:bg-kumo-fill'
+                }`}
+              >
+                <span className="block text-xs font-semibold">{option.label}</span>
+                <span className="mt-1 block text-[10px] leading-snug text-kumo-subtle">
+                  {outputVerbosityDescriptions[option.value]}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-kumo-subtle">Model</h3>
+          <p className="mt-1 text-[11px] text-kumo-subtle">Changes the model for this agent's next prompt.</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[11px] font-medium text-kumo-default">Model</label>
+          <SelectField
+            value={selectedModel}
+            options={modelOptions}
+            disabled={saving || !onChangeModel}
+            onChange={(value) => void updateModel(value)}
+            searchable
+            searchPlaceholder="Search models..."
+            buttonClassName={selectButtonClasses}
+            menuClassName={selectMenuClasses}
+          />
+          {loading && <span className="text-[10px] text-kumo-subtle">Loading provider models...</span>}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[11px] font-medium text-kumo-default">Effort</label>
+          <SelectField
+            value={selectedEffort}
+            options={effortOptions}
+            disabled={saving || !onChangeModel}
+            onChange={(value) => void updateModel(selectedModel, value === 'auto' ? undefined : value)}
+            buttonClassName={selectButtonClasses}
+            menuClassName={selectMenuClasses}
+          />
+          <span className="text-[10px] text-kumo-subtle">
+            {effortOptions.length === 1
+              ? 'This model does not expose explicit effort levels.'
+              : "Provider Default removes this agent's effort override."}
+          </span>
+        </div>
+        {saving && <span className="text-[11px] text-kumo-link">Saving configuration...</span>}
+        {saveError && <span className="text-[11px] text-kumo-danger">{saveError}</span>}
+      </section>
+    </div>
+  )
+}
+
 type MessageRefCallback = (id: string, node: HTMLElement | null) => void
 
 const MessageBubble = memo(function MessageBubble({
   message,
-  verbose = false,
+  verbosity = 'none',
   registerRef
 }: {
   message: Message
-  verbose?: boolean
+  verbosity?: OutputVerbosity
   registerRef?: MessageRefCallback
 }) {
   const rootRef = useCallback((node: HTMLElement | null) => {
@@ -1773,7 +1944,7 @@ const MessageBubble = memo(function MessageBubble({
   }, [message.id, registerRef])
 
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbose={verbose} rootRef={rootRef} />
+    return <ToolGroupBubble message={message} verbosity={verbosity} rootRef={rootRef} />
   }
 
   if (message.role === 'compaction') {
@@ -1887,7 +2058,7 @@ const MessageBubble = memo(function MessageBubble({
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
   prev.message.toolCalls === next.message.toolCalls &&
-  prev.verbose === next.verbose &&
+  prev.verbosity === next.verbosity &&
   prev.registerRef === next.registerRef
 )
 
@@ -1962,21 +2133,36 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
 
 export const ToolGroupBubble = memo(function ToolGroupBubble({
   message,
-  verbose = false,
+  verbosity = 'none',
   rootRef
 }: {
   message: Message
-  verbose?: boolean
+  verbosity?: OutputVerbosity
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
 
+  // Auto-expand the bubble when any tool in the group is still running so
+  // the user can see progress without having to click. Otherwise the bubble
+  // looks frozen ("tool completed" only appears at the very end) and the user
+  // has no feedback until the tool finishes — which for CI-watching tasks
+  // can be many minutes.
   const hasRunningTool = toolCalls.some((tool) => tool.state === 'running')
-  const [expanded, setExpanded] = useState(verbose || hasRunningTool)
+  const [expanded, setExpanded] = useState(verbosity !== 'none' || hasRunningTool)
+  const previousVerbosityRef = useRef(verbosity)
 
   useEffect(() => {
-    if (verbose || hasRunningTool) setExpanded(true)
-  }, [verbose, hasRunningTool])
+    if (previousVerbosityRef.current === verbosity) return
+    setExpanded(verbosity !== 'none' || hasRunningTool)
+    previousVerbosityRef.current = verbosity
+  }, [verbosity, hasRunningTool])
+
+  // Once a tool starts running inside this group, force the bubble open.
+  // We don't collapse it again when the tool finishes — the user may want to
+  // scroll back through the progress.
+  useEffect(() => {
+    if (hasRunningTool) setExpanded(true)
+  }, [hasRunningTool])
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
@@ -2012,11 +2198,12 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
                   watch what the sub-agent is doing. Rendered above the final
                   output so the transcript reads top-to-bottom. */}
               {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
-                <SubagentProgress
-                  entries={tool.childTranscript ?? []}
-                  state={tool.state}
-                  childSessionId={tool.childSessionId}
-                />
+                <div className="mt-2">
+                  <CollapsibleSubagentProgress
+                    tool={tool}
+                    verbosity={verbosity}
+                  />
+                </div>
               )}
               {tool.output && (
                 <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
@@ -2033,7 +2220,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
   prev.message.toolCalls === next.message.toolCalls &&
-  prev.verbose === next.verbose
+  prev.verbosity === next.verbosity
 )
 
 /**

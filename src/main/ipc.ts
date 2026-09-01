@@ -29,6 +29,8 @@ function toAgentPayload(handle: AgentHandle): {
   workspaceName: string
   prompt: string
   title: string
+  modelOverride?: { providerID: string; modelID: string }
+  variantOverride?: string
 } {
   return {
     id: handle.id,
@@ -40,7 +42,9 @@ function toAgentPayload(handle: AgentHandle): {
     isWorktree: handle.isWorktree,
     workspaceName: handle.workspaceName,
     prompt: handle.prompt,
-    title: handle.title
+    title: handle.title,
+    modelOverride: handle.modelOverride,
+    variantOverride: handle.variantOverride
   }
 }
 
@@ -436,7 +440,9 @@ export function registerIpcHandlers(): void {
         taskSummary: agent.taskSummary,
         persistedStatus: agent.persistedStatus,
         labelIds: agent.labelIds ?? [],
-        prUrl: agent.prUrl
+        prUrl: agent.prUrl,
+        modelOverride: agent.modelOverride,
+        variantOverride: agent.variantOverride
       }))
     }
   })

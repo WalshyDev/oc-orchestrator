@@ -378,14 +378,6 @@ class AgentController {
     this.agents.set(agentId, handle)
     this.persistAgents()
 
-    // Also set directory-level config so the OpenCode UI reflects the choice
-    if (handle.modelOverride) {
-      await client.config.update({
-        directory,
-        config: { model }
-      })
-    }
-
     // Notify the renderer before sending the prompt so the agent exists in
     // the store before SSE events arrive — otherwise processEvent() silently
     // drops them because findAgentBySession() returns undefined.
@@ -687,30 +679,27 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    // Track model changes on the handle so every subsequent promptAsync
-    // uses the selected model instead of relying on directory-level config.
-    if (typeof config.model === 'string') {
-      handle.modelOverride = parseModelString(config.model)
-      this.persistAgents()
+    const nextModelOverride = typeof config.model === 'string'
+      ? parseModelString(config.model)
+      : handle.modelOverride
+    const nextVariantOverride = 'variant' in config
+      ? typeof config.variant === 'string' ? config.variant : undefined
+      : handle.variantOverride
+    const { model: _model, variant: _variant, ...forwardConfig } = config
+
+    let result: unknown
+    if (Object.keys(forwardConfig).length > 0) {
+      const response = await runtime.client.config.update({
+        directory: handle.directory,
+        config: forwardConfig as never
+      })
+      result = response.data
     }
 
-    // Track variant changes on the handle so every subsequent promptAsync
-    // uses the selected variant (thinking level).
-    if ('variant' in config) {
-      handle.variantOverride = typeof config.variant === 'string' ? config.variant : undefined
-      this.persistAgents()
-    }
-
-    // Strip variant from the config before forwarding — it's not a top-level
-    // opencode config key; we handle it locally via promptAsync params.
-    const { variant: _variant, ...forwardConfig } = config
-
-    const result = await runtime.client.config.update({
-      directory: handle.directory,
-      config: forwardConfig as never
-    })
-
-    return result.data
+    handle.modelOverride = nextModelOverride
+    handle.variantOverride = nextVariantOverride
+    this.persistAgents()
+    return result
   }
 
   /**
@@ -1370,13 +1359,6 @@ class AgentController {
 
     this.agents.set(agentId, handle)
     this.persistAgents()
-
-    if (handle.modelOverride) {
-      await targetClient.config.update({
-        directory: targetDirectory,
-        config: { model }
-      })
-    }
 
     // Broadcast before seeding so the renderer can attach SSE events to this
     // agent. This matches `launchAgent`.

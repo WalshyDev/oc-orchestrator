@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { ListBullets, CaretDown, CaretRight, Funnel } from '@phosphor-icons/react'
 import { PortaledMenu } from './PortaledMenu'
+import type { OutputVerbosity } from '../data/settings'
 
 export interface EventEntry {
   id: string
@@ -12,7 +13,7 @@ export interface EventEntry {
 
 interface EventLogProps {
   events: EventEntry[]
-  verbose?: boolean
+  verbosity?: OutputVerbosity
 }
 
 const typeColorMap: Record<string, string> = {
@@ -43,29 +44,37 @@ function formatJson(data: unknown): string {
   }
 }
 
-export const EventLog = memo(function EventLog({ events, verbose = false }: EventLogProps) {
+export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: EventLogProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
-    verbose ? new Set(events.map((e) => e.id)) : new Set()
+    verbosity === 'none' ? new Set() : new Set(events.map((e) => e.id))
   )
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const filterButtonRef = useRef<HTMLButtonElement>(null)
-  // Track items the user explicitly collapsed so we don't re-expand them
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
+  const previousVerbosityRef = useRef(verbosity)
 
-  // When verbose is on, auto-expand only *new* items (not manually-collapsed ones)
+  // Some and All both expand events because events never contain subagents.
   useEffect(() => {
-    if (!verbose) return
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      for (const event of events) {
-        if (!manuallyCollapsedRef.current.has(event.id)) {
-          next.add(event.id)
+    const verbosityChanged = previousVerbosityRef.current !== verbosity
+    if (verbosityChanged && verbosity === 'none') {
+      setExpandedIds(new Set())
+      previousVerbosityRef.current = verbosity
+      return
+    }
+    if (verbosity !== 'none') {
+      setExpandedIds((prev) => {
+        const next = new Set(prev)
+        for (const event of events) {
+          if (!manuallyCollapsedRef.current.has(event.id)) {
+            next.add(event.id)
+          }
         }
-      }
-      return next
-    })
-  }, [verbose, events])
+        return next
+      })
+    }
+    previousVerbosityRef.current = verbosity
+  }, [verbosity, events])
 
   const eventTypes = useMemo(() => {
     const types = new Set<string>()
@@ -85,7 +94,7 @@ export const EventLog = memo(function EventLog({ events, verbose = false }: Even
       const next = new Set(prev)
       if (next.has(eventId)) {
         next.delete(eventId)
-        if (verbose) manuallyCollapsedRef.current.add(eventId)
+        if (verbosity !== 'none') manuallyCollapsedRef.current.add(eventId)
       } else {
         next.add(eventId)
         manuallyCollapsedRef.current.delete(eventId)

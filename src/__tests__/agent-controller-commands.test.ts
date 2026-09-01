@@ -1,7 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  sessionCreate: vi.fn(),
   sessionCommand: vi.fn(),
+  configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
 }))
 
@@ -23,6 +25,13 @@ const persistedAgents = [
     title: 'Bare model session',
     modelOverride: { providerID: '', modelID: 'local-model' },
   },
+  {
+    id: 'agent-3',
+    sessionId: 'default-model-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Default model session',
+  },
 ]
 
 const runtime = {
@@ -30,7 +39,11 @@ const runtime = {
   directory: '/tmp/project',
   client: {
     session: {
+      create: mocks.sessionCreate,
       command: mocks.sessionCommand,
+    },
+    config: {
+      update: mocks.configUpdate,
     },
   },
 }
@@ -52,6 +65,7 @@ vi.mock('../main/services/runtime-manager', () => ({
 vi.mock('../main/services/event-bridge', () => ({
   EventBridge: class {
     async start(): Promise<void> {}
+    async ensureStreaming(): Promise<void> {}
   },
 }))
 
@@ -91,6 +105,10 @@ describe('AgentController.executeCommand', () => {
   beforeEach(() => {
     mocks.sessionCommand.mockReset()
     mocks.sessionCommand.mockResolvedValue({ data: undefined })
+    mocks.sessionCreate.mockReset()
+    mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
+    mocks.configUpdate.mockReset()
+    mocks.configUpdate.mockResolvedValue({ data: undefined })
   })
 
   it('uses the selected model for an existing session with an unavailable previous model', async () => {
@@ -119,6 +137,51 @@ describe('AgentController.executeCommand', () => {
 
     expect(mocks.sessionCommand).toHaveBeenCalledWith(expect.objectContaining({
       model: 'local-model',
+    }))
+  })
+
+  it('changes one agent model without updating the shared directory config', async () => {
+    await agentController.updateConfig('agent-3', {
+      model: 'anthropic/claude-sonnet-4-6',
+      variant: 'high',
+    })
+    await agentController.executeCommand('agent-3', 'review', '')
+    await agentController.executeCommand('agent-2', 'review', '')
+
+    expect(mocks.configUpdate).not.toHaveBeenCalled()
+    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      model: 'anthropic/claude-sonnet-4-6',
+      variant: 'high',
+    }))
+    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      model: 'local-model',
+    }))
+  })
+
+  it('launches a selected model without updating the shared directory config', async () => {
+    const handle = await agentController.launchAgent({
+      directory: '/tmp/project',
+      model: 'openai/gpt-5.6-sol',
+      modelVariant: 'high',
+    })
+
+    expect(handle.modelOverride).toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
+    expect(handle.variantOverride).toBe('high')
+    expect(mocks.configUpdate).not.toHaveBeenCalled()
+  })
+
+  it('keeps the previous override when another config update fails', async () => {
+    mocks.configUpdate.mockRejectedValueOnce(new Error('config write failed'))
+
+    await expect(agentController.updateConfig('agent-1', {
+      model: 'anthropic/claude-opus-5',
+      theme: 'dark',
+    })).rejects.toThrow('config write failed')
+    await agentController.executeCommand('agent-1', 'review', '')
+
+    expect(mocks.sessionCommand).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'openai/gpt-5.6-sol',
+      variant: 'high',
     }))
   })
 })

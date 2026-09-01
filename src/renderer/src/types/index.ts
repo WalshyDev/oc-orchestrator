@@ -69,6 +69,7 @@ export interface Project {
 
 export interface AgentRuntime {
   id: string
+  sessionId?: string
   name: string
   projectId: string
   projectName: string
@@ -79,6 +80,7 @@ export interface AgentRuntime {
   status: AgentStatus
   labelIds: string[]
   model: string
+  configuredModelPath?: string
   variant?: string
   prUrl: string | null
   lastActivityAt: string

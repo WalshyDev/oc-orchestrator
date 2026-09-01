@@ -358,6 +358,7 @@ export function App() {
 
       return {
         id: agent.id,
+        sessionId: agent.sessionId,
         name: agent.name,
         projectId: agent.directory,
         projectName: agent.projectName,
@@ -368,6 +369,7 @@ export function App() {
         status: displayStatus,
         labelIds: agent.labelIds,
         model: agent.model,
+        configuredModelPath: agent.configuredModelPath,
         variant: agent.variant,
         prUrl: agent.prUrl,
         lastActivityAt: formatTimeAgo(agent.lastActivityAt),
@@ -988,10 +990,19 @@ export function App() {
     if (selectedAgentId) void handleRemoveAgent(selectedAgentId)
   }, [selectedAgentId, handleRemoveAgent])
 
-  const handleDrawerChangeModel = useCallback(() => {
-    setModelPickerAgentId(selectedAgentId)
-    setShowModelPicker(true)
-  }, [selectedAgentId])
+  const handleDrawerChangeModel = useCallback(async (modelPath: string, variant?: string): Promise<boolean> => {
+    if (!selectedAgentId) return false
+    const result = await window.api.updateConfig(selectedAgentId, {
+      model: modelPath,
+      variant: variant ?? null
+    })
+    if (!result.ok) {
+      console.error('Failed to set model:', result.error)
+      return false
+    }
+    storeSetAgentModel(selectedAgentId, modelPath, variant)
+    return true
+  }, [selectedAgentId, storeSetAgentModel])
 
   const handleDrawerToggleLabel = useCallback((labelId: string) => {
     if (selectedAgentId) handleToggleLabel(selectedAgentId, labelId)
@@ -1669,6 +1680,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
       {selectedAgent && (
         <DetailDrawer
+          key={selectedAgent.id}
           agent={selectedAgent}
           workspacePath={selectedWorkspacePath}
           messages={selectedMessages}

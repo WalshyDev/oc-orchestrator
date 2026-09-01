@@ -254,6 +254,8 @@ export interface AgentLaunchedPayload {
   /** @deprecated Use labelIds. Kept for reading legacy persisted data. */
   labelId?: string
   prUrl?: string
+  modelOverride?: { providerID: string; modelID: string }
+  variantOverride?: string
   /** Correlation id from the renderer's launch request. Present only for
    *  launches this renderer started; used to retire the placeholder row. */
   launchId?: string
