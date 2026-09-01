@@ -16,6 +16,7 @@ import {
   getLatestChildActivityAt,
   getChildSessionId,
   getToolMetadataOutput,
+  mapToolState,
   collectSessionSubtreeIds,
   mergeLiveMessagePart,
   orderTranscriptByActivity,
@@ -72,9 +73,27 @@ describe('subagent progress', () => {
     }
 
     expect(getToolStates(true))
-      .toEqual([['failed', 'failed'], ['running', 'running']])
+      .toEqual([['failed', 'running'], ['running', 'running']])
     expect(getToolStates(false))
-      .toEqual([['failed', 'failed'], ['failed', 'failed']])
+      .toEqual([['failed', 'running'], ['failed', 'running']])
+  })
+
+  it('keeps a pending Bash activity running when a later message arrives', () => {
+    const messages = [
+      assistantMessage('child', [{
+        id: 'command', type: 'tool', toolName: 'bash', toolState: 'pending'
+      }]),
+      assistantMessage('child', [{ id: 'progress', type: 'text', text: 'Still working' }])
+    ]
+
+    const transcript = buildChildTranscript('child', () => messages)
+
+    expect(transcript[0]).toMatchObject({ label: 'bash', toolState: 'running' })
+  })
+
+  it('only infers failure for an inactive Task activity', () => {
+    expect(mapToolState('bash', 'pending', false)).toBe('running')
+    expect(mapToolState('task', 'pending', false)).toBe('failed')
   })
 
   it('explains when a task failed before creating its child session', () => {

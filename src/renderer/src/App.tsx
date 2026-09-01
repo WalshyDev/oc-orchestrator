@@ -591,7 +591,7 @@ export function App() {
             }
             break
           case 'tool': {
-            const toolState = mapToolState(part.toolState, messageActive)
+            const toolState = mapToolState(part.toolName, part.toolState, messageActive)
             toolCalls.push({
               id: part.id,
               name: part.toolName ?? 'unknown',
