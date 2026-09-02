@@ -8,6 +8,12 @@ export interface IpcResult<T = unknown> {
   error?: string
 }
 
+export interface AgentTodoPayload {
+  content: string
+  status: string
+  priority: string
+}
+
 export interface MessageAttachment {
   id?: string
   mime: string
@@ -23,6 +29,7 @@ export interface OrchestratorApi {
   removeAgent: (agentId: string) => Promise<IpcResult>
   resetSession: (agentId: string, prompt?: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
+  getTodos: (agentId: string) => Promise<IpcResult<AgentTodoPayload[]>>
   getChildSessions: (agentId: string) => Promise<IpcResult>
   listCommands: (agentId: string) => Promise<IpcResult>
   executeCommand: (agentId: string, command: string, args: string) => Promise<IpcResult>
@@ -127,6 +134,7 @@ export interface OrchestratorApi {
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
   onRuntimeStopped: (callback: (data: { id: string }) => void) => () => void
   onEventError: (callback: (data: { runtimeId: string; error: string }) => void) => () => void
+  onEventReconnected: (callback: (data: { runtimeId: string }) => void) => () => void
   onEventReconnectFailed: (callback: (data: { runtimeId: string; attempts: number; error: string }) => void) => () => void
   onUpdateAvailable: (callback: (data: { currentVersion: string; latestVersion: string }) => void) => () => void
   onNotificationSelectAgent: (callback: (data: { agentId: string }) => void) => () => void

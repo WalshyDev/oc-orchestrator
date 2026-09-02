@@ -1023,6 +1023,21 @@ class AgentController {
     return result.data
   }
 
+  async getTodos(agentId: string): Promise<unknown> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+
+    const result = await runtime.client.session.todo({
+      sessionID: handle.sessionId,
+      directory: handle.directory
+    })
+
+    return result.data
+  }
+
   async getChildSessions(agentId: string): Promise<{ sessions: Array<{ info: unknown; messages: unknown }>; complete: boolean }> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)

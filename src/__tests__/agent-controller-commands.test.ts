@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   sessionCommand: vi.fn(),
   sessionPromptAsync: vi.fn(),
   sessionStatus: vi.fn(),
+  sessionTodo: vi.fn(),
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
@@ -46,6 +47,7 @@ const runtime = {
       command: mocks.sessionCommand,
       promptAsync: mocks.sessionPromptAsync,
       status: mocks.sessionStatus,
+      todo: mocks.sessionTodo,
     },
     config: {
       update: mocks.configUpdate,
@@ -119,6 +121,8 @@ describe('AgentController.executeCommand', () => {
     mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
     mocks.sessionStatus.mockReset()
     mocks.sessionStatus.mockResolvedValue({ data: {} })
+    mocks.sessionTodo.mockReset()
+    mocks.sessionTodo.mockResolvedValue({ data: [] })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
     mocks.sendToRenderer.mockReset()
@@ -230,6 +234,17 @@ describe('AgentController.executeCommand', () => {
       id: 'agent-1',
       modelOverride: { providerID: 'anthropic', modelID: 'claude-opus-5' },
       variantOverride: 'high',
+    })
+  })
+
+  it('fetches the persisted Todo list for an agent session', async () => {
+    const todos = [{ content: 'Run checks', status: 'in_progress', priority: 'high' }]
+    mocks.sessionTodo.mockResolvedValue({ data: todos })
+
+    await expect(agentController.getTodos('agent-1')).resolves.toEqual(todos)
+    expect(mocks.sessionTodo).toHaveBeenCalledWith({
+      sessionID: 'existing-session',
+      directory: '/tmp/project',
     })
   })
 })
