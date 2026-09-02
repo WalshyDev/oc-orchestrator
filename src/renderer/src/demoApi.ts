@@ -444,6 +444,7 @@ export function createDemoApi(): OrchestratorApi {
     // ── Event Listeners ──
     onEvent: noopListener,
     onAgentLaunched: noopListener,
+    onAgentModelChanged: noopListener,
     onExternalAttached: noopListener,
     onSessionReset: noopListener,
     onRuntimeStarted: noopListener,

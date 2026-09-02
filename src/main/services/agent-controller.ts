@@ -392,6 +392,8 @@ class AgentController {
       workspaceName: handle.workspaceName,
       prompt: prompt ?? '',
       title: sessionTitle,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride,
       launchId
     })
 
@@ -984,6 +986,11 @@ class AgentController {
 
     handle.modelOverride = { providerID, modelID }
     this.persistAgents()
+    this.broadcastToRenderer('agent:model-changed', {
+      id: handle.id,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
+    })
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
