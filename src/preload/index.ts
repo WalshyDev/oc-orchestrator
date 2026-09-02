@@ -306,10 +306,16 @@ const api = {
     return () => ipcRenderer.removeListener('opencode:event', handler)
   },
 
-  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string; launchId?: string }) => void) => {
+  onAgentLaunched: (callback: (data: { id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string; modelOverride?: { providerID: string; modelID: string }; variantOverride?: string; launchId?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('agent:launched', handler)
     return () => ipcRenderer.removeListener('agent:launched', handler)
+  },
+
+  onAgentModelChanged: (callback: (data: { id: string; modelOverride: { providerID: string; modelID: string }; variantOverride?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:model-changed', handler)
+    return () => ipcRenderer.removeListener('agent:model-changed', handler)
   },
 
   onExternalAttached: (callback: (data: { source: string; projectName?: string; sessionId?: string; agentId?: string }) => void) => {

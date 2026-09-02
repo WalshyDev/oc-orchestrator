@@ -121,6 +121,7 @@ export interface OrchestratorApi {
 
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
+  onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
@@ -259,6 +260,12 @@ export interface AgentLaunchedPayload {
   /** Correlation id from the renderer's launch request. Present only for
    *  launches this renderer started; used to retire the placeholder row. */
   launchId?: string
+}
+
+export interface AgentModelChangedPayload {
+  id: string
+  modelOverride: { providerID: string; modelID: string }
+  variantOverride?: string
 }
 
 export interface SessionResetPayload {

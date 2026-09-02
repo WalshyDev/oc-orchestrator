@@ -3,6 +3,7 @@ import type { AgentStatus } from '../types'
 import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
+  AgentModelChangedPayload,
   AgentStatusesPayload,
   IpcResult,
   MessageAttachment,
@@ -133,7 +134,7 @@ export interface LiveAgent {
   status: AgentStatus
   labelIds: string[]
   model: string
-  /** The model set by the user or first top-level assistant message.
+  /** The model set by the user or resolved from the runtime config.
    *  Used to restore the displayed model after an invoked agent
    *  (which may use a different model) finishes. */
   configuredModel?: string
@@ -322,6 +323,7 @@ const taskSummaryLocked = new Set<string>()
 // animation on the row.  Entries clear after RECENTLY_ATTACHED_TTL_MS.
 const recentlyAttachedAgents = new Set<string>()
 const RECENTLY_ATTACHED_TTL_MS = 4_000
+const pendingModelChanges = new Map<string, AgentModelChangedPayload>()
 
 export function isRecentlyAttached(agentId: string): boolean {
   return recentlyAttachedAgents.has(agentId)
@@ -1041,7 +1043,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
         const formatted = formatModelName(entry.info.modelID)
-        agent.model = formatted
+        if (!agent.configuredModel) agent.model = formatted
         agent.rawModelId = entry.info.modelID
         const limit = lookupContextLimit(entry.info.modelID)
         if (limit !== undefined) {
@@ -1053,14 +1055,6 @@ function hydrateHistoricalMessages(entries: unknown): void {
             hasTokens: !!entry.info.tokens,
             contextTokens: agent.contextTokens
           })
-        }
-        // Only seed configuredModel if not already set by a config fetch or
-        // prior setAgentModel call, so the authoritative config value wins.
-        if (!agent.configuredModel) {
-          agent.configuredModel = formatted
-        }
-        if (!agent.configuredModelPath) {
-          agent.configuredModelPath = entry.info.modelID
         }
       }
 
@@ -1527,9 +1521,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
             const formatted = formatModelName(modelId)
-            agent.model = formatted
-            if (!agent.configuredModel) agent.configuredModel = formatted
-            if (!agent.configuredModelPath) agent.configuredModelPath = modelId
+            if (!agent.configuredModel) agent.model = formatted
             agent.rawModelId = modelId
             const limit = lookupContextLimit(modelId)
             if (limit !== undefined) agent.contextLimit = limit
@@ -2374,20 +2366,9 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (!config.model) return
       const agent = state.agents.get(payload.id)
       if (!agent) return
-      let agentChanged = false
-      if (!agent.configuredModelPath) {
-        agent.configuredModelPath = config.model
-        agentChanged = true
-      }
-      if (!agent.configuredModel) {
-        agent.configuredModel = formatModelName(config.model)
-        agentChanged = true
-      }
-      if (agent.model === UNRESOLVED_MODEL_LABEL) {
-        agent.model = agent.configuredModel
-        agentChanged = true
-      }
-      if (agentChanged) emit({ agents: true })
+      if (agent.configuredModelPath) return
+      applyConfiguredModel(agent, config.model)
+      emit({ agents: true })
     })
   }
 }
@@ -2452,6 +2433,7 @@ function removeAgentState(agentId: string): void {
   taskSummaryLocked.delete(agentId)
   prExtractEnabled.delete(agentId)
   pendingMessages.delete(agentId)
+  pendingModelChanges.delete(agentId)
   childHydrationRetryAgents.delete(agentId)
   const compactingTimer = compactingTimers.get(agentId)
   if (compactingTimer) {
@@ -2529,7 +2511,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     status,
     inputReason: getReconnectedInputReason(existingAgent, status),
     labelIds: existingAgent?.labelIds ?? [],
-    model: existingAgent?.model ?? configuredModel ?? UNRESOLVED_MODEL_LABEL,
+    model: configuredModel ?? existingAgent?.model ?? UNRESOLVED_MODEL_LABEL,
     configuredModel,
     configuredModelPath,
     variant: payload.variantOverride ?? existingAgent?.variant,
@@ -2541,6 +2523,11 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   }
 
   state.agents.set(payload.id, agent)
+  const pendingModelChange = pendingModelChanges.get(payload.id)
+  if (pendingModelChange) {
+    applyAgentModelChange(agent, pendingModelChange)
+    pendingModelChanges.delete(payload.id)
+  }
   if (!state.messages.has(payload.sessionId)) state.messages.set(payload.sessionId, [])
   if (!state.fileChanges.has(payload.sessionId)) state.fileChanges.set(payload.sessionId, [])
   if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
@@ -3179,6 +3166,25 @@ export function formatModelName(modelId: string): string {
   return modelId.length > 16 ? modelId.slice(0, 16) : modelId
 }
 
+export function applyConfiguredModel(
+  agent: Pick<LiveAgent, 'model' | 'configuredModel' | 'configuredModelPath'>,
+  modelPath: string
+): void {
+  const formatted = formatModelName(modelPath)
+  agent.model = formatted
+  agent.configuredModel = formatted
+  agent.configuredModelPath = modelPath
+}
+
+function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPayload): void {
+  const { modelOverride } = payload
+  const modelPath = modelOverride.providerID
+    ? `${modelOverride.providerID}/${modelOverride.modelID}`
+    : modelOverride.modelID
+  applyConfiguredModel(agent, modelPath)
+  agent.variant = payload.variantOverride
+}
+
 // ── Tool Call Extraction ──
 
 interface ToolCallInfo {
@@ -3263,25 +3269,34 @@ export function useAgentStore() {
           shouldEmit = true
         }
 
-        const messageResults = await Promise.all(
+        const hydrationResults = await Promise.all(
           agentsResult.data.map(async (agent) => {
-            const [messages, children] = await Promise.all([
+            const [messages, children, config] = await Promise.all([
               window.api.getMessages(agent.id),
-              window.api.getChildSessions(agent.id)
+              window.api.getChildSessions(agent.id),
+              window.api.getConfig(agent.id)
             ])
-            return { agentId: agent.id, messages, children }
+            return { agentId: agent.id, messages, children, config }
           })
         )
 
         if (cancelled) return
 
-        for (const { agentId, messages, children } of messageResults) {
+        for (const { agentId, messages, children, config } of hydrationResults) {
           if (messages.ok) {
             hydrateHistoricalMessages(messages.data)
             shouldEmit = true
           }
           if (children.ok) {
             applyChildSessionHydration(children.data, agentId)
+            shouldEmit = true
+          }
+          const liveAgent = state.agents.get(agentId)
+          const configModel = config.ok && config.data
+            ? (config.data as { model?: string }).model
+            : undefined
+          if (liveAgent && !liveAgent.configuredModelPath && configModel) {
+            applyConfiguredModel(liveAgent, configModel)
             shouldEmit = true
           }
         }
@@ -3352,6 +3367,15 @@ export function useAgentStore() {
     const cleanups = [
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
+      window.api.onAgentModelChanged((payload) => {
+        const agent = state.agents.get(payload.id)
+        if (!agent) {
+          pendingModelChanges.set(payload.id, payload)
+          return
+        }
+        applyAgentModelChange(agent, payload)
+        emit({ agents: true })
+      }),
       window.api.onSessionReset(handleSessionReset),
       window.api.onExternalAttached((data) => {
         const { agentId } = data
@@ -3994,10 +4018,7 @@ export function useAgentStore() {
   const setAgentModel = useCallback((agentId: string, modelPath: string, variant?: string) => {
     const agent = getMutableAgent(agentId)
     if (!agent) return
-    const formatted = formatModelName(modelPath)
-    agent.model = formatted
-    agent.configuredModel = formatted
-    agent.configuredModelPath = modelPath
+    applyConfiguredModel(agent, modelPath)
     agent.variant = variant
     emit({ agents: true })
   }, [])

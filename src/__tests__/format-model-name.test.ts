@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatModelName } from '../renderer/src/hooks/useAgentStore'
+import { applyConfiguredModel, formatModelName } from '../renderer/src/hooks/useAgentStore'
 
 describe('formatModelName', () => {
   describe('Claude models', () => {
@@ -55,6 +55,20 @@ describe('formatModelName', () => {
 
     it('truncates long unknown names to 16 chars', () => {
       expect(formatModelName('very-long-unknown-model-name-here')).toBe('very-long-unknow')
+    })
+  })
+})
+
+describe('applyConfiguredModel', () => {
+  it('replaces a stale message-derived display model with the configured model', () => {
+    const agent = { model: 'sonnet-5' }
+
+    applyConfiguredModel(agent, 'openai/gpt-5.6-sol')
+
+    expect(agent).toEqual({
+      model: 'gpt-5.6-sol',
+      configuredModel: 'gpt-5.6-sol',
+      configuredModelPath: 'openai/gpt-5.6-sol'
     })
   })
 })

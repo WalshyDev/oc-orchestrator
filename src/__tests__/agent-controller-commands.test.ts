@@ -3,9 +3,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   sessionCreate: vi.fn(),
   sessionCommand: vi.fn(),
+  sessionPromptAsync: vi.fn(),
   sessionStatus: vi.fn(),
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
+  sendToRenderer: vi.fn(),
 }))
 
 const persistedAgents = [
@@ -42,6 +44,7 @@ const runtime = {
     session: {
       create: mocks.sessionCreate,
       command: mocks.sessionCommand,
+      promptAsync: mocks.sessionPromptAsync,
       status: mocks.sessionStatus,
     },
     config: {
@@ -52,7 +55,10 @@ const runtime = {
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: () => [],
+    getAllWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, send: mocks.sendToRenderer },
+    }],
   },
 }))
 
@@ -107,12 +113,15 @@ describe('AgentController.executeCommand', () => {
   beforeEach(() => {
     mocks.sessionCommand.mockReset()
     mocks.sessionCommand.mockResolvedValue({ data: undefined })
+    mocks.sessionPromptAsync.mockReset()
+    mocks.sessionPromptAsync.mockResolvedValue({ data: undefined })
     mocks.sessionCreate.mockReset()
     mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
     mocks.sessionStatus.mockReset()
     mocks.sessionStatus.mockResolvedValue({ data: {} })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
+    mocks.sendToRenderer.mockReset()
   })
 
   it('uses the selected model for an existing session with an unavailable previous model', async () => {
@@ -171,6 +180,10 @@ describe('AgentController.executeCommand', () => {
 
     expect(handle.modelOverride).toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
     expect(handle.variantOverride).toBe('high')
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    }))
     expect(mocks.configUpdate).not.toHaveBeenCalled()
   })
 
@@ -202,6 +215,21 @@ describe('AgentController.executeCommand', () => {
       'existing-session': { agentId: 'agent-1', status: { type: 'busy' } },
       'bare-model-session': { agentId: 'agent-2', status: { type: 'idle' } },
       'default-model-session': { agentId: 'agent-3', status: { type: 'idle' } },
+    })
+  })
+
+  it('notifies the renderer when a direct prompt changes the model override', async () => {
+    await agentController.sendMessageWithModel(
+      'agent-1',
+      'Use the new model',
+      'anthropic',
+      'claude-opus-5'
+    )
+
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:model-changed', {
+      id: 'agent-1',
+      modelOverride: { providerID: 'anthropic', modelID: 'claude-opus-5' },
+      variantOverride: 'high',
     })
   })
 })
