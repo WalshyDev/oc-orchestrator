@@ -20,6 +20,7 @@ export class EventBridge {
   private isReconnecting = false
   private reconnectAttempts = 0
   private currentBackoff = INITIAL_BACKOFF_MS
+  private hasStreamed = false
 
   constructor(
     private runtimeId: string,
@@ -81,8 +82,13 @@ export class EventBridge {
       // immediately after the connection is established.
       if ('stream' in result && result.stream) {
         console.log(`[EventBridge:${this.runtimeId}] Stream available, starting consumer`)
+        const reconnected = this.hasStreamed
+        this.hasStreamed = true
         this.streaming = true
         this.consumeStream(result.stream as AsyncIterable<{ type: string; properties: unknown }>)
+        if (reconnected) {
+          this.broadcastToRenderer('event:reconnected', { runtimeId: this.runtimeId })
+        }
       } else {
         console.error(`[EventBridge:${this.runtimeId}] No stream in subscribe result! Keys: ${Object.keys(result as object).join(', ')}`)
         this.streaming = false

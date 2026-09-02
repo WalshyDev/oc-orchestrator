@@ -105,6 +105,14 @@ interface ChildSessionHydrationResult {
   complete: boolean
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+export interface AgentTodo {
+  content: string
+  status: TodoStatus
+  priority?: string
+}
+
 interface PendingQuestionSnapshot {
   agentId: string
   questions: Array<{ id: string; sessionID: string; questions: LiveQuestionInfo[] }>
@@ -282,6 +290,7 @@ interface AgentStoreState {
   permissions: Map<string, LivePermission>
   questions: Map<string, LiveQuestion>
   messages: Map<string, LiveMessage[]> // keyed by sessionId
+  todos: Map<string, AgentTodo[]> // keyed by sessionId
   fileChanges: Map<string, FileChangeRecord[]> // keyed by sessionId
   eventLog: Map<string, EventLogEntry[]> // keyed by sessionId
   healthy: boolean
@@ -293,6 +302,7 @@ let state: AgentStoreState = {
   permissions: new Map(),
   questions: new Map(),
   messages: new Map(),
+  todos: new Map(),
   fileChanges: new Map(),
   eventLog: new Map(),
   healthy: true,
@@ -309,6 +319,7 @@ let agentsVersion = 0
 let permissionsVersion = 0
 let questionsVersion = 0
 let messagesVersion = 0
+let todosVersion = 0
 let fileChangesVersion = 0
 let eventLogVersion = 0
 
@@ -435,6 +446,8 @@ const sessionStepDepth = new Map<string, number>()
 const childSessionToAgent = new Map<string, string>()
 const childSessions = new Map<string, ChildSessionInfo>()
 const childHydrationRetryAgents = new Set<string>()
+const todoEventRevisions = new Map<string, number>()
+const todoFetchGenerations = new Map<string, number>()
 
 /** Clear step depth for a session and restore the parent model if it was
  *  overwritten by a sub-agent. Returns true if the model was restored. */
@@ -454,6 +467,7 @@ interface EmitFlags {
   permissions?: boolean
   questions?: boolean
   messages?: boolean
+  todos?: boolean
 }
 
 function emit(changed?: EmitFlags): void {
@@ -461,6 +475,7 @@ function emit(changed?: EmitFlags): void {
   if (!changed || changed.permissions) permissionsVersion++
   if (!changed || changed.questions) questionsVersion++
   if (!changed || changed.messages) messagesVersion++
+  if (!changed || changed.todos) todosVersion++
   state = { ...state }
   for (const listener of listeners) {
     listener()
@@ -588,6 +603,8 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
       return 'Session metadata updated'
     case 'message.updated':
       return `Message updated (role: ${(props.info as Record<string, unknown>)?.role ?? 'unknown'})`
+    case 'todo.updated':
+      return `Todo list updated (${Array.isArray(props.todos) ? props.todos.length : 0} items)`
     case 'message.part.updated': {
       const part = props.part as Record<string, unknown> | undefined
       const partType = part?.type as string | undefined
@@ -748,6 +765,49 @@ function gitStatusToFileChangeAction(status: string): FileChangeRecord['action']
 function getMessageCreatedAt(info: Record<string, unknown> | HistoricalMessageInfo): number {
   const time = info.time as { created?: number } | undefined
   return typeof time?.created === 'number' ? time.created : Date.now()
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === 'pending'
+    || value === 'in_progress'
+    || value === 'completed'
+    || value === 'cancelled'
+}
+
+export function applyTodoUpdate(
+  todosBySession: Map<string, AgentTodo[]>,
+  properties: { sessionID?: unknown; todos?: unknown }
+): boolean {
+  if (typeof properties.sessionID !== 'string' || !Array.isArray(properties.todos)) return false
+
+  const todos = properties.todos.flatMap((todo): AgentTodo[] => {
+    if (!todo || typeof todo !== 'object') return []
+    const item = todo as Record<string, unknown>
+    if (typeof item.content !== 'string' || !item.content.trim()) return []
+
+    return [{
+      content: item.content,
+      status: isTodoStatus(item.status) ? item.status : 'pending',
+      priority: typeof item.priority === 'string' ? item.priority : undefined
+    }]
+  })
+  const current = todosBySession.get(properties.sessionID)
+  const unchanged = current?.length === todos.length && current.every((todo, index) => {
+    const next = todos[index]
+    return todo.content === next.content && todo.status === next.status && todo.priority === next.priority
+  })
+  if (unchanged) return false
+
+  todosBySession.set(properties.sessionID, todos)
+  return true
+}
+
+export function isCurrentTodoFetch(
+  started: { eventRevision: number; fetchGeneration: number },
+  current: { eventRevision: number; fetchGeneration: number }
+): boolean {
+  return started.eventRevision === current.eventRevision
+    && started.fetchGeneration === current.fetchGeneration
 }
 
 function getToolState(partState: Record<string, unknown> | undefined): string | undefined {
@@ -1150,6 +1210,28 @@ async function refetchChildSessions(agentId: string): Promise<void> {
   applyChildSessionHydration(result.data, agentId)
 }
 
+async function refetchTodos(agentId: string): Promise<boolean> {
+  if (!window.api) return false
+  const agent = state.agents.get(agentId)
+  if (!agent) return false
+  const sessionId = agent.sessionId
+  const eventRevision = todoEventRevisions.get(sessionId) ?? 0
+  const fetchGeneration = (todoFetchGenerations.get(sessionId) ?? 0) + 1
+  todoFetchGenerations.set(sessionId, fetchGeneration)
+  const result = await window.api.getTodos(agentId)
+  const currentAgent = state.agents.get(agentId)
+  if (!result.ok || !Array.isArray(result.data) || currentAgent?.sessionId !== sessionId) return false
+  if (!isCurrentTodoFetch(
+    { eventRevision, fetchGeneration },
+    {
+      eventRevision: todoEventRevisions.get(sessionId) ?? 0,
+      fetchGeneration: todoFetchGenerations.get(sessionId) ?? 0
+    }
+  )) return false
+
+  return applyTodoUpdate(state.todos, { sessionID: sessionId, todos: result.data })
+}
+
 // ── Viewed Agent Suppression ──
 
 let viewedAgentId: string | null = null
@@ -1213,6 +1295,14 @@ function processEvent(payload: OpenCodeEventPayload): void {
   }
 
   switch (type) {
+    case 'todo.updated': {
+      const sessionId = props.sessionID
+      if (typeof sessionId !== 'string' || !Array.isArray(props.todos)) break
+      todoEventRevisions.set(sessionId, (todoEventRevisions.get(sessionId) ?? 0) + 1)
+      if (applyTodoUpdate(state.todos, props)) emit({ todos: true })
+      break
+    }
+
     case 'session.created': {
       const info = props.info as Record<string, unknown> | undefined
       const childSessionId = (info?.id ?? props.sessionID) as string | undefined
@@ -2143,10 +2233,13 @@ function processEvent(payload: OpenCodeEventPayload): void {
         }
 
         state.messages.delete(sessionId)
+        state.todos.delete(sessionId)
+        todoEventRevisions.delete(sessionId)
+        todoFetchGenerations.set(sessionId, (todoFetchGenerations.get(sessionId) ?? 0) + 1)
         clearChildSessionsForAgent(agent.id)
         childHydrationRetryAgents.delete(agent.id)
         persistAgentMeta(agent.id, { persistedStatus: 'errored' })
-        emit({ agents: true, messages: true, questions: true, permissions: true })
+        emit({ agents: true, messages: true, todos: true, questions: true, permissions: true })
       } else if (findAgentByChildSession(sessionId) || childSessions.has(sessionId)) {
         removeChildSessionTree(sessionId)
       }
@@ -2364,6 +2457,9 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
       emit({ messages: true })
     })
+    void refetchTodos(payload.id).then((changed) => {
+      if (changed) emit({ todos: true })
+    })
     void refetchChildSessions(payload.id).then(() => emit({ messages: true }))
 
     // Seed configuredModel from runtime config as an authoritative fallback
@@ -2398,6 +2494,9 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
 
   // Clear old session data
   state.messages.delete(agent.sessionId)
+  state.todos.delete(agent.sessionId)
+  todoEventRevisions.delete(agent.sessionId)
+  todoFetchGenerations.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
   state.eventLog.delete(agent.sessionId)
 
@@ -2442,7 +2541,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   }
 
   // Session reset touches everything
-  emit({ agents: true, messages: true, permissions: true, questions: true })
+  emit({ agents: true, messages: true, todos: true, permissions: true, questions: true })
 }
 
 function removeAgentState(agentId: string): void {
@@ -2462,6 +2561,9 @@ function removeAgentState(agentId: string): void {
   clearChildSessionsForAgent(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
+  state.todos.delete(agent.sessionId)
+  todoEventRevisions.delete(agent.sessionId)
+  todoFetchGenerations.delete(agent.sessionId)
   state.fileChanges.delete(agent.sessionId)
   state.eventLog.delete(agent.sessionId)
 
@@ -2933,6 +3035,9 @@ function clearChildSessionsForAgent(agentId: string): void {
     childSessionToAgent.delete(childSessionId)
     childSessions.delete(childSessionId)
     state.messages.delete(childSessionId)
+    state.todos.delete(childSessionId)
+    todoEventRevisions.delete(childSessionId)
+    todoFetchGenerations.delete(childSessionId)
     state.eventLog.delete(childSessionId)
   }
 }
@@ -3001,6 +3106,9 @@ function removeChildSessionTree(sessionId: string): void {
     childSessionToAgent.delete(removedId)
     childSessions.delete(removedId)
     state.messages.delete(removedId)
+    state.todos.delete(removedId)
+    todoEventRevisions.delete(removedId)
+    todoFetchGenerations.delete(removedId)
     state.eventLog.delete(removedId)
     for (const [questionId, question] of state.questions) {
       if (question.sessionId === removedId) state.questions.delete(questionId)
@@ -3024,7 +3132,7 @@ function removeChildSessionTree(sessionId: string): void {
     updateAgentAfterInterruptChange(owner, false, false)
     owner.lastActivityAt = Date.now()
   }
-  emit({ agents: true, messages: true, questions: true, permissions: true })
+  emit({ agents: true, messages: true, todos: true, questions: true, permissions: true })
 }
 
 /**
@@ -3265,21 +3373,23 @@ export function useAgentStore() {
 
         const messageResults = await Promise.all(
           agentsResult.data.map(async (agent) => {
-            const [messages, children] = await Promise.all([
+            const [messages, todosChanged, children] = await Promise.all([
               window.api.getMessages(agent.id),
+              refetchTodos(agent.id),
               window.api.getChildSessions(agent.id)
             ])
-            return { agentId: agent.id, messages, children }
+            return { agentId: agent.id, messages, todosChanged, children }
           })
         )
 
         if (cancelled) return
 
-        for (const { agentId, messages, children } of messageResults) {
+        for (const { agentId, messages, todosChanged, children } of messageResults) {
           if (messages.ok) {
             hydrateHistoricalMessages(messages.data)
             shouldEmit = true
           }
+          if (todosChanged) shouldEmit = true
           if (children.ok) {
             applyChildSessionHydration(children.data, agentId)
             shouldEmit = true
@@ -3292,7 +3402,7 @@ export function useAgentStore() {
         shouldEmit = true
       }
 
-      if (shouldEmit) emit({ agents: true, messages: true })
+      if (shouldEmit) emit({ agents: true, messages: true, todos: true })
 
       // Fetch pending questions for agents that are in needs_input state
       try {
@@ -3367,6 +3477,14 @@ export function useAgentStore() {
         console.error(`[EventError] Runtime ${data.runtimeId}: ${data.error}`)
         state.healthy = false
         emit({ agents: true })
+      }),
+      window.api.onEventReconnected((data) => {
+        const agentIds = [...state.agents.values()]
+          .filter((agent) => agent.runtimeId === data.runtimeId)
+          .map((agent) => agent.id)
+        void Promise.all(agentIds.map(refetchTodos)).then((changes) => {
+          if (!cancelled && changes.some(Boolean)) emit({ todos: true })
+        })
       }),
       window.api.onEventReconnectFailed((data) => {
         // EventBridge gave up reconnecting to this runtime. This is the
@@ -3912,6 +4030,10 @@ export function useAgentStore() {
     return storeState.messages.get(sessionId) ?? []
   }, [messagesVersion])
 
+  const getTodosForSession = useCallback((sessionId: string): AgentTodo[] => {
+    return storeState.todos.get(sessionId) ?? []
+  }, [todosVersion])
+
   const getChildSessionActivityAt = useCallback((sessionId: string): number | undefined => {
     return childSessions.get(sessionId)?.updatedAt
   }, [messagesVersion])
@@ -4149,6 +4271,7 @@ export function useAgentStore() {
     compactSession,
     selectDirectory,
     getMessagesForSession,
+    getTodosForSession,
     getChildSessionActivityAt,
     getFileChangesForSession,
     getEventsForSession,
@@ -4163,7 +4286,7 @@ export function useAgentStore() {
     abortAgent, removeAgent, renameAgent, setAgentModel,
     toggleLabel, clearLabels, setPrUrl,
     dismissAgentError, compactSession, selectDirectory,
-    getMessagesForSession, getChildSessionActivityAt, getFileChangesForSession,
+    getMessagesForSession, getTodosForSession, getChildSessionActivityAt, getFileChangesForSession,
     getEventsForSession, getToolCallsForSession,
     hydrateFileChangesFromGit
   ])

@@ -701,6 +701,12 @@ export function App() {
     return tools
   }, [selectedMessages])
 
+  const selectedTodos = useMemo(() => {
+    if (!selectedAgent) return []
+    const liveAgent = store.agents.find((agent) => agent.id === selectedAgent.id)
+    return liveAgent ? store.getTodosForSession(liveAgent.sessionId) : []
+  }, [selectedAgent, store.agents, store.getTodosForSession])
+
   // ── Events for selected agent ──
   const selectedEvents: EventEntry[] = useMemo(() => {
     if (!selectedAgent) return []
@@ -1696,6 +1702,7 @@ Then give me a brief summary of what the previous session was working on and whe
           question={selectedQuestion}
           files={selectedFiles}
           tools={selectedTools}
+          todos={selectedTodos}
           events={selectedEvents}
           commands={agentCommands}
           agentConfigs={agentConfigs}

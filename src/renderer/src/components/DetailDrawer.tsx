@@ -30,7 +30,7 @@ import {
 } from '@phosphor-icons/react'
 import type { AgentRuntime, Message, LabelDefinition, LabelColorKey } from '../types'
 import { formatBranchLabel } from '../types'
-import type { LivePermission, LiveQuestion } from '../hooks/useAgentStore'
+import type { AgentTodo, LivePermission, LiveQuestion, TodoStatus } from '../hooks/useAgentStore'
 import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
 import {
   loadSettings,
@@ -119,14 +119,6 @@ function loadInputHeight(): number {
 
 type TabKey = 'transcript' | 'todos' | 'files' | 'tools' | 'events' | 'config'
 
-type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
-
-interface AgentTodo {
-  content: string
-  status: TodoStatus
-  priority?: string
-}
-
 const todoStatusLabels: Record<TodoStatus, string> = {
   pending: 'Pending',
   in_progress: 'In Progress',
@@ -139,36 +131,6 @@ const todoStatusStyles: Record<TodoStatus, string> = {
   in_progress: 'border-kumo-link/35 bg-kumo-interact/12 text-kumo-link',
   completed: 'border-kumo-success/30 bg-kumo-success/12 text-kumo-success',
   cancelled: 'border-kumo-line bg-kumo-fill text-kumo-subtle/70'
-}
-
-function isTodoStatus(value: unknown): value is TodoStatus {
-  return value === 'pending'
-    || value === 'in_progress'
-    || value === 'completed'
-    || value === 'cancelled'
-}
-
-function parseTodos(input: string | undefined): AgentTodo[] {
-  if (!input) return []
-
-  try {
-    const parsed = JSON.parse(input) as { todos?: unknown }
-    if (!Array.isArray(parsed.todos)) return []
-
-    return parsed.todos.flatMap((todo): AgentTodo[] => {
-      if (!todo || typeof todo !== 'object') return []
-      const item = todo as Record<string, unknown>
-      if (typeof item.content !== 'string' || !item.content.trim()) return []
-
-      return [{
-        content: item.content,
-        status: isTodoStatus(item.status) ? item.status : 'pending',
-        priority: typeof item.priority === 'string' ? item.priority : undefined
-      }]
-    })
-  } catch {
-    return []
-  }
 }
 
 export interface ChatCommand {
@@ -191,6 +153,7 @@ interface DetailDrawerProps {
   question?: LiveQuestion | null
   files?: FileChange[]
   tools?: ToolCall[]
+  todos?: AgentTodo[]
   events?: EventEntry[]
   commands?: ChatCommand[]
   agentConfigs?: AgentConfigItem[]
@@ -247,6 +210,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   question,
   files = [],
   tools = [],
+  todos = [],
   events = [],
   commands = [],
   agentConfigs = [],
@@ -809,19 +773,9 @@ export const DetailDrawer = memo(function DetailDrawer({
   // itself collapses them on render.
   const uniqueFileCount = new Set(files.map((file) => file.path)).size
 
-  const latestTodos = useMemo(() => {
-    for (let i = tools.length - 1; i >= 0; i--) {
-      const tool = tools[i]
-      if (tool.name.toLowerCase() === 'todowrite') {
-        return parseTodos(tool.input)
-      }
-    }
-    return []
-  }, [tools])
-
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'transcript', label: 'Transcript', count: messages.length },
-    { key: 'todos', label: 'TODO', count: latestTodos.length },
+    { key: 'todos', label: 'TODO', count: todos.length },
     { key: 'files', label: 'Files Changed', count: uniqueFileCount },
     { key: 'tools', label: 'Tools', count: tools.length },
     { key: 'events', label: 'Events', count: events.length },
@@ -978,7 +932,7 @@ export const DetailDrawer = memo(function DetailDrawer({
               </div>
             )}
 
-            {activeTab === 'todos' && <TodoList todos={latestTodos} />}
+            {activeTab === 'todos' && <TodoList todos={todos} />}
 
             {activeTab === 'files' && (
               <FilesChanged
@@ -1430,7 +1384,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   )
 })
 
-function TodoList({ todos }: { todos: AgentTodo[] }) {
+export function TodoList({ todos }: { todos: AgentTodo[] }) {
   const completedCount = todos.filter((todo) => todo.status === 'completed').length
   const inProgressCount = todos.filter((todo) => todo.status === 'in_progress').length
   const pendingCount = todos.filter((todo) => todo.status === 'pending').length
