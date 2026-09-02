@@ -349,6 +349,16 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:get-todos', async (_event, agentId: string) => {
+    try {
+      const todos = await agentController.getTodos(agentId)
+      return { ok: true, data: todos }
+    } catch (error) {
+      logIpcError('agent:get-todos', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:get-child-sessions', async (_event, agentId: string) => {
     try {
       const sessions = await agentController.getChildSessions(agentId)

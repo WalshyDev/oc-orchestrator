@@ -60,6 +60,9 @@ const api = {
   getMessages: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-messages', agentId),
 
+  getTodos: (agentId: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:get-todos', agentId),
+
   getChildSessions: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:get-child-sessions', agentId),
 
@@ -340,6 +343,12 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('event:error', handler)
     return () => ipcRenderer.removeListener('event:error', handler)
+  },
+
+  onEventReconnected: (callback: (data: { runtimeId: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('event:reconnected', handler)
+    return () => ipcRenderer.removeListener('event:reconnected', handler)
   },
 
   onEventReconnectFailed: (callback: (data: { runtimeId: string; attempts: number; error: string }) => void) => {
