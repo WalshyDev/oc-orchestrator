@@ -231,11 +231,11 @@ export function LastMessageCell({
   onSelect?: FleetTableProps['onSelect']
 }) {
   return (
-    <td className="px-3 py-2 truncate text-kumo-subtle text-[11px]">
+    <td className="px-3 py-2 align-top text-kumo-subtle text-[11px] leading-4">
       {message && onSelect ? (
         <button
           type="button"
-          className="max-w-full truncate text-left cursor-pointer hover:text-kumo-strong"
+          className="line-clamp-2 min-h-8 max-w-full text-left cursor-pointer hover:text-kumo-strong"
           title={`${message}\n\nClick to jump to this message`}
           onClick={(event) => {
             event.stopPropagation()
@@ -245,9 +245,9 @@ export function LastMessageCell({
           {message}
         </button>
       ) : message ? (
-        <span title={message}>{message}</span>
+        <span className="line-clamp-2 min-h-8" title={message}>{message}</span>
       ) : (
-        <span className="text-kumo-muted italic">--</span>
+        <span className="block min-h-8 text-kumo-muted italic">--</span>
       )}
     </td>
   )
@@ -1510,7 +1510,7 @@ function AgentRow({
         </td>
       )}
       {show('task') && (
-        <td className="px-3 py-2 truncate text-kumo-default">
+        <td className="px-3 py-2 align-top overflow-hidden text-kumo-default">
           {isPending ? (
             // A placeholder has no transcript to jump to. Dismiss is offered
             // unconditionally, not just on failure — it's the row's only exit,
@@ -1529,13 +1529,24 @@ function AgentRow({
               )}
             </div>
           ) : agent.taskSummary && (
-            <span
-              className="cursor-pointer hover:text-kumo-strong"
-              title={`${agent.taskSummary}\n\nClick to jump to your last message`}
-              onClick={(event) => { event.stopPropagation(); onJumpToLastUserMessage() }}
-            >
-              {agent.taskSummary}
-            </span>
+            <div className="min-h-8 leading-4">
+              <button
+                type="button"
+                className="block max-w-full truncate text-left cursor-pointer hover:text-kumo-strong"
+                title={`${agent.taskSummary}\n\nClick to jump to your last message`}
+                onClick={(event) => { event.stopPropagation(); onJumpToLastUserMessage() }}
+              >
+                {agent.taskSummary}
+              </button>
+              {agent.currentTask && (
+                <div
+                  className="truncate text-[11px] text-kumo-subtle"
+                  title={`Task ${agent.currentTask.current}/${agent.currentTask.total}: ${agent.currentTask.content}`}
+                >
+                  Task {agent.currentTask.current}/{agent.currentTask.total}: {agent.currentTask.content}
+                </div>
+              )}
+            </div>
           )}
         </td>
       )}

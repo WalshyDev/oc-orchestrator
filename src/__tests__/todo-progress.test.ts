@@ -3,8 +3,28 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { TodoList } from '../renderer/src/components/DetailDrawer'
 import { applyTodoUpdate, isCurrentTodoFetch, type AgentTodo } from '../renderer/src/hooks/useAgentStore'
+import { getCurrentTaskProgress } from '../renderer/src/lib/task-progress'
 
 describe('Todo progress', () => {
+  it('reports the active task position and content', () => {
+    expect(getCurrentTaskProgress([
+      { content: 'Trace events', status: 'completed' },
+      { content: 'Add coverage', status: 'in_progress' },
+      { content: 'Run checks', status: 'pending' }
+    ])).toEqual({
+      current: 2,
+      total: 3,
+      content: 'Add coverage'
+    })
+  })
+
+  it('does not report progress without an active task', () => {
+    expect(getCurrentTaskProgress([
+      { content: 'Trace events', status: 'completed' },
+      { content: 'Add coverage', status: 'pending' }
+    ])).toBeUndefined()
+  })
+
   it('replaces an earlier task snapshot when OpenCode reports new progress', () => {
     const todos = new Map<string, AgentTodo[]>()
 

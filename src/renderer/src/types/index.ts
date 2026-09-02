@@ -88,6 +88,7 @@ export interface AgentRuntime {
   blockedSince?: string
   blockedSinceMs?: number
   lastMessage?: string
+  currentTask?: AgentTaskProgress
   /** Most recent session-level error from the server (e.g. ContextOverflowError). */
   lastError?: AgentRuntimeError
   /** Why a needs_input agent needs attention when no structured question exists. */
@@ -103,6 +104,12 @@ export interface AgentRuntime {
   /** Placeholder row for a launch that main hasn't acknowledged yet. It has no
    *  session, so row actions other than dismissal are unavailable. */
   pending?: boolean
+}
+
+export interface AgentTaskProgress {
+  current: number
+  total: number
+  content: string
 }
 
 /**
