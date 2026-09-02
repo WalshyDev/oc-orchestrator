@@ -45,6 +45,7 @@ export interface AppSettings {
   quickActions: QuickActionSlots
   notifications: NotificationPrefs
   outputVerbosity: OutputVerbosity
+  autoRecoverStalledResponses: boolean
   soundEnabled: boolean
 }
 
@@ -89,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     external_attached: true,
   },
   outputVerbosity: 'none',
+  autoRecoverStalledResponses: false,
   soundEnabled: true,
 }
 
@@ -126,6 +128,9 @@ export function loadSettings(): AppSettings {
       createPrPrompt: parsed.createPrPrompt?.trim() ? parsed.createPrPrompt : DEFAULT_CREATE_PR_PROMPT,
       quickActions,
       outputVerbosity,
+      autoRecoverStalledResponses: typeof parsed.autoRecoverStalledResponses === 'boolean'
+        ? parsed.autoRecoverStalledResponses
+        : DEFAULT_SETTINGS.autoRecoverStalledResponses,
     }
   } catch {
     return DEFAULT_SETTINGS

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   sessionCreate: vi.fn(),
@@ -6,9 +6,11 @@ const mocks = vi.hoisted(() => ({
   sessionPromptAsync: vi.fn(),
   sessionStatus: vi.fn(),
   sessionTodo: vi.fn(),
+  sessionAbort: vi.fn(),
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
+  bridgeEvent: undefined as ((event: { type: string; properties: unknown }) => void) | undefined,
 }))
 
 const persistedAgents = [
@@ -48,6 +50,7 @@ const runtime = {
       promptAsync: mocks.sessionPromptAsync,
       status: mocks.sessionStatus,
       todo: mocks.sessionTodo,
+      abort: mocks.sessionAbort,
     },
     config: {
       update: mocks.configUpdate,
@@ -74,6 +77,14 @@ vi.mock('../main/services/runtime-manager', () => ({
 
 vi.mock('../main/services/event-bridge', () => ({
   EventBridge: class {
+    constructor(
+      _runtimeId: string,
+      _directory: string,
+      _client: unknown,
+      onEvent?: (event: { type: string; properties: unknown }) => void
+    ) {
+      mocks.bridgeEvent = onEvent
+    }
     async start(): Promise<void> {}
     async ensureStreaming(): Promise<void> {}
   },
@@ -123,9 +134,15 @@ describe('AgentController.executeCommand', () => {
     mocks.sessionStatus.mockResolvedValue({ data: {} })
     mocks.sessionTodo.mockReset()
     mocks.sessionTodo.mockResolvedValue({ data: [] })
+    mocks.sessionAbort.mockReset()
+    mocks.sessionAbort.mockResolvedValue({ data: undefined })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
     mocks.sendToRenderer.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('uses the selected model for an existing session with an unavailable previous model', async () => {
@@ -246,5 +263,161 @@ describe('AgentController.executeCommand', () => {
       sessionID: 'existing-session',
       directory: '/tmp/project',
     })
+  })
+
+  it('aborts a running stalled request before sending the recovery prompt', async () => {
+    mocks.sessionStatus
+      .mockResolvedValueOnce({ data: { 'existing-session': { type: 'busy' } } })
+      .mockResolvedValueOnce({ data: {} })
+
+    const result = await agentController.recoverStalledAgent(
+      'agent-1',
+      'Continue from the stalled request.',
+      Date.now()
+    )
+
+    expect(result).toBe('recovered')
+    expect(mocks.sessionAbort).toHaveBeenCalledWith({
+      sessionID: 'existing-session',
+      directory: '/tmp/project',
+    })
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'existing-session',
+      parts: [{ type: 'text', text: 'Continue from the stalled request.' }],
+    }))
+    expect(mocks.sessionAbort.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.sessionPromptAsync.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('lets a real prompt supersede recovery without aborting that prompt', async () => {
+    let releaseAbort: (() => void) | undefined
+    mocks.sessionAbort.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseAbort = resolve
+    }))
+
+    mocks.sessionStatus.mockResolvedValueOnce({
+      data: { 'existing-session': { type: 'busy' } }
+    })
+    const recovery = agentController.recoverStalledAgent(
+      'agent-1',
+      'Synthetic recovery prompt',
+      Date.now()
+    )
+    await vi.waitFor(() => expect(mocks.sessionAbort).toHaveBeenCalledOnce())
+
+    const realPrompt = agentController.sendMessage('agent-1', 'Real user prompt')
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+    releaseAbort?.()
+
+    await expect(recovery).resolves.toBe('superseded')
+    await realPrompt
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledOnce()
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      parts: [{ type: 'text', text: 'Real user prompt' }],
+    }))
+  })
+
+  it('cancels recovery while checking session status', async () => {
+    let releaseStatus: (() => void) | undefined
+    mocks.sessionStatus.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStatus = () => resolve({ data: { 'existing-session': { type: 'busy' } } })
+    }))
+
+    const recovery = agentController.recoverStalledAgent('agent-1', 'Synthetic recovery prompt', Date.now())
+    await vi.waitFor(() => expect(mocks.sessionStatus).toHaveBeenCalledOnce())
+
+    const realPrompt = agentController.sendMessage('agent-1', 'Real user prompt')
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+    releaseStatus?.()
+
+    await expect(recovery).resolves.toBe('superseded')
+    await realPrompt
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledOnce()
+  })
+
+  it('does not abort when provider activity arrives during the recovery check', async () => {
+    let releaseStatus: (() => void) | undefined
+    mocks.sessionStatus.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStatus = () => resolve({ data: { 'existing-session': { type: 'busy' } } })
+    }))
+
+    const recovery = agentController.recoverStalledAgent('agent-1', 'Synthetic recovery prompt', Date.now())
+    await vi.waitFor(() => expect(mocks.sessionStatus).toHaveBeenCalledOnce())
+    mocks.bridgeEvent?.({
+      type: 'message.part.delta',
+      properties: { part: { sessionID: 'existing-session' } }
+    })
+    releaseStatus?.()
+
+    await expect(recovery).resolves.toBe('superseded')
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
+  it('does not abort when a Task child resumes during the recovery check', async () => {
+    mocks.bridgeEvent?.({
+      type: 'session.created',
+      properties: { info: { id: 'child-session', parentID: 'existing-session' } }
+    })
+    let releaseStatus: (() => void) | undefined
+    mocks.sessionStatus.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStatus = () => resolve({ data: { 'existing-session': { type: 'busy' } } })
+    }))
+
+    const recovery = agentController.recoverStalledAgent('agent-1', 'Synthetic recovery prompt', Date.now())
+    await vi.waitFor(() => expect(mocks.sessionStatus).toHaveBeenCalledOnce())
+    mocks.bridgeEvent?.({
+      type: 'message.part.delta',
+      properties: { part: { sessionID: 'child-session' } }
+    })
+    releaseStatus?.()
+
+    await expect(recovery).resolves.toBe('superseded')
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+  })
+
+  it('bounds recovery when the abort request never resolves', async () => {
+    vi.useFakeTimers()
+    mocks.sessionStatus.mockResolvedValueOnce({ data: {
+      'existing-session': { type: 'busy' }
+    } })
+    let releaseAbort: (() => void) | undefined
+    mocks.sessionAbort.mockReturnValueOnce(new Promise<void>((resolve) => {
+      releaseAbort = resolve
+    }))
+
+    const recovery = agentController.recoverStalledAgent('agent-1', 'Synthetic recovery prompt', Date.now())
+    await vi.advanceTimersByTimeAsync(12_001)
+
+    await expect(recovery).resolves.toBe('timeout')
+    await expect(agentController.sendMessage('agent-1', 'Real user prompt')).rejects.toThrow(
+      'Stall recovery is still stopping the previous request'
+    )
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+
+    releaseAbort?.()
+    await vi.advanceTimersByTimeAsync(0)
+    await agentController.sendMessage('agent-1', 'Real user prompt')
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['waiting', 'blocked'],
+    ['completed', 'completed']
+  ])('does not abort or resume a %s session', async (sessionStatus, expectedResult) => {
+    mocks.sessionStatus.mockResolvedValueOnce({ data: {
+      'existing-session': { type: sessionStatus }
+    } })
+    const result = await agentController.recoverStalledAgent(
+      'agent-1',
+      'Do not send this',
+      Date.now() + 60_000
+    )
+
+    expect(result).toBe(expectedResult)
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
   })
 })

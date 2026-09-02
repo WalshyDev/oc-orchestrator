@@ -328,6 +328,7 @@ export function createDemoApi(): OrchestratorApi {
     sendMessageWithModel: noop,
     respondToPermission: noop,
     abortAgent: noop,
+    recoverStalledAgent: async () => ok('recovered'),
     removeAgent: noop,
     resetSession: noop,
     getMessages: (agentId: string) => ok(makeDemoMessages(agentId)),

@@ -33,6 +33,8 @@ import {
   type ChildSessionDescriptor
 } from '../lib/subagent-progress'
 import { getPendingInterruptStatus } from '../lib/interrupt-status'
+import { loadSettings } from '../data/settings'
+import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverStalledResponses } from '../data/agentSettings'
 
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
@@ -353,6 +355,7 @@ interface PendingMessage {
   taskSummaryOverride?: string
 }
 const pendingMessages = new Map<string, PendingMessage>()
+const stalledRecoveryStates = new Map<string, 'recovering' | 'attempted'>()
 
 // Safety timers for the `compacting` flag. We set a short "kickoff" watchdog
 // (30s): if the server doesn't produce a compaction part or set
@@ -1321,6 +1324,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId)
       if (agent) {
         const newStatus = mapSessionStatus(statusInfo.type)
+        if (newStatus === 'idle' || newStatus === 'completed' || newStatus === 'errored') {
+          clearStalledRecoveryAttempt(agent.id)
+        }
         // While stopping, only allow transitions to terminal states (idle/completed/errored).
         // Ignore 'running' or 'needs_input' events that may arrive after abort was sent.
         if (agent.status === 'stopping' && newStatus !== 'idle' && newStatus !== 'completed' && newStatus !== 'errored') {
@@ -1373,6 +1379,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        clearStalledRecoveryAttempt(agent.id)
         notifyIfNeeded(agent, 'idle')
         agent.status = 'idle'
         agent.lastActivityAt = Date.now()
@@ -1401,6 +1408,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       console.error('[session.error]', { sessionId, error: errorProp, fullProps: props })
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        clearStalledRecoveryAttempt(agent.id)
         notifyIfNeeded(agent, 'errored')
         agent.status = 'errored'
         agent.lastActivityAt = Date.now()
@@ -1429,6 +1437,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        clearStalledRecoveryAttempt(agent.id)
         notifyIfNeeded(agent, 'completed')
         agent.status = 'completed'
         agent.lastActivityAt = Date.now()
@@ -2498,6 +2507,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   clearChildSessionsForAgent(payload.id)
   pendingMessages.delete(payload.id)
   childHydrationRetryAgents.delete(payload.id)
+  stalledRecoveryStates.delete(payload.id)
   agent.sessionId = payload.sessionId
   agent.branchName = payload.branchName
   agent.prUrl = null
@@ -2534,6 +2544,8 @@ function removeAgentState(agentId: string): void {
   pendingMessages.delete(agentId)
   pendingModelChanges.delete(agentId)
   childHydrationRetryAgents.delete(agentId)
+  stalledRecoveryStates.delete(agentId)
+  deleteAgentSettings(agentId)
   const compactingTimer = compactingTimers.get(agentId)
   if (compactingTimer) {
     clearTimeout(compactingTimer)
@@ -2931,6 +2943,8 @@ function findAgentByRuntime(runtimeId: string): LiveAgent | undefined {
  *  activity. Anything else (including unset) is treated as still running. */
 const TERMINAL_TOOL_STATES = new Set(['completed', 'error', 'failed'])
 const STALLED_RESPONSE_TIMEOUT_MS = 5 * 60_000
+const STALLED_APPLY_PATCH_TIMEOUT_MS = 60_000
+const STALLED_RESPONSE_RESUME_PROMPT = 'Your previous response stalled without producing output. Continue from the exact point where you stopped, preserving the existing work and context.'
 
 /** Find the parent agent for a sub-agent's child sessionId, or undefined if
  *  no mapping is known. */
@@ -2983,29 +2997,141 @@ function setChildSessionActivity(sessionId: string, updatedAt: number): void {
  *
  *  When a tool is in flight the model isn't hanging — it's blocked on the tool —
  *  so the "provider overloaded" watchdog does not apply. */
-function hasInFlightToolCall(messages: readonly LiveMessage[] | undefined): boolean {
+function getStalledResponseTimeout(
+  messages: readonly LiveMessage[] | undefined,
+  now: number,
+  getChildActivityAt?: (sessionId: string) => number | undefined
+): number | undefined {
   const latestMessage = getActiveAssistantMessage(messages)
-  if (!messages || !latestMessage) return false
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (part.type !== 'tool') continue
-      if (TERMINAL_TOOL_STATES.has(part.toolState ?? '')) continue
-      if (part.toolName === 'task' && message !== latestMessage) continue
-      return true
+  if (!latestMessage) return STALLED_RESPONSE_TIMEOUT_MS
+  let timeout = STALLED_RESPONSE_TIMEOUT_MS
+  for (const part of latestMessage.parts) {
+    if (part.type !== 'tool') continue
+    if (TERMINAL_TOOL_STATES.has(part.toolState ?? '')) continue
+    if (part.toolName === 'apply_patch') {
+      timeout = STALLED_APPLY_PATCH_TIMEOUT_MS
+      continue
     }
+    if (part.toolName === 'task' && part.childSessionId) {
+      const childActivityAt = getChildActivityAt?.(part.childSessionId)
+      if (childActivityAt !== undefined && now - childActivityAt >= STALLED_RESPONSE_TIMEOUT_MS) continue
+    }
+    return undefined
   }
-  return false
+  return timeout
 }
 
 export function isStalledResponse(
   agent: Pick<LiveAgent, 'status' | 'lastActivityAt'>,
   messages: readonly LiveMessage[] | undefined,
-  now: number
+  now: number,
+  getChildActivityAt?: (sessionId: string) => number | undefined
 ): boolean {
+  const timeout = getStalledResponseTimeout(messages, now, getChildActivityAt)
   return agent.status === 'running'
     && agent.lastActivityAt > 0
-    && now - agent.lastActivityAt >= STALLED_RESPONSE_TIMEOUT_MS
-    && !hasInFlightToolCall(messages)
+    && timeout !== undefined
+    && now - agent.lastActivityAt >= timeout
+}
+
+export function shouldAutoRecoverStalledResponse(
+  autoRecoverEnabled: boolean,
+  recoveryStarted: boolean,
+  lastPromptWasRecovery = false
+): boolean {
+  return autoRecoverEnabled && !recoveryStarted && !lastPromptWasRecovery
+}
+
+export function wasStallRecoveryLastPrompt(messages: readonly LiveMessage[] | undefined): boolean {
+  let latestUserMessage: LiveMessage | undefined
+  for (const message of messages ?? []) {
+    if (message.role !== 'user') continue
+    if (!latestUserMessage || message.createdAt > latestUserMessage.createdAt) latestUserMessage = message
+  }
+  return latestUserMessage?.parts.some(
+    (part) => part.type === 'text' && part.text === STALLED_RESPONSE_RESUME_PROMPT
+  ) ?? false
+}
+
+function clearStalledRecoveryAttempt(agentId: string): void {
+  if (stalledRecoveryStates.get(agentId) === 'attempted') stalledRecoveryStates.delete(agentId)
+}
+
+function markStalledResponse(
+  agent: LiveAgent,
+  now: number,
+  recovery: 'disabled' | 'attempted' | 'failed'
+): void {
+  const messages = {
+    disabled: 'The agent stopped producing updates. Automatic recovery is off; try again or switch models.',
+    attempted: 'The agent stopped producing updates after automatic recovery; try again or switch models.',
+    failed: 'Automatic recovery failed after the agent stopped producing updates. Try again or switch models.'
+  }
+  agent.lastError ??= {
+    name: 'StalledResponse',
+    message: messages[recovery],
+    sessionId: agent.sessionId,
+    occurredAt: now
+  }
+  notifyIfNeeded(agent, 'needs_input')
+  agent.status = 'needs_input'
+  agent.blockedSince = agent.blockedSince ?? now
+  agent.inputReason = 'error'
+}
+
+async function autoRecoverStalledAgent(agentId: string): Promise<boolean> {
+  const agent = state.agents.get(agentId)
+  if (!window.api || !agent || agent.status !== 'running') return false
+  const sessionId = agent.sessionId
+  const observedLastActivityAt = agent.lastActivityAt
+
+  agent.status = 'stopping'
+  agent.lastActivityAt = Date.now()
+  emit({ agents: true })
+
+  const result = await window.api.recoverStalledAgent(
+    agentId,
+    STALLED_RESPONSE_RESUME_PROMPT,
+    observedLastActivityAt
+  )
+  const current = state.agents.get(agentId)
+  if (current?.sessionId !== sessionId) return true
+  if (!result.ok || result.data === 'timeout') return false
+
+  if ((result.data === 'recovered' || result.data === 'superseded') && current.status === 'stopping') {
+    current.status = 'running'
+    current.lastActivityAt = Date.now()
+    updateAgentAfterInterruptChange(current, false, false)
+    emit({ agents: true })
+  }
+
+  if (result.data === 'blocked') {
+    current.status = 'running'
+    const [questions, permissions] = await Promise.all([
+      window.api.listQuestions(),
+      window.api.listPermissions()
+    ])
+    if (questions.ok && questions.data) reconcileQuestions(questions.data as PendingQuestionSnapshot[])
+    if (permissions.ok && permissions.data) reconcilePermissions(permissions.data as PendingPermissionSnapshot[])
+    if (current.status === 'running') {
+      current.status = 'needs_input'
+      current.blockedSince = Date.now()
+      current.inputReason = 'question'
+      emit({ agents: true })
+    }
+  }
+
+  if (result.data === 'idle' || result.data === 'completed' || result.data === 'errored') {
+    notifyIfNeeded(current, result.data)
+    current.status = result.data
+    current.lastActivityAt = Date.now()
+    current.blockedSince = undefined
+    current.respondedAt = undefined
+    current.inputReason = undefined
+    emit({ agents: true })
+  }
+
+  return result.data !== undefined
 }
 
 /** Record that `childSessionId` belongs to `parentAgentId` so we can bump the
@@ -3602,25 +3728,47 @@ export function useAgentStore() {
           emit({ messages: true })
         }
 
-        // Watchdog: if an agent has been 'running' with no activity for N minutes,
-        // surface it as needs_input so it shows in the InterruptBanner. This
-        // catches cases where providers hang or keep retrying silently.
+        // Recover one silent provider stall per run, then require user input.
         const now = Date.now()
+        const autoRecoverByDefault = loadSettings().autoRecoverStalledResponses
         let changed = false
         for (const agent of state.agents.values()) {
-          if (!isStalledResponse(agent, state.messages.get(agent.sessionId), now)) continue
-          agent.lastError = agent.lastError ?? {
-            name: 'StalledResponse',
-            message: 'No update from provider for 5 minutes — model may be overloaded or network is unstable. Try again or switch models.',
-            sessionId: agent.sessionId,
-            occurredAt: now
+          if (!isStalledResponse(
+            agent,
+            state.messages.get(agent.sessionId),
+            now,
+            (sessionId) => childSessions.get(sessionId)?.updatedAt
+          )) continue
+
+          const autoRecoverEnabled = resolveAutoRecoverStalledResponses(
+            autoRecoverByDefault,
+            loadAgentAutoRecoverSetting(agent.id)
+          )
+          const shouldRecover = shouldAutoRecoverStalledResponse(
+            autoRecoverEnabled,
+            stalledRecoveryStates.has(agent.id),
+            wasStallRecoveryLastPrompt(state.messages.get(agent.sessionId))
+          )
+          if (shouldRecover) {
+            const sessionId = agent.sessionId
+            stalledRecoveryStates.set(agent.id, 'recovering')
+            console.warn('[watchdog] auto-recovering stalled agent', { agentId: agent.id })
+            void autoRecoverStalledAgent(agent.id).then((recovered) => {
+              const current = state.agents.get(agent.id)
+              if (recovered || current?.sessionId !== sessionId || current.status !== 'stopping') return
+              markStalledResponse(current, Date.now(), 'failed')
+              emit({ agents: true })
+            }).finally(() => {
+              if (stalledRecoveryStates.get(agent.id) === 'recovering') {
+                stalledRecoveryStates.set(agent.id, 'attempted')
+              }
+            })
+            continue
           }
-          notifyIfNeeded(agent, 'needs_input')
-          agent.status = 'needs_input'
-          agent.blockedSince = agent.blockedSince ?? now
-          agent.inputReason = 'error'
+
+          markStalledResponse(agent, now, autoRecoverEnabled ? 'attempted' : 'disabled')
           changed = true
-          console.warn('[watchdog] stalled agent marked needs_input', { agentId: agent.id })
+          console.warn('[watchdog] stalled agent needs user input', { agentId: agent.id })
         }
         if (changed) emit({ agents: true })
       } catch {
@@ -3717,11 +3865,13 @@ export function useAgentStore() {
     if (!window.api) return
     // No session exists to send to yet.
     if (state.agents.get(agentId)?.pending) return
+    const recoveryInProgress = stalledRecoveryStates.get(agentId) === 'recovering'
+    stalledRecoveryStates.delete(agentId)
 
     // Queue the message if the agent is still stopping — it will be dispatched
     // automatically once the abort completes.
     const agent = state.agents.get(agentId)
-    if (agent?.status === 'stopping') {
+    if (agent?.status === 'stopping' && !recoveryInProgress) {
       pendingMessages.set(agentId, { text, agentConfig, attachments, taskSummaryOverride })
       return { ok: true, queued: true }
     }
@@ -3799,6 +3949,7 @@ export function useAgentStore() {
 
     const agent = state.agents.get(agentId)
     if (agent?.status === 'stopping') return
+    stalledRecoveryStates.delete(agentId)
 
     // Show the slash command in the task summary so it's visible in the dashboard
     const previousStatus = agent?.status
@@ -3833,6 +3984,7 @@ export function useAgentStore() {
   const prepareFreshAgent = useCallback((agentId: string, prompt?: string) => {
     const agent = state.agents.get(agentId)
     if (!agent) return
+    stalledRecoveryStates.delete(agentId)
 
     const trimmedPrompt = prompt?.trim() ?? ''
 
@@ -3858,6 +4010,7 @@ export function useAgentStore() {
     if (!window.api) return
 
     const agent = state.agents.get(agentId)
+    stalledRecoveryStates.delete(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
@@ -3896,6 +4049,7 @@ export function useAgentStore() {
     if (!window.api) return
 
     const agent = state.agents.get(agentId)
+    stalledRecoveryStates.delete(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
@@ -3934,6 +4088,7 @@ export function useAgentStore() {
     if (!window.api) return
 
     const agent = state.agents.get(agentId)
+    stalledRecoveryStates.delete(agentId)
     const previousStatus = agent?.status
     const previousBlockedSince = agent?.blockedSince
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []

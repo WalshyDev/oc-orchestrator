@@ -25,7 +25,8 @@ export class EventBridge {
   constructor(
     private runtimeId: string,
     private directory: string,
-    private client: OpencodeClient
+    private client: OpencodeClient,
+    private onEvent?: (event: { type: string; properties: unknown }) => void
   ) {}
 
   /**
@@ -206,6 +207,7 @@ export class EventBridge {
   }
 
   private forwardEvent(event: { type: string; properties: unknown }): void {
+    this.onEvent?.(event)
     if (event.type !== 'server.heartbeat') {
       runtimeManager.touchRuntimeActivity(this.runtimeId)
     }

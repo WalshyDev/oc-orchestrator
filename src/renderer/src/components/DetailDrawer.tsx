@@ -41,7 +41,13 @@ import {
   type QuickAction,
   type QuickActionIcon
 } from '../data/settings'
-import { loadAgentOutputVerbosity, saveAgentOutputVerbosity } from '../data/agentSettings'
+import {
+  loadAgentAutoRecoverSetting,
+  loadAgentOutputVerbosity,
+  saveAgentAutoRecoverSetting,
+  saveAgentOutputVerbosity,
+  type AgentAutoRecoverSetting
+} from '../data/agentSettings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
@@ -295,12 +301,17 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [outputVerbosity, setOutputVerbosity] = useState<OutputVerbosity>(() =>
     loadAgentOutputVerbosity(agent.sessionId ?? agent.id) ?? loadSettings().outputVerbosity
   )
+  const [autoRecoverSetting, setAutoRecoverSetting] = useState<AgentAutoRecoverSetting>(() =>
+    loadAgentAutoRecoverSetting(agent.id)
+  )
+  const [globalAutoRecover, setGlobalAutoRecover] = useState(() => loadSettings().autoRecoverStalledResponses)
   const [quickActions, setQuickActions] = useState(() => loadSettings().quickActions)
   const editorLabel = useEditorLabel()
   useEffect(() => {
     const onSettingsChanged = () => {
       const s = loadSettings()
       if (!loadAgentOutputVerbosity(agent.sessionId ?? agent.id)) setOutputVerbosity(s.outputVerbosity)
+      setGlobalAutoRecover(s.autoRecoverStalledResponses)
       setQuickActions(s.quickActions)
     }
     window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged)
@@ -311,6 +322,10 @@ export const DetailDrawer = memo(function DetailDrawer({
     setOutputVerbosity(value)
     saveAgentOutputVerbosity(agent.sessionId ?? agent.id, value)
   }, [agent.id, agent.sessionId])
+  const handleAutoRecoverSettingChange = useCallback((value: AgentAutoRecoverSetting) => {
+    setAutoRecoverSetting(value)
+    saveAgentAutoRecoverSetting(agent.id, value)
+  }, [agent.id])
   const {
     attachments, isDragOver, fileInputRef,
     removeAttachment, clearAttachments,
@@ -947,6 +962,9 @@ export const DetailDrawer = memo(function DetailDrawer({
                 agent={agent}
                 outputVerbosity={outputVerbosity}
                 onOutputVerbosityChange={handleOutputVerbosityChange}
+                autoRecoverSetting={autoRecoverSetting}
+                globalAutoRecover={globalAutoRecover}
+                onAutoRecoverSettingChange={handleAutoRecoverSettingChange}
                 onChangeModel={onChangeModel}
               />
             )}
@@ -1747,11 +1765,17 @@ function AgentConfigPanel({
   agent,
   outputVerbosity,
   onOutputVerbosityChange,
+  autoRecoverSetting,
+  globalAutoRecover,
+  onAutoRecoverSettingChange,
   onChangeModel
 }: {
   agent: AgentRuntime
   outputVerbosity: OutputVerbosity
   onOutputVerbosityChange: (value: OutputVerbosity) => void
+  autoRecoverSetting: AgentAutoRecoverSetting
+  globalAutoRecover: boolean
+  onAutoRecoverSettingChange: (value: AgentAutoRecoverSetting) => void
   onChangeModel?: (modelPath: string, variant?: string) => Promise<boolean>
 }) {
   const { options, loading, providerData, configModel } = useModelOptions(agent.id)
@@ -1838,6 +1862,27 @@ function AgentConfigPanel({
             )
           })}
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-kumo-subtle">Stall Recovery</h3>
+          <p className="mt-1 text-[11px] text-kumo-subtle">Override automatic recovery for this agent.</p>
+        </div>
+        <SelectField
+          value={autoRecoverSetting}
+          options={[
+            { value: 'inherit', label: `Default (global ${globalAutoRecover ? 'on' : 'off'})` },
+            { value: 'on', label: 'On' },
+            { value: 'off', label: 'Off' }
+          ]}
+          onChange={(value) => onAutoRecoverSettingChange(value as AgentAutoRecoverSetting)}
+          buttonClassName={selectButtonClasses}
+          menuClassName={selectMenuClasses}
+        />
+        <p className="text-[10px] text-kumo-subtle">
+          On resumes one stalled request; Off only shows the stalled alert.
+        </p>
       </section>
 
       <section className="flex flex-col gap-3">
