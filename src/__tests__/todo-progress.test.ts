@@ -25,6 +25,37 @@ describe('Todo progress', () => {
     ])).toBeUndefined()
   })
 
+  it('tracks the current task when the todo list changes over time', () => {
+    const todos = new Map<string, AgentTodo[]>()
+
+    applyTodoUpdate(todos, {
+      sessionID: 'session-1',
+      todos: [
+        { content: 'Trace events', status: 'in_progress' },
+        { content: 'Add coverage', status: 'pending' }
+      ]
+    })
+    expect(getCurrentTaskProgress(todos.get('session-1') ?? [])).toEqual({
+      current: 1,
+      total: 2,
+      content: 'Trace events'
+    })
+
+    applyTodoUpdate(todos, {
+      sessionID: 'session-1',
+      todos: [
+        { content: 'Trace events', status: 'completed' },
+        { content: 'Refine coverage', status: 'in_progress' },
+        { content: 'Run checks', status: 'pending' }
+      ]
+    })
+    expect(getCurrentTaskProgress(todos.get('session-1') ?? [])).toEqual({
+      current: 2,
+      total: 3,
+      content: 'Refine coverage'
+    })
+  })
+
   it('replaces an earlier task snapshot when OpenCode reports new progress', () => {
     const todos = new Map<string, AgentTodo[]>()
 
