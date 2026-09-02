@@ -12,6 +12,7 @@ describe('Todo progress', () => {
       { content: 'Add coverage', status: 'in_progress' },
       { content: 'Run checks', status: 'pending' }
     ])).toEqual({
+      status: 'in_progress',
       current: 2,
       total: 3,
       content: 'Add coverage'
@@ -22,6 +23,22 @@ describe('Todo progress', () => {
     expect(getCurrentTaskProgress([
       { content: 'Trace events', status: 'completed' },
       { content: 'Add coverage', status: 'pending' }
+    ])).toBeUndefined()
+  })
+
+  it('reports when every tracked task is complete', () => {
+    expect(getCurrentTaskProgress([
+      { content: 'Trace events', status: 'completed' },
+      { content: 'Add coverage', status: 'completed' }
+    ])).toEqual({
+      status: 'completed',
+      total: 2
+    })
+
+    expect(getCurrentTaskProgress([])).toBeUndefined()
+    expect(getCurrentTaskProgress([
+      { content: 'Trace events', status: 'completed' },
+      { content: 'Old approach', status: 'cancelled' }
     ])).toBeUndefined()
   })
 
@@ -36,6 +53,7 @@ describe('Todo progress', () => {
       ]
     })
     expect(getCurrentTaskProgress(todos.get('session-1') ?? [])).toEqual({
+      status: 'in_progress',
       current: 1,
       total: 2,
       content: 'Trace events'
@@ -50,6 +68,7 @@ describe('Todo progress', () => {
       ]
     })
     expect(getCurrentTaskProgress(todos.get('session-1') ?? [])).toEqual({
+      status: 'in_progress',
       current: 2,
       total: 3,
       content: 'Refine coverage'

@@ -106,11 +106,9 @@ export interface AgentRuntime {
   pending?: boolean
 }
 
-export interface AgentTaskProgress {
-  current: number
-  total: number
-  content: string
-}
+export type AgentTaskProgress =
+  | { status: 'in_progress'; current: number; total: number; content: string }
+  | { status: 'completed'; total: number }
 
 /**
  * Spike: client-side folder/directory definition for grouping agents in the

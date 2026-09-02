@@ -1409,6 +1409,9 @@ function AgentRow({
   }
 
   const show = (key: ColumnKey): boolean => visibleColumns.has(key)
+  const completedTaskLabel = agent.currentTask?.status === 'completed'
+    ? `All ${agent.currentTask.total} ${agent.currentTask.total === 1 ? 'task' : 'tasks'} complete`
+    : undefined
 
   // Background/hover styling depends on selection, urgency, and whether a drag
   // is in progress (during drag we suppress hover so non-folder rows don't
@@ -1539,12 +1542,22 @@ function AgentRow({
                 {agent.taskSummary}
               </button>
               {agent.currentTask && (
-                <div
-                  className="truncate text-[11px] text-kumo-subtle"
-                  title={`Task ${agent.currentTask.current}/${agent.currentTask.total}: ${agent.currentTask.content}`}
-                >
-                  Task {agent.currentTask.current}/{agent.currentTask.total}: {agent.currentTask.content}
-                </div>
+                agent.currentTask.status === 'completed' ? (
+                  <div
+                    className="flex items-center gap-1 truncate text-[11px] text-kumo-success"
+                    title={completedTaskLabel}
+                  >
+                    <CheckCircle size={12} weight="fill" className="shrink-0" />
+                    <span className="truncate">{completedTaskLabel}</span>
+                  </div>
+                ) : (
+                  <div
+                    className="truncate text-[11px] text-kumo-subtle"
+                    title={`Task ${agent.currentTask.current}/${agent.currentTask.total}: ${agent.currentTask.content}`}
+                  >
+                    Task {agent.currentTask.current}/{agent.currentTask.total}: {agent.currentTask.content}
+                  </div>
+                )
               )}
             </div>
           )}

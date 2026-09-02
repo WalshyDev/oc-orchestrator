@@ -30,7 +30,7 @@ describe('Fleet Last Message navigation', () => {
     lastActivityAt: 'now',
     lastActivityAtMs: 1,
     lastMessage: 'Latest answer',
-    currentTask: { current: 2, total: 3, content: 'Add coverage' }
+    currentTask: { status: 'in_progress', current: 2, total: 3, content: 'Add coverage' }
   }
 
   it('renders the last message as a keyboard-accessible button', () => {
@@ -100,6 +100,23 @@ describe('Fleet Last Message navigation', () => {
     expect(markup).toContain('Task 2/3: Add coverage')
     expect(markup).toContain('align-top')
     expect(markup).toContain('line-clamp-2')
+  })
+
+  it('shows completed task tracking with text and the success treatment', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {}
+    })
+    const markup = renderToStaticMarkup(createElement(FleetTable, {
+      agents: [{ ...agent, currentTask: { status: 'completed', total: 1 } }],
+      selectedId: null,
+      onSelect: () => {},
+      visibleColumns: new Set(['task']),
+      columnWidths: {}
+    }))
+
+    expect(markup).toContain('All 1 task complete')
+    expect(markup).toContain('text-kumo-success')
   })
 
   it('resolves the latest rendered assistant text message', () => {
