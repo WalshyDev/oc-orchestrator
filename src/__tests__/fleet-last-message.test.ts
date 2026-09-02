@@ -29,7 +29,8 @@ describe('Fleet Last Message navigation', () => {
     prUrl: null,
     lastActivityAt: 'now',
     lastActivityAtMs: 1,
-    lastMessage: 'Latest answer'
+    lastMessage: 'Latest answer',
+    currentTask: { current: 2, total: 3, content: 'Add coverage' }
   }
 
   it('renders the last message as a keyboard-accessible button', () => {
@@ -81,6 +82,24 @@ describe('Fleet Last Message navigation', () => {
 
     expect(markup).toContain('<button type="button"')
     expect(markup).toContain('Click to jump to this message')
+  })
+
+  it('aligns two-line task progress with the Last Message cell', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {}
+    })
+    const markup = renderToStaticMarkup(createElement(FleetTable, {
+      agents: [agent],
+      selectedId: null,
+      onSelect: () => {},
+      visibleColumns: new Set(['task', 'lastMessage']),
+      columnWidths: {}
+    }))
+
+    expect(markup).toContain('Task 2/3: Add coverage')
+    expect(markup).toContain('align-top')
+    expect(markup).toContain('line-clamp-2')
   })
 
   it('resolves the latest rendered assistant text message', () => {

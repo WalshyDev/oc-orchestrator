@@ -28,6 +28,7 @@ import {
   orderTranscriptByActivity
 } from './lib/subagent-progress'
 import { extractLastAssistantMessage } from './lib/last-message'
+import { getCurrentTaskProgress } from './lib/task-progress'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -147,6 +148,7 @@ export function App() {
     listCommands,
     listAgentConfigs,
     getMessagesForSession,
+    getTodosForSession,
     getChildSessionActivityAt,
     getFileChangesForSession,
     getEventsForSession,
@@ -340,6 +342,7 @@ export function App() {
   const liveAgentsAsRuntimes: AgentRuntime[] = useMemo(() => {
     return store.agents.map((agent): AgentRuntime => {
       const lastMessage = extractLastAssistantMessage(getMessagesForSession(agent.sessionId))
+      const currentTask = getCurrentTaskProgress(getTodosForSession(agent.sessionId))
 
       // 'compacting' is a UI-level status: the agent's underlying server status
       // is whatever it is (often 'idle' once compaction is queued), but the
@@ -369,6 +372,7 @@ export function App() {
         blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
         blockedSinceMs: agent.blockedSince,
         lastMessage,
+        currentTask,
         lastError: agent.lastError ? {
           name: agent.lastError.name,
           message: agent.lastError.message,
@@ -381,7 +385,7 @@ export function App() {
         pending: agent.pending
       }
     })
-  }, [store.agents, tick, getMessagesForSession])
+  }, [store.agents, tick, getMessagesForSession, getTodosForSession])
 
   // ── Convert live permissions + needs_input agents to Interrupt shape ──
   const liveInterrupts: Interrupt[] = useMemo(() => {
