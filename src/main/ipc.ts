@@ -178,6 +178,21 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('agent:recover-stall', async (
+    _event,
+    agentId: string,
+    resumePrompt: string,
+    observedLastActivityAt: number
+  ) => {
+    try {
+      const result = await agentController.recoverStalledAgent(agentId, resumePrompt, observedLastActivityAt)
+      return { ok: true, data: result }
+    } catch (error) {
+      logIpcError('agent:recover-stall', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('agent:remove', async (_event, agentId: string) => {
     try {
       await agentController.removeAgent(agentId)

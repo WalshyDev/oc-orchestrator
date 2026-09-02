@@ -264,6 +264,28 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 </div>
               </div>
 
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Stalled Agents
+                </label>
+                <label className="flex items-start gap-2.5 cursor-pointer group pl-1">
+                  <input
+                    type="checkbox"
+                    checked={settings.autoRecoverStalledResponses}
+                    onChange={(event) => updateSettings({ autoRecoverStalledResponses: event.target.checked })}
+                    className="mt-0.5 w-3.5 h-3.5 rounded border-kumo-line bg-kumo-control accent-kumo-brand"
+                  />
+                  <span>
+                    <span className="block text-sm text-kumo-default group-hover:text-kumo-strong transition-colors">
+                      Automatically resume stalled agents
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-kumo-subtle">
+                      When provider or tool activity stalls, abort the request and ask the agent to continue once.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
               {/* Notify When */}
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">

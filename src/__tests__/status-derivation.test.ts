@@ -3,6 +3,8 @@ import {
   applyReconciledStatus,
   getReconnectedInputReason,
   isStalledResponse,
+  shouldAutoRecoverStalledResponse,
+  wasStallRecoveryLastPrompt,
   type LiveMessage
 } from '../renderer/src/hooks/useAgentStore'
 
@@ -763,10 +765,62 @@ describe('stalled response watchdog', () => {
   it('ignores an abandoned Task when a later skill call completed', () => {
     const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
     const messages = [
-      toolMessage('task', 'pending', 'abandoned-task'),
+      {
+        ...toolMessage('task', 'pending', 'abandoned-task'),
+        parts: [{ id: 'tool', type: 'tool', toolName: 'task', toolState: 'pending', childSessionId: 'child' }]
+      },
       { ...toolMessage('skill', 'completed', 'latest-response', now - 6 * 60_000), completedAt: now - 6 * 60_000 }
     ]
 
     expect(isStalledResponse(agent, messages, now)).toBe(true)
+  })
+
+  it('flags a Task whose child session also stopped producing updates', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+    const task = toolMessage('task', 'running')
+    task.parts[0].childSessionId = 'child'
+
+    expect(isStalledResponse(agent, [task], now, () => now - 7 * 60_000)).toBe(true)
+    expect(isStalledResponse(agent, [task], now, () => now - 1_000)).toBe(false)
+  })
+
+  it('flags an apply_patch call after one minute without updates', () => {
+    const messages = [toolMessage('apply_patch', 'running')]
+
+    expect(isStalledResponse({ status: 'running', lastActivityAt: now - 60_000 + 1 }, messages, now)).toBe(false)
+    expect(isStalledResponse({ status: 'running', lastActivityAt: now - 60_000 }, messages, now)).toBe(true)
+  })
+
+  it('ignores an abandoned Bash call on an older response', () => {
+    const agent = { status: 'running' as const, lastActivityAt: now - 7 * 60_000 }
+    const messages = [
+      toolMessage('bash', 'pending', 'abandoned-bash'),
+      { ...toolMessage('skill', 'completed', 'latest-response', now - 6 * 60_000) }
+    ]
+
+    expect(isStalledResponse(agent, messages, now)).toBe(true)
+  })
+
+  it('recovers only when enabled and not already attempted', () => {
+    expect(shouldAutoRecoverStalledResponse(true, false)).toBe(true)
+    expect(shouldAutoRecoverStalledResponse(false, false)).toBe(false)
+    expect(shouldAutoRecoverStalledResponse(true, true)).toBe(false)
+    expect(shouldAutoRecoverStalledResponse(true, false, true)).toBe(false)
+  })
+
+  it('recognizes a recovery prompt after renderer state is restored', () => {
+    const messages: LiveMessage[] = [{
+      id: 'recovery',
+      role: 'user',
+      sessionId: 'session',
+      createdAt: now,
+      parts: [{
+        id: 'text',
+        type: 'text',
+        text: 'Your previous response stalled without producing output. Continue from the exact point where you stopped, preserving the existing work and context.'
+      }]
+    }]
+
+    expect(wasStallRecoveryLastPrompt(messages)).toBe(true)
   })
 })

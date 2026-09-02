@@ -248,6 +248,20 @@ interface PersistedAgentHandle {
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
 const IDLE_RUNTIME_CHECK_INTERVAL_MS = 60_000
 const DEFAULT_RUNTIME_IDLE_TIMEOUT_MS = 15 * 60_000
+const STALL_RECOVERY_TIMEOUT_MS = 10_000
+const STALL_RECOVERY_TOTAL_TIMEOUT_MS = 12_000
+const USER_ACTION_CLOCK_SKEW_MS = 1_000
+
+export type StallRecoveryResult = 'recovered' | 'superseded' | 'blocked' | 'idle' | 'completed' | 'errored' | 'timeout'
+type SettledSessionStatus = 'idle' | 'blocked' | 'completed' | 'errored' | 'timeout'
+type RecoverySessionStatus = SettledSessionStatus | 'running'
+
+interface StallRecovery {
+  cancelled: boolean
+  settled: boolean
+  operation: Promise<StallRecoveryResult>
+  promise: Promise<StallRecoveryResult>
+}
 
 /**
  * High-level controller for managing individual agent instances.
@@ -257,6 +271,10 @@ class AgentController {
   private agents = new Map<string, AgentHandle>()
   private bridges = new Map<string, EventBridge>()
   private pendingBridge = new Map<string, Promise<RuntimeInfo>>()
+  private stallRecoveries = new Map<string, StallRecovery>()
+  private lastUserActionAt = new Map<string, number>()
+  private sessionActivity = new Map<string, { version: number; at: number }>()
+  private sessionParents = new Map<string, string>()
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
@@ -424,6 +442,7 @@ class AgentController {
   async resetSession(agentId: string, prompt?: string): Promise<AgentHandle> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -514,6 +533,7 @@ class AgentController {
   async sendMessage(agentId: string, text: string, agent?: string, attachments?: Attachment[]): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -535,6 +555,7 @@ class AgentController {
   async respondToPermission(agentId: string, permissionId: string, response: 'once' | 'always' | 'reject'): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -552,6 +573,7 @@ class AgentController {
   async replyToQuestion(agentId: string, requestId: string, answers: string[][]): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -569,6 +591,7 @@ class AgentController {
   async rejectQuestion(agentId: string, requestId: string): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -602,8 +625,162 @@ class AgentController {
   async abortAgent(agentId: string): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
+    await this.abortSession(handle, runtime)
+  }
+
+  async recoverStalledAgent(
+    agentId: string,
+    resumePrompt: string,
+    observedLastActivityAt: number
+  ): Promise<StallRecoveryResult> {
+    const handle = this.agents.get(agentId)
+    if (!handle) throw new Error(`Agent ${agentId} not found`)
+    if (this.hasNewerUserAction(agentId, observedLastActivityAt)) return 'superseded'
+    const activity = this.sessionActivity.get(handle.sessionId)
+    if (activity && activity.at > observedLastActivityAt + USER_ACTION_CLOCK_SKEW_MS) return 'superseded'
+
+    const existing = this.stallRecoveries.get(agentId)
+    if (existing) return existing.promise
+
+    const recovery: StallRecovery = {
+      cancelled: false,
+      settled: false,
+      operation: Promise.resolve('timeout'),
+      promise: Promise.resolve('timeout')
+    }
+    const activityVersion = activity?.version ?? 0
+    recovery.operation = this.performStallRecovery(
+      handle,
+      resumePrompt,
+      observedLastActivityAt,
+      activityVersion,
+      recovery
+    ).catch(() => 'timeout' as StallRecoveryResult).finally(() => {
+      recovery.settled = true
+      if (this.stallRecoveries.get(agentId) === recovery) this.stallRecoveries.delete(agentId)
+    })
+    recovery.promise = this.limitStallRecovery(
+      recovery.operation,
+      recovery
+    )
+    this.stallRecoveries.set(agentId, recovery)
+    return recovery.promise
+  }
+
+  private async performStallRecovery(
+    handle: AgentHandle,
+    resumePrompt: string,
+    observedLastActivityAt: number,
+    activityVersion: number,
+    recovery: StallRecovery
+  ): Promise<StallRecoveryResult> {
+    const sessionId = handle.sessionId
+    const runtime = await this.ensureRuntimeForAgent(handle)
+    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, activityVersion, recovery)) return 'superseded'
+
+    const initialStatus = await this.getRecoverySessionStatus(handle, runtime, sessionId)
+    if (initialStatus !== 'running') return initialStatus
+    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, activityVersion, recovery)) return 'superseded'
+
+    await this.abortSession(handle, runtime)
+    if (recovery.cancelled) return 'superseded'
+    const status = await this.waitForSessionToSettle(handle, runtime, sessionId)
+    if (status !== 'idle') return status
+    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
+
+    await handle.bridge.ensureStreaming()
+    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
+
+    await runtime.client.session.promptAsync({
+      sessionID: sessionId,
+      directory: handle.directory,
+      parts: [{ type: 'text', text: resumePrompt }],
+      ...(handle.modelOverride && { model: handle.modelOverride }),
+      ...(handle.variantOverride && { variant: handle.variantOverride })
+    })
+    return 'recovered'
+  }
+
+  private async waitForSessionToSettle(
+    handle: AgentHandle,
+    runtime: RuntimeInfo,
+    sessionId: string
+  ): Promise<SettledSessionStatus> {
+    const deadline = Date.now() + STALL_RECOVERY_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      const status = await this.getRecoverySessionStatus(handle, runtime, sessionId)
+      if (status !== 'running') return status
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return 'timeout'
+  }
+
+  private async getRecoverySessionStatus(
+    handle: AgentHandle,
+    runtime: RuntimeInfo,
+    sessionId: string
+  ): Promise<Exclude<RecoverySessionStatus, 'timeout'>> {
+    if (handle.sessionId !== sessionId) return 'completed'
+    const result = await runtime.client.session.status({ directory: handle.directory })
+    const status = (result.data as Record<string, { type: string }> | undefined)?.[sessionId]?.type ?? 'idle'
+    if (status === 'idle') return 'idle'
+    if (status === 'waiting') return 'blocked'
+    if (status === 'completed') return 'completed'
+    if (status === 'error') return 'errored'
+    return 'running'
+  }
+
+  private isStallRecoverySuperseded(
+    handle: AgentHandle,
+    sessionId: string,
+    observedLastActivityAt: number,
+    activityVersion: number | undefined,
+    recovery: StallRecovery
+  ): boolean {
+    return recovery.cancelled ||
+      this.agents.get(handle.id) !== handle ||
+      handle.sessionId !== sessionId ||
+      (activityVersion !== undefined && (this.sessionActivity.get(sessionId)?.version ?? 0) !== activityVersion) ||
+      this.hasNewerUserAction(handle.id, observedLastActivityAt)
+  }
+
+  private async limitStallRecovery(
+    operation: Promise<StallRecoveryResult>,
+    recovery: StallRecovery
+  ): Promise<StallRecoveryResult> {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<StallRecoveryResult>((resolve) => {
+      timeout = setTimeout(() => {
+        recovery.cancelled = true
+        resolve('timeout')
+      }, STALL_RECOVERY_TOTAL_TIMEOUT_MS)
+    })
+    try {
+      return await Promise.race([operation, timedOut])
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+
+  private async beginUserAction(agentId: string): Promise<void> {
+    this.lastUserActionAt.set(agentId, Date.now())
+    const recovery = this.stallRecoveries.get(agentId)
+    if (!recovery) return
+    recovery.cancelled = true
+    await recovery.promise.catch(() => undefined)
+    if (!recovery.settled) {
+      throw new Error('Stall recovery is still stopping the previous request. Retry when the agent leaves the stopping state.')
+    }
+  }
+
+  private hasNewerUserAction(agentId: string, observedLastActivityAt: number): boolean {
+    return (this.lastUserActionAt.get(agentId) ?? 0) > observedLastActivityAt + USER_ACTION_CLOCK_SKEW_MS
+  }
+
+  private async abortSession(handle: AgentHandle, runtime: RuntimeInfo): Promise<void> {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     await runtime.client.session.abort({
@@ -635,6 +812,7 @@ class AgentController {
   async executeCommand(agentId: string, command: string, args: string): Promise<unknown> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -864,6 +1042,7 @@ class AgentController {
   async compactSession(agentId: string): Promise<unknown> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
@@ -983,6 +1162,7 @@ class AgentController {
   async sendMessageWithModel(agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<void> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
+    await this.beginUserAction(agentId)
 
     handle.modelOverride = { providerID, modelID }
     this.persistAgents()
@@ -1500,6 +1680,10 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
+    const recovery = this.stallRecoveries.get(agentId)
+    if (recovery) recovery.cancelled = true
+    this.lastUserActionAt.delete(agentId)
+
     const otherAgents = Array.from(this.agents.values()).filter((agent) => agent.id !== agentId)
     const shouldStopRuntime = !otherAgents.some((agent) => agent.runtimeId === handle.runtimeId)
     const shouldRemoveWorktree = handle.isWorktree && !otherAgents.some((agent) => agent.directory === handle.directory)
@@ -1590,12 +1774,50 @@ class AgentController {
     const runtime = await runtimeManager.ensureRuntime(directory)
 
     if (!this.bridges.has(runtime.id)) {
-      const bridge = new EventBridge(runtime.id, directory, runtime.client)
+      const bridge = new EventBridge(
+        runtime.id,
+        directory,
+        runtime.client,
+        (event) => this.recordSessionActivity(event)
+      )
       this.bridges.set(runtime.id, bridge)
       await bridge.start()
     }
 
     return runtime
+  }
+
+  private recordSessionActivity(event: { type: string; properties: unknown }): void {
+    const properties = event.properties as Record<string, unknown>
+    if (event.type === 'session.created') {
+      const info = properties.info as Record<string, unknown> | undefined
+      const childSessionId = info?.id as string | undefined
+      const parentSessionId = info?.parentID as string | undefined
+      if (childSessionId && parentSessionId) this.sessionParents.set(childSessionId, parentSessionId)
+      return
+    }
+    if (!event.type.startsWith('message.') && event.type !== 'question.asked' && event.type !== 'permission.asked') {
+      return
+    }
+    const nested = (properties.part ?? properties.info) as Record<string, unknown> | undefined
+    const sessionId = (properties.sessionID ?? nested?.sessionID) as string | undefined
+    if (!sessionId) return
+    if (event.type === 'message.part.updated') {
+      const state = nested?.state as Record<string, unknown> | undefined
+      const metadata = state?.metadata as Record<string, unknown> | undefined
+      const childSessionId = metadata?.sessionId as string | undefined
+      if (childSessionId) this.sessionParents.set(childSessionId, sessionId)
+    }
+
+    const at = Date.now()
+    const visited = new Set<string>()
+    let currentSessionId: string | undefined = sessionId
+    while (currentSessionId && !visited.has(currentSessionId)) {
+      visited.add(currentSessionId)
+      const current = this.sessionActivity.get(currentSessionId)
+      this.sessionActivity.set(currentSessionId, { version: (current?.version ?? 0) + 1, at })
+      currentSessionId = this.sessionParents.get(currentSessionId)
+    }
   }
 
   private async ensureRuntimeForAgent(handle: AgentHandle): Promise<RuntimeInfo> {

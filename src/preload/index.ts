@@ -51,6 +51,9 @@ const api = {
   abortAgent: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:abort', agentId),
 
+  recoverStalledAgent: (agentId: string, resumePrompt: string, observedLastActivityAt: number): Promise<IpcResult> =>
+    ipcRenderer.invoke('agent:recover-stall', agentId, resumePrompt, observedLastActivityAt),
+
   removeAgent: (agentId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:remove', agentId),
 
