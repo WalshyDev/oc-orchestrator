@@ -85,7 +85,7 @@ describe('DetailDrawer pending interrupts', () => {
       status: 'needs_input',
       expected: 'Waiting for your response'
     }
-  ])('keeps $name outside the resizable transcript', ({ status, permission, question, expected }) => {
+  ])('keeps $name in the transcript scroll flow', ({ status, permission, question, expected }) => {
     vi.stubGlobal('window', { innerHeight: 1000 })
     vi.stubGlobal('localStorage', { getItem: () => null })
 
@@ -112,8 +112,15 @@ describe('DetailDrawer pending interrupts', () => {
 
     const transcript = getElementContents(markup, 'data-transcript-scroll')
     const interrupt = getElementContents(markup, 'data-pending-interrupt')
-    expect(transcript).not.toContain(expected)
+    expect(transcript).toContain(expected)
+    expect(transcript).toContain(interrupt)
     expect(interrupt).toContain(expected)
+    expect(interrupt).not.toContain('max-h-[45%]')
+    expect(interrupt).not.toContain('overflow-y-auto')
+
+    if (question) {
+      expect(markup).toContain('placeholder="Type your answer to the question above..."')
+    }
   })
 
   it('does not claim a stalled response asked a question', () => {
