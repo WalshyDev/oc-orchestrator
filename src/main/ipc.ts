@@ -182,10 +182,16 @@ export function registerIpcHandlers(): void {
     _event,
     agentId: string,
     resumePrompt: string,
-    observedLastActivityAt: number
+    observedLastActivityAt: number,
+    recoverIdleSession = false
   ) => {
     try {
-      const result = await agentController.recoverStalledAgent(agentId, resumePrompt, observedLastActivityAt)
+      const result = await agentController.recoverStalledAgent(
+        agentId,
+        resumePrompt,
+        observedLastActivityAt,
+        recoverIdleSession
+      )
       return { ok: true, data: result }
     } catch (error) {
       logIpcError('agent:recover-stall', error)
