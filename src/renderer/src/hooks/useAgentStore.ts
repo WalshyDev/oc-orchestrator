@@ -1323,7 +1323,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const statusInfo = props.status as { type: string }
       const agent = findAgentBySession(sessionId)
       if (agent) {
-        const newStatus = mapSessionStatus(statusInfo.type)
+        const newStatus = resolveServerStatus(agent, mapSessionStatus(statusInfo.type))
         if (newStatus === 'idle' || newStatus === 'completed' || newStatus === 'errored') {
           clearStalledRecoveryAttempt(agent.id)
         }
@@ -1380,11 +1380,15 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId)
       if (agent) {
         clearStalledRecoveryAttempt(agent.id)
-        notifyIfNeeded(agent, 'idle')
-        agent.status = 'idle'
+        const newStatus = resolveServerStatus(agent, 'idle')
+        notifyIfNeeded(agent, newStatus)
+        agent.status = newStatus
         agent.lastActivityAt = Date.now()
-        agent.blockedSince = undefined
         agent.respondedAt = undefined
+        if (newStatus !== 'needs_input') {
+          agent.blockedSince = undefined
+          agent.inputReason = undefined
+        }
         prExtractEnabled.delete(agent.id)
         resetStepDepthAndRestoreModel(sessionId, agent)
 
@@ -1395,7 +1399,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         // These are cleared on successful assistant output or explicit user
         // action (dismiss, new send, compact-and-retry).
 
-        persistAgentMeta(agent.id, { persistedStatus: 'idle' })
+        persistAgentMeta(agent.id, { persistedStatus: newStatus === 'needs_input' ? 'errored' : newStatus })
         emit({ agents: true })
         dispatchPendingMessage(agent.id)
       }
@@ -1647,6 +1651,8 @@ function processEvent(payload: OpenCodeEventPayload): void {
               sessionId,
               occurredAt: Date.now()
             }
+            notifyIfNeeded(agent, 'errored')
+            agent.status = 'errored'
             agentChanged = true
           }
 
@@ -2656,7 +2662,7 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     const agent = state.agents.get(statusEntry.agentId)
     if (!agent) continue
 
-    const nextStatus = mapSessionStatus(statusEntry.status.type)
+    const nextStatus = resolveServerStatus(agent, mapSessionStatus(statusEntry.status.type))
     // Don't let the server override a derived completed status with idle.
     // The server reports idle for finished sessions, but we track completion separately.
     if (nextStatus === 'idle' && agent.status === 'completed') {
@@ -2690,6 +2696,14 @@ export function applyReconciledStatus(
   }
 }
 
+export function resolveServerStatus(
+  agent: Pick<LiveAgent, 'status' | 'lastError'>,
+  serverStatus: AgentStatus
+): AgentStatus {
+  if (serverStatus !== 'idle' || !agent.lastError) return serverStatus
+  return agent.status === 'needs_input' ? 'needs_input' : 'errored'
+}
+
 /**
  * Periodic reconciliation: compare local agent statuses against the server's
  * actual session statuses and correct any drift. This catches agents stuck
@@ -2708,7 +2722,7 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     const agent = state.agents.get(statusEntry.agentId)
     if (!agent) continue
 
-    const serverStatus = mapSessionStatus(statusEntry.status.type)
+    const serverStatus = resolveServerStatus(agent, mapSessionStatus(statusEntry.status.type))
 
     // Never override user-driven states
     if (agent.status === 'stopping') continue
@@ -2945,6 +2959,7 @@ const TERMINAL_TOOL_STATES = new Set(['completed', 'error', 'failed'])
 const STALLED_RESPONSE_TIMEOUT_MS = 5 * 60_000
 const STALLED_APPLY_PATCH_TIMEOUT_MS = 60_000
 const STALLED_RESPONSE_RESUME_PROMPT = 'Your previous response stalled without producing output. Continue from the exact point where you stopped, preserving the existing work and context.'
+const RETRYABLE_API_ERROR_RESUME_PROMPT = 'Your previous response ended after a retryable API error. Continue from the exact point where you stopped, preserving the existing work and context.'
 
 /** Find the parent agent for a sub-agent's child sessionId, or undefined if
  *  no mapping is known. */
@@ -3034,6 +3049,21 @@ export function isStalledResponse(
     && now - agent.lastActivityAt >= timeout
 }
 
+export function isRetryableApiError(
+  agent: Pick<LiveAgent, 'status' | 'lastError'>
+): boolean {
+  return (agent.status === 'idle' || agent.status === 'errored')
+    && isRetryableApiErrorData(agent.lastError)
+}
+
+function isRetryableApiErrorData(error: LiveAgentError | undefined): boolean {
+  const data = error?.data
+  return error?.name === 'APIError'
+    && typeof data === 'object'
+    && data !== null
+    && (data as Record<string, unknown>).isRetryable === true
+}
+
 export function shouldAutoRecoverStalledResponse(
   autoRecoverEnabled: boolean,
   recoveryStarted: boolean,
@@ -3049,12 +3079,17 @@ export function wasStallRecoveryLastPrompt(messages: readonly LiveMessage[] | un
     if (!latestUserMessage || message.createdAt > latestUserMessage.createdAt) latestUserMessage = message
   }
   return latestUserMessage?.parts.some(
-    (part) => part.type === 'text' && part.text === STALLED_RESPONSE_RESUME_PROMPT
+    (part) => part.type === 'text' && (
+      part.text === STALLED_RESPONSE_RESUME_PROMPT || part.text === RETRYABLE_API_ERROR_RESUME_PROMPT
+    )
   ) ?? false
 }
 
 function clearStalledRecoveryAttempt(agentId: string): void {
-  if (stalledRecoveryStates.get(agentId) === 'attempted') stalledRecoveryStates.delete(agentId)
+  if (
+    stalledRecoveryStates.get(agentId) === 'attempted'
+    && !isRetryableApiErrorData(state.agents.get(agentId)?.lastError)
+  ) stalledRecoveryStates.delete(agentId)
 }
 
 function markStalledResponse(
@@ -3079,9 +3114,12 @@ function markStalledResponse(
   agent.inputReason = 'error'
 }
 
-async function autoRecoverStalledAgent(agentId: string): Promise<boolean> {
+async function autoRecoverStalledAgent(agentId: string, recoverIdleSession = false): Promise<boolean> {
   const agent = state.agents.get(agentId)
-  if (!window.api || !agent || agent.status !== 'running') return false
+  const recoverableStatus = recoverIdleSession
+    ? agent?.status === 'idle' || agent?.status === 'errored'
+    : agent?.status === 'running'
+  if (!window.api || !agent || !recoverableStatus) return false
   const sessionId = agent.sessionId
   const observedLastActivityAt = agent.lastActivityAt
 
@@ -3091,8 +3129,9 @@ async function autoRecoverStalledAgent(agentId: string): Promise<boolean> {
 
   const result = await window.api.recoverStalledAgent(
     agentId,
-    STALLED_RESPONSE_RESUME_PROMPT,
-    observedLastActivityAt
+    recoverIdleSession ? RETRYABLE_API_ERROR_RESUME_PROMPT : STALLED_RESPONSE_RESUME_PROMPT,
+    observedLastActivityAt,
+    recoverIdleSession
   )
   const current = state.agents.get(agentId)
   if (current?.sessionId !== sessionId) return true
@@ -3733,12 +3772,14 @@ export function useAgentStore() {
         const autoRecoverByDefault = loadSettings().autoRecoverStalledResponses
         let changed = false
         for (const agent of state.agents.values()) {
-          if (!isStalledResponse(
+          const stalledResponse = isStalledResponse(
             agent,
             state.messages.get(agent.sessionId),
             now,
             (sessionId) => childSessions.get(sessionId)?.updatedAt
-          )) continue
+          )
+          const retryableApiError = isRetryableApiError(agent)
+          if (!stalledResponse && !retryableApiError) continue
 
           const autoRecoverEnabled = resolveAutoRecoverStalledResponses(
             autoRecoverByDefault,
@@ -3752,8 +3793,8 @@ export function useAgentStore() {
           if (shouldRecover) {
             const sessionId = agent.sessionId
             stalledRecoveryStates.set(agent.id, 'recovering')
-            console.warn('[watchdog] auto-recovering stalled agent', { agentId: agent.id })
-            void autoRecoverStalledAgent(agent.id).then((recovered) => {
+            console.warn('[watchdog] auto-recovering agent', { agentId: agent.id, retryableApiError })
+            void autoRecoverStalledAgent(agent.id, retryableApiError).then((recovered) => {
               const current = state.agents.get(agent.id)
               if (recovered || current?.sessionId !== sessionId || current.status !== 'stopping') return
               markStalledResponse(current, Date.now(), 'failed')

@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   applyReconciledStatus,
   getReconnectedInputReason,
+  isRetryableApiError,
   isStalledResponse,
+  resolveServerStatus,
   shouldAutoRecoverStalledResponse,
   wasStallRecoveryLastPrompt,
   type LiveMessage
@@ -806,6 +808,34 @@ describe('stalled response watchdog', () => {
     expect(shouldAutoRecoverStalledResponse(false, false)).toBe(false)
     expect(shouldAutoRecoverStalledResponse(true, true)).toBe(false)
     expect(shouldAutoRecoverStalledResponse(true, false, true)).toBe(false)
+  })
+
+  it('keeps transcript-backed errors actionable when the server settles to idle', () => {
+    const error = {
+      name: 'APIError',
+      sessionId: 'session',
+      occurredAt: now
+    }
+
+    expect(resolveServerStatus({ status: 'errored', lastError: error }, 'idle')).toBe('errored')
+    expect(resolveServerStatus({ status: 'needs_input', lastError: error }, 'idle')).toBe('needs_input')
+    expect(resolveServerStatus({ status: 'running' }, 'idle')).toBe('idle')
+  })
+
+  it('recognizes only settled retryable API failures', () => {
+    const lastError = {
+      name: 'APIError',
+      data: { isRetryable: true },
+      sessionId: 'session',
+      occurredAt: now
+    }
+
+    expect(isRetryableApiError({ status: 'errored', lastError })).toBe(true)
+    expect(isRetryableApiError({ status: 'running', lastError })).toBe(false)
+    expect(isRetryableApiError({ status: 'idle', lastError: {
+      ...lastError,
+      data: { isRetryable: false }
+    } })).toBe(false)
   })
 
   it('recognizes a recovery prompt after renderer state is restored', () => {

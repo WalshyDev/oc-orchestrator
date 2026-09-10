@@ -290,6 +290,86 @@ describe('AgentController.executeCommand', () => {
     )
   })
 
+  it('resumes a retryable failed session after it has settled to idle', async () => {
+    mocks.sessionStatus.mockResolvedValueOnce({ data: {} })
+
+    const result = await agentController.recoverStalledAgent(
+      'agent-1',
+      'Continue after the retryable API error.',
+      Date.now(),
+      true
+    )
+
+    expect(result).toBe('recovered')
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'existing-session',
+      parts: [{ type: 'text', text: 'Continue after the retryable API error.' }],
+    }))
+  })
+
+  it('lets activity during stream reconnection supersede idle recovery', async () => {
+    mocks.sessionStatus.mockResolvedValueOnce({ data: {} })
+    const handle = agentController.getAgent('agent-1')!
+    vi.spyOn(handle.bridge, 'ensureStreaming').mockImplementationOnce(async () => {
+      mocks.bridgeEvent?.({
+        type: 'message.part.delta',
+        properties: { part: { sessionID: 'existing-session' } }
+      })
+    })
+
+    const result = await agentController.recoverStalledAgent(
+      'agent-1',
+      'Do not send stale recovery.',
+      Date.now(),
+      true
+    )
+
+    expect(result).toBe('superseded')
+    expect(mocks.sessionAbort).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
+  it('lets a user action within one second supersede recovery', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    await agentController.sendMessage('agent-1', 'New user prompt')
+    mocks.sessionPromptAsync.mockClear()
+
+    const result = await agentController.recoverStalledAgent(
+      'agent-1',
+      'Do not send stale recovery.',
+      9_500,
+      true
+    )
+
+    expect(result).toBe('superseded')
+    expect(mocks.sessionStatus).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
+  it('lets provider activity within one second supersede recovery', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    mocks.sessionCreate.mockResolvedValueOnce({ data: { id: 'activity-session' } })
+    const agent = await agentController.launchAgent({ directory: '/tmp/project' })
+    mocks.bridgeEvent?.({
+      type: 'message.part.delta',
+      properties: { part: { sessionID: 'activity-session' } }
+    })
+
+    const result = await agentController.recoverStalledAgent(
+      agent.id,
+      'Do not send stale recovery.',
+      9_500,
+      true
+    )
+
+    expect(result).toBe('superseded')
+    expect(mocks.sessionStatus).not.toHaveBeenCalled()
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
   it('lets a real prompt supersede recovery without aborting that prompt', async () => {
     let releaseAbort: (() => void) | undefined
     mocks.sessionAbort.mockImplementationOnce(() => new Promise<void>((resolve) => {
@@ -404,6 +484,7 @@ describe('AgentController.executeCommand', () => {
   })
 
   it.each([
+    ['idle', 'idle'],
     ['waiting', 'blocked'],
     ['completed', 'completed']
   ])('does not abort or resume a %s session', async (sessionStatus, expectedResult) => {

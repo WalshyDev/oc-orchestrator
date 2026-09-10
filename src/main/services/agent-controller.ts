@@ -250,7 +250,6 @@ const IDLE_RUNTIME_CHECK_INTERVAL_MS = 60_000
 const DEFAULT_RUNTIME_IDLE_TIMEOUT_MS = 15 * 60_000
 const STALL_RECOVERY_TIMEOUT_MS = 10_000
 const STALL_RECOVERY_TOTAL_TIMEOUT_MS = 12_000
-const USER_ACTION_CLOCK_SKEW_MS = 1_000
 
 export type StallRecoveryResult = 'recovered' | 'superseded' | 'blocked' | 'idle' | 'completed' | 'errored' | 'timeout'
 type SettledSessionStatus = 'idle' | 'blocked' | 'completed' | 'errored' | 'timeout'
@@ -634,13 +633,14 @@ class AgentController {
   async recoverStalledAgent(
     agentId: string,
     resumePrompt: string,
-    observedLastActivityAt: number
+    observedLastActivityAt: number,
+    recoverIdleSession = false
   ): Promise<StallRecoveryResult> {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
     if (this.hasNewerUserAction(agentId, observedLastActivityAt)) return 'superseded'
     const activity = this.sessionActivity.get(handle.sessionId)
-    if (activity && activity.at > observedLastActivityAt + USER_ACTION_CLOCK_SKEW_MS) return 'superseded'
+    if (activity && activity.at > observedLastActivityAt) return 'superseded'
 
     const existing = this.stallRecoveries.get(agentId)
     if (existing) return existing.promise
@@ -657,7 +657,8 @@ class AgentController {
       resumePrompt,
       observedLastActivityAt,
       activityVersion,
-      recovery
+      recovery,
+      recoverIdleSession
     ).catch(() => 'timeout' as StallRecoveryResult).finally(() => {
       recovery.settled = true
       if (this.stallRecoveries.get(agentId) === recovery) this.stallRecoveries.delete(agentId)
@@ -675,24 +676,38 @@ class AgentController {
     resumePrompt: string,
     observedLastActivityAt: number,
     activityVersion: number,
-    recovery: StallRecovery
+    recovery: StallRecovery,
+    recoverIdleSession: boolean
   ): Promise<StallRecoveryResult> {
     const sessionId = handle.sessionId
     const runtime = await this.ensureRuntimeForAgent(handle)
     if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, activityVersion, recovery)) return 'superseded'
 
     const initialStatus = await this.getRecoverySessionStatus(handle, runtime, sessionId)
-    if (initialStatus !== 'running') return initialStatus
+    if (recoverIdleSession) {
+      if (initialStatus === 'running') return 'superseded'
+      if (initialStatus !== 'idle') return initialStatus
+    } else if (initialStatus !== 'running') {
+      return initialStatus
+    }
     if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, activityVersion, recovery)) return 'superseded'
 
-    await this.abortSession(handle, runtime)
-    if (recovery.cancelled) return 'superseded'
-    const status = await this.waitForSessionToSettle(handle, runtime, sessionId)
-    if (status !== 'idle') return status
-    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
+    if (!recoverIdleSession) {
+      await this.abortSession(handle, runtime)
+      if (recovery.cancelled) return 'superseded'
+      const status = await this.waitForSessionToSettle(handle, runtime, sessionId)
+      if (status !== 'idle') return status
+      if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
+    }
 
     await handle.bridge.ensureStreaming()
-    if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
+    if (this.isStallRecoverySuperseded(
+      handle,
+      sessionId,
+      observedLastActivityAt,
+      recoverIdleSession ? activityVersion : undefined,
+      recovery
+    )) return 'superseded'
 
     await runtime.client.session.promptAsync({
       sessionID: sessionId,
@@ -777,7 +792,7 @@ class AgentController {
   }
 
   private hasNewerUserAction(agentId: string, observedLastActivityAt: number): boolean {
-    return (this.lastUserActionAt.get(agentId) ?? 0) > observedLastActivityAt + USER_ACTION_CLOCK_SKEW_MS
+    return (this.lastUserActionAt.get(agentId) ?? 0) > observedLastActivityAt
   }
 
   private async abortSession(handle: AgentHandle, runtime: RuntimeInfo): Promise<void> {

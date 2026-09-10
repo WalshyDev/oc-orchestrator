@@ -26,7 +26,7 @@ export interface OrchestratorApi {
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
-  recoverStalledAgent: (agentId: string, resumePrompt: string, observedLastActivityAt: number) => Promise<IpcResult<'recovered' | 'superseded' | 'blocked' | 'idle' | 'completed' | 'errored' | 'timeout'>>
+  recoverStalledAgent: (agentId: string, resumePrompt: string, observedLastActivityAt: number, recoverIdleSession?: boolean) => Promise<IpcResult<'recovered' | 'superseded' | 'blocked' | 'idle' | 'completed' | 'errored' | 'timeout'>>
   removeAgent: (agentId: string) => Promise<IpcResult>
   resetSession: (agentId: string, prompt?: string) => Promise<IpcResult>
   getMessages: (agentId: string) => Promise<IpcResult>
