@@ -822,6 +822,21 @@ describe('stalled response watchdog', () => {
     expect(resolveServerStatus({ status: 'running' }, 'idle')).toBe('idle')
   })
 
+  it('keeps a stalled response blocked while the server remains busy', () => {
+    const agent = {
+      status: 'needs_input' as const,
+      inputReason: 'error' as const,
+      lastError: {
+        name: 'StalledResponse',
+        sessionId: 'session',
+        occurredAt: now
+      }
+    }
+
+    expect(resolveServerStatus(agent, 'running')).toBe('needs_input')
+    expect(resolveServerStatus(agent, 'idle')).toBe('needs_input')
+  })
+
   it('recognizes only settled retryable API failures', () => {
     const lastError = {
       name: 'APIError',

@@ -2697,9 +2697,15 @@ export function applyReconciledStatus(
 }
 
 export function resolveServerStatus(
-  agent: Pick<LiveAgent, 'status' | 'lastError'>,
+  agent: Pick<LiveAgent, 'status' | 'lastError' | 'inputReason'>,
   serverStatus: AgentStatus
 ): AgentStatus {
+  if (
+    agent.status === 'needs_input'
+    && agent.inputReason === 'error'
+    && agent.lastError
+    && (serverStatus === 'running' || serverStatus === 'idle')
+  ) return 'needs_input'
   if (serverStatus !== 'idle' || !agent.lastError) return serverStatus
   return agent.status === 'needs_input' ? 'needs_input' : 'errored'
 }
