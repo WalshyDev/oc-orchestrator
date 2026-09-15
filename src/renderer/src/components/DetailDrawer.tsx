@@ -142,6 +142,7 @@ const todoStatusStyles: Record<TodoStatus, string> = {
 export interface ChatCommand {
   command: string
   description: string
+  model?: string
 }
 
 export interface AgentConfigItem {
@@ -1890,10 +1891,6 @@ function AgentConfigPanel({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-kumo-subtle">Model</h3>
           <p className="mt-1 text-[11px] text-kumo-subtle">Changes the model for this agent's next prompt.</p>
         </div>
-        <div className="flex items-center justify-between rounded-md border border-kumo-line bg-kumo-control px-3 py-2">
-          <span className="text-[11px] font-medium text-kumo-default">Current / last response</span>
-          <span className="font-mono text-xs text-kumo-strong">{agent.model}</span>
-        </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-[11px] font-medium text-kumo-default">Next prompt model</label>
           <SelectField
@@ -1933,7 +1930,7 @@ function AgentConfigPanel({
 
 type MessageRefCallback = (id: string, node: HTMLElement | null) => void
 
-const MessageBubble = memo(function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   verbosity = 'none',
   registerRef
@@ -2027,8 +2024,11 @@ const MessageBubble = memo(function MessageBubble({
             : <Copy size={12} weight="regular" />}
         </button>
       )}
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
-        {isUser ? 'You' : 'Agent'}
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
+        <span>{isUser ? 'You' : 'Agent'}</span>
+        {!isUser && message.model && (
+          <span className="font-mono font-normal normal-case tracking-normal">{message.model}</span>
+        )}
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2060,6 +2060,7 @@ const MessageBubble = memo(function MessageBubble({
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
+  prev.message.model === next.message.model &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.registerRef === next.registerRef
@@ -2144,6 +2145,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
+  const toolModels = [...new Set(toolCalls.map((tool) => tool.model).filter(Boolean))].join(', ')
 
   // Auto-expand the bubble when any tool in the group is still running so
   // the user can see progress without having to click. Otherwise the bubble
@@ -2178,6 +2180,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
         </span>
         <Wrench size={13} className="text-kumo-subtle" />
         <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
+        {toolModels && <span className="font-mono text-[10px] text-kumo-subtle">{toolModels}</span>}
       </button>
 
       {expanded && (
@@ -2186,6 +2189,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
             <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
+                {tool.model && <span className="font-mono text-[10px] text-kumo-subtle">{tool.model}</span>}
                 <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
                   {tool.state}
                 </span>

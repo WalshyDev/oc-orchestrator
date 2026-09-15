@@ -45,8 +45,11 @@ export function SubagentProgress({ entries, state, childSessionId }: SubagentPro
           {entries.map((entry) => (
             <div key={entry.id} className="text-[10px] font-mono leading-tight">
               {entry.kind === 'text' ? (
-                <div className="whitespace-pre-wrap break-words text-kumo-default">
-                  {entry.label}
+                <div>
+                  {entry.modelId && <div className="mb-0.5 text-kumo-subtle">{entry.modelId}</div>}
+                  <div className="whitespace-pre-wrap break-words text-kumo-default">
+                    {entry.label}
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -55,6 +58,7 @@ export function SubagentProgress({ entries, state, childSessionId }: SubagentPro
                       {entry.toolState === 'completed' ? '✓' : entry.toolState === 'failed' ? '✗' : '...'}
                     </span>
                     <span className="text-kumo-link">{entry.label}</span>
+                    {entry.modelId && <span className="text-kumo-subtle">{entry.modelId}</span>}
                     {entry.toolSummary && (
                       <span className="truncate text-kumo-subtle">{entry.toolSummary}</span>
                     )}

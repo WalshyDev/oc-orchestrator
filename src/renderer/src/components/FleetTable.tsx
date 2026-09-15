@@ -23,7 +23,7 @@ import {
   WarningCircle
 } from '@phosphor-icons/react'
 import type { AgentRuntime, AgentFolder, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths, SortDirection } from '../types'
-import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
+import { formatBranchLabel, getDisplayedModel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
 import { isRecentlyAttached } from '../hooks/useAgentStore'
 import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
 import { StatusBadge } from './StatusBadge'
@@ -637,8 +637,8 @@ export function FleetTable({
           rightVal = (right.branchName || '').toLowerCase()
           break
         case 'model':
-          leftVal = (left.model || '').toLowerCase()
-          rightVal = (right.model || '').toLowerCase()
+          leftVal = getDisplayedModel(left).toLowerCase()
+          rightVal = getDisplayedModel(right).toLowerCase()
           break
         case 'lastMessage':
           leftVal = (left.lastMessage || '').toLowerCase()
@@ -1358,6 +1358,7 @@ function AgentRow({
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
   const flashing = isRecentlyAttached(agent.id)
+  const displayedModel = getDisplayedModel(agent)
   // A placeholder row has no session behind it yet. Its actions are withheld by
   // the caller (see renderAgentRowFn); this flag only drives presentation.
   const isPending = agent.pending === true
@@ -1573,20 +1574,20 @@ function AgentRow({
       )}
       {show('model') && (
         <td className="px-3 py-2 overflow-hidden">
-          {agent.model && (agent.model === UNRESOLVED_MODEL_LABEL ? (
+          {displayedModel && (displayedModel === UNRESOLVED_MODEL_LABEL ? (
             // There's nothing to switch to until the model is known — on a
             // placeholder because no session exists, on a real agent until the
             // first getConfig lands.
             <span className="font-mono text-[10px] px-1.5 py-0.5 text-kumo-muted max-w-full truncate block">
-              {agent.model}
+              {displayedModel}
             </span>
           ) : (
             <button
               onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
               className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
-              title={agent.model}
+              title={displayedModel}
             >
-              {agent.model}
+              {displayedModel}
             </button>
           ))}
         </td>

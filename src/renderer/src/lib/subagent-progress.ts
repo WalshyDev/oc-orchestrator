@@ -12,6 +12,7 @@ export interface ChildTranscriptEntry {
   toolOutput?: string
   childSessionId?: string
   childTranscript?: ChildTranscriptEntry[]
+  modelId?: string
 }
 
 export interface ChildSessionDescriptor {
@@ -47,6 +48,59 @@ export function getActiveAssistantMessage(
     if (!latest || message.createdAt > latest.createdAt) latest = message
   }
   return latest?.completedAt === undefined && !latest?.errored ? latest : undefined
+}
+
+export function resolveCurrentTurnModelId(
+  sessionId: string,
+  getMessagesForSession: (sessionId: string) => LiveMessage[],
+  sessionActive = true,
+  ancestors: ReadonlySet<string> = new Set()
+): string | undefined {
+  if (!sessionActive || ancestors.has(sessionId)) return undefined
+
+  const messages = getMessagesForSession(sessionId)
+  let latestMessage: LiveMessage | undefined
+  for (const message of messages) {
+    if (!latestMessage || message.createdAt > latestMessage.createdAt) {
+      latestMessage = message
+    }
+  }
+  if (latestMessage?.role === 'user') return latestMessage.modelId
+
+  const activeAssistant = getActiveAssistantMessage(messages)
+  if (!activeAssistant) return undefined
+
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(sessionId)
+  let activeChild: { modelId: string; activityAt: number } | undefined
+  for (let index = activeAssistant.parts.length - 1; index >= 0; index--) {
+    const part = activeAssistant.parts[index]
+    if (
+      part.type !== 'tool' ||
+      part.toolName !== 'task' ||
+      !part.childSessionId ||
+      isTerminalToolState(part.toolState)
+    ) continue
+
+    const childModelId = resolveCurrentTurnModelId(
+      part.childSessionId,
+      getMessagesForSession,
+      true,
+      nextAncestors
+    )
+    if (!childModelId) continue
+    const activityAt = getLatestChildActivityAt(
+      part.childSessionId,
+      getMessagesForSession,
+      undefined,
+      nextAncestors
+    ) ?? 0
+    if (!activeChild || activityAt > activeChild.activityAt) {
+      activeChild = { modelId: childModelId, activityAt }
+    }
+  }
+
+  return activeChild?.modelId ?? activeAssistant.modelId
 }
 
 export function getChildSessionId(partState: Record<string, unknown> | undefined): string | undefined {
@@ -172,13 +226,14 @@ export function buildChildTranscript(
 
     for (const part of message.parts) {
       if (part.type === 'text' && part.text) {
-        entries.push({ id: part.id, kind: 'text', label: part.text })
+        entries.push({ id: part.id, kind: 'text', label: part.text, modelId: message.modelId })
       } else if (part.type === 'tool' && part.toolName) {
         const toolState = mapToolState(part.toolName, part.toolState, messageActive)
         entries.push({
           id: part.id,
           kind: 'tool',
           label: part.toolName,
+          modelId: message.modelId,
           toolState,
           toolSummary: summarizeChildToolInput(part.toolName, part.toolInput),
           toolOutput: part.text,

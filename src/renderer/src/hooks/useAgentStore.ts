@@ -39,17 +39,21 @@ import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverSta
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
 
-interface HistoricalMessageInfo {
+interface MessageModelInfo {
+  role: 'user' | 'assistant'
+  modelID?: string
+  model?: { modelID?: string }
+}
+
+interface HistoricalMessageInfo extends MessageModelInfo {
   id: string
   sessionID: string
-  role: 'user' | 'assistant'
   /** Present on AssistantMessage — the ID of the user message that triggered this response */
   parentID?: string
   time?: {
     created?: number
     completed?: number
   }
-  modelID?: string
   cost?: number
   tokens?: {
     total?: number
@@ -148,6 +152,8 @@ export interface LiveAgent {
   configuredModel?: string
   /** Full provider/model value used by model selectors and prompt overrides. */
   configuredModelPath?: string
+  /** Explicit per-agent override sent with prompts and commands. */
+  modelOverridePath?: string
   /** The currently selected model variant (thinking level). */
   variant?: string
   lastActivityAt: number
@@ -241,6 +247,7 @@ export interface LiveMessage {
   updatedAt?: number
   completedAt?: number
   errored?: boolean
+  modelId?: string
   parts: LiveMessagePart[]
 }
 
@@ -849,7 +856,7 @@ function inferFileAction(before: string | undefined, after: string | undefined):
 const OPTIMISTIC_PREFIX = 'optimistic-user-'
 let optimisticCounter = 0
 
-function injectOptimisticUserMessage(sessionId: string, text: string): void {
+function injectOptimisticUserMessage(sessionId: string, text: string, modelId?: string): void {
   if (!text.trim()) return
   const messages = state.messages.get(sessionId) ?? []
   const id = `${OPTIMISTIC_PREFIX}${++optimisticCounter}`
@@ -860,6 +867,7 @@ function injectOptimisticUserMessage(sessionId: string, text: string): void {
     sessionId,
     createdAt: now,
     updatedAt: now,
+    modelId,
     parts: [{ id: `${id}-part`, type: 'text', text }]
   })
   state.messages.set(sessionId, messages)
@@ -878,7 +886,12 @@ function removeOptimisticUserMessages(sessionId: string): void {
  * assistant starts responding. Returns true if an optimistic message was
  * adopted, false otherwise.
  */
-function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, createdAt: number): boolean {
+function adoptOptimisticUserMessage(
+  sessionId: string,
+  serverMessageId: string,
+  createdAt: number,
+  modelId?: string
+): boolean {
   const messages = state.messages.get(sessionId)
   if (!messages) return false
   // Find the most recent optimistic placeholder for this session. Multiple
@@ -893,6 +906,7 @@ function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, 
   target.id = serverMessageId
   target.createdAt = createdAt
   target.updatedAt = Date.now()
+  target.modelId = modelId ?? target.modelId
   messages.sort((left, right) => left.createdAt - right.createdAt)
   return true
 }
@@ -912,6 +926,7 @@ function upsertMessage(message: LiveMessage): LiveMessage {
       existingMessage.completedAt = Math.max(existingMessage.completedAt ?? 0, message.completedAt)
     }
     existingMessage.errored = existingMessage.errored || message.errored || undefined
+    existingMessage.modelId = message.modelId ?? existingMessage.modelId
     messages.sort((left, right) => left.createdAt - right.createdAt)
     return existingMessage
   }
@@ -920,6 +935,18 @@ function upsertMessage(message: LiveMessage): LiveMessage {
   messages.sort((left, right) => left.createdAt - right.createdAt)
   state.messages.set(message.sessionId, messages)
   return message
+}
+
+export function getMessageModelId(info: MessageModelInfo): string | undefined {
+  return info.role === 'assistant' ? info.modelID : info.model?.modelID
+}
+
+export function getPendingTurnModel(
+  configuredModelPath?: string,
+  commandModel?: string,
+  modelOverridePath?: string
+): string | undefined {
+  return modelOverridePath ?? commandModel ?? configuredModelPath
 }
 
 function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): void {
@@ -972,7 +999,7 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
  *  A top-level assistant message contains step-start/step-finish parts, and its
  *  parentID points to a top-level user message. Any assistant whose parentID
  *  references a user message NOT in the top-level set is a sub-agent response. */
-function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<string> {
+export function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<string> {
   const topLevelParentUserIds = new Set<string>()
   const allUserMessageIds = new Set<string>()
   const assistantParentIds = new Map<string, string>() // assistantId → parentID
@@ -1021,11 +1048,12 @@ function computeContextTokens(tokens: {
   return sum > 0 ? sum : undefined
 }
 
-function hydrateHistoricalMessages(entries: unknown): void {
+function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
   if (!Array.isArray(entries)) return
 
-  const typed = entries as HistoricalSessionMessage[]
-  const subAgentAssistantIds = identifySubAgentMessages(typed)
+  const history = entries as HistoricalSessionMessage[]
+  const subAgentAssistantIds = identifySubAgentMessages(history)
+  const typed = limit ? history.slice(-limit) : history
   const optimisticsCleaned = new Set<string>()
 
   // Track the last assistant entry per session so we can lift a persisted
@@ -1045,6 +1073,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
     }
 
     const createdAt = getMessageCreatedAt(entry.info)
+    const modelId = getMessageModelId(entry.info)
     const message = upsertMessage({
       id: entry.info.id,
       role: entry.info.role,
@@ -1053,6 +1082,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
       updatedAt: entry.info.time?.completed ?? createdAt,
       completedAt: entry.info.time?.completed,
       errored: !!entry.info.error?.name,
+      modelId,
       parts: []
     })
 
@@ -1577,6 +1607,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const time = info.time as { completed?: number } | undefined
       const completedAt = typeof time?.completed === 'number' ? time.completed : undefined
       const msgError = info.error as { name?: string; message?: string; data?: unknown } | undefined
+      const modelId = getMessageModelId({
+        role,
+        modelID: info.modelID as string | undefined,
+        model: info.model as { modelID?: string } | undefined
+      })
 
       let agentChanged = false
       const agent = findAgentBySession(sessionId)
@@ -1605,7 +1640,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
 
           // Only update model from top-level (non-invoked) assistant messages
-          const modelId = info.modelID as string | undefined
           const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
             applyObservedModel(agent, modelId)
@@ -1663,7 +1697,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // starts responding; without adoption the bubble would empty in between.
       let adopted = false
       if (role === 'user') {
-        adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt)
+        adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt, modelId)
       }
 
       if (!adopted) {
@@ -1675,6 +1709,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           updatedAt: Date.now(),
           completedAt,
           errored: !!msgError?.name,
+          modelId,
           parts: []
         })
       }
@@ -2437,7 +2472,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       const entries = result.data as HistoricalSessionMessage[]
       console.debug(`[handleAgentLaunched:hydrate] id=${payload.id} session=${payload.sessionId.slice(-8)} historicalMsgs=${entries?.length ?? 0} currentStoreMsgs=${state.messages.get(payload.sessionId)?.length ?? 0}`)
       if (!Array.isArray(entries) || entries.length === 0) return
-      hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
+      hydrateHistoricalMessages(entries, RESUME_MESSAGE_LIMIT)
       console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
       emit({ messages: true })
     })
@@ -2507,7 +2542,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   if (hasPrompt) {
     agent.taskSummary = payload.prompt.slice(0, 120)
     agent.status = 'running'
-    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
   } else {
     agent.taskSummary = 'Waiting for prompt...'
     agent.status = 'idle'
@@ -2583,11 +2618,13 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     ? existingAgent.autoNamed
     : isAutoTitle
 
-  const configuredModelPath = payload.modelOverride
+  const payloadModelOverridePath = payload.modelOverride
     ? payload.modelOverride.providerID
       ? `${payload.modelOverride.providerID}/${payload.modelOverride.modelID}`
       : payload.modelOverride.modelID
-    : existingAgent?.configuredModelPath
+    : undefined
+  const modelOverridePath = payloadModelOverridePath ?? existingAgent?.modelOverridePath
+  const configuredModelPath = payloadModelOverridePath ?? existingAgent?.configuredModelPath
   const configuredModel = configuredModelPath
     ? formatModelName(configuredModelPath)
     : existingAgent?.configuredModel
@@ -2611,6 +2648,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     ...modelState,
     configuredModel,
     configuredModelPath,
+    modelOverridePath,
     variant: payload.variantOverride ?? existingAgent?.variant,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
@@ -2630,7 +2668,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
 
   if (hasPrompt && !existingAgent) {
-    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
   }
 }
 
@@ -3293,7 +3331,11 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
   agent.respondedAt = Date.now()
   agent.inputReason = undefined
 
-  injectOptimisticUserMessage(agent.sessionId, text)
+  injectOptimisticUserMessage(
+    agent.sessionId,
+    text,
+    getPendingTurnModel(agent.configuredModelPath, undefined, agent.modelOverridePath)
+  )
   persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
 }
 
@@ -3456,6 +3498,7 @@ function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPaylo
     ? `${modelOverride.providerID}/${modelOverride.modelID}`
     : modelOverride.modelID
   applyConfiguredModel(agent, modelPath)
+  agent.modelOverridePath = modelPath
   agent.variant = payload.variantOverride
 }
 
@@ -3973,7 +4016,7 @@ export function useAgentStore() {
       console.error('Failed to list commands:', result.error)
       return null
     }
-    return result.data as Array<{ name: string; description?: string; template: string }> | null
+    return result.data as Array<{ name: string; description?: string; template: string; model?: string }> | null
   }, [])
 
   const listAgentConfigs = useCallback(async (agentId: string) => {
@@ -3986,7 +4029,7 @@ export function useAgentStore() {
     return result.data as Array<{ name: string; description?: string }> | null
   }, [])
 
-  const executeCommand = useCallback(async (agentId: string, command: string, args: string) => {
+  const executeCommand = useCallback(async (agentId: string, command: string, args: string, model?: string) => {
     if (!window.api) return
 
     const agent = state.agents.get(agentId)
@@ -4003,6 +4046,11 @@ export function useAgentStore() {
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
       taskSummaryLocked.add(agentId)
+      injectOptimisticUserMessage(
+        agent.sessionId,
+        cmdText,
+        getPendingTurnModel(agent.configuredModelPath, model, agent.modelOverridePath)
+      )
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
       emit({ agents: true })
     }
@@ -4338,6 +4386,7 @@ export function useAgentStore() {
     const agent = getMutableAgent(agentId)
     if (!agent) return
     applyConfiguredModel(agent, modelPath)
+    agent.modelOverridePath = modelPath
     agent.variant = variant
     emit({ agents: true })
   }, [])
