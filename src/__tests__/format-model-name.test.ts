@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { applyConfiguredModel, formatModelName } from '../renderer/src/hooks/useAgentStore'
+import {
+  applyConfiguredModel,
+  applyObservedModel,
+  formatModelName,
+  getAgentModelState
+} from '../renderer/src/hooks/useAgentStore'
 
 describe('formatModelName', () => {
   describe('Claude models', () => {
@@ -60,15 +65,32 @@ describe('formatModelName', () => {
 })
 
 describe('applyConfiguredModel', () => {
-  it('replaces a stale message-derived display model with the configured model', () => {
-    const agent = { model: 'sonnet-5' }
+  it('uses the configured model until an assistant response identifies the active model', () => {
+    const agent = { model: 'Loading...' }
 
+    applyConfiguredModel(agent, 'openai/gpt-5.6-sol')
+    expect(agent.model).toBe('gpt-5.6-sol')
+
+    applyObservedModel(agent, 'claude-sonnet-5')
     applyConfiguredModel(agent, 'openai/gpt-5.6-sol')
 
     expect(agent).toEqual({
-      model: 'gpt-5.6-sol',
+      model: 'sonnet-5',
       configuredModel: 'gpt-5.6-sol',
-      configuredModelPath: 'openai/gpt-5.6-sol'
+      configuredModelPath: 'openai/gpt-5.6-sol',
+      rawModelId: 'claude-sonnet-5'
     })
+  })
+
+  it('preserves the observed model across reconnects', () => {
+    const modelState = getAgentModelState(
+      { model: 'sonnet-5', rawModelId: 'claude-sonnet-5' },
+      'gpt-5.6-sol'
+    )
+
+    applyConfiguredModel(modelState, 'openai/gpt-5.6-sol')
+
+    expect(modelState.model).toBe('sonnet-5')
+    expect(modelState.rawModelId).toBe('claude-sonnet-5')
   })
 })

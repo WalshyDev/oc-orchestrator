@@ -144,9 +144,7 @@ export interface LiveAgent {
   status: AgentStatus
   labelIds: string[]
   model: string
-  /** The model set by the user or resolved from the runtime config.
-   *  Used to restore the displayed model after an invoked agent
-   *  (which may use a different model) finishes. */
+  /** The model set by the user or resolved from the runtime config. */
   configuredModel?: string
   /** Full provider/model value used by model selectors and prompt overrides. */
   configuredModelPath?: string
@@ -453,17 +451,6 @@ const childSessions = new Map<string, ChildSessionInfo>()
 const childHydrationRetryAgents = new Set<string>()
 const todoEventRevisions = new Map<string, number>()
 const todoFetchGenerations = new Map<string, number>()
-
-/** Clear step depth for a session and restore the parent model if it was
- *  overwritten by a sub-agent. Returns true if the model was restored. */
-function resetStepDepthAndRestoreModel(sessionId: string, agent: LiveAgent): boolean {
-  if (!sessionStepDepth.delete(sessionId)) return false
-  if (agent.configuredModel && agent.model !== agent.configuredModel) {
-    agent.model = agent.configuredModel
-    return true
-  }
-  return false
-}
 
 const listeners = new Set<() => void>()
 
@@ -1105,9 +1092,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
-        const formatted = formatModelName(entry.info.modelID)
-        if (!agent.configuredModel) agent.model = formatted
-        agent.rawModelId = entry.info.modelID
+        applyObservedModel(agent, entry.info.modelID)
         const limit = lookupContextLimit(entry.info.modelID)
         if (limit !== undefined) {
           agent.contextLimit = limit
@@ -1390,7 +1375,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.inputReason = undefined
         }
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         // Deliberately DO NOT clear lastError or lastDispatchedMessage here.
         // The opencode server emits session.error immediately followed by
@@ -1418,7 +1403,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         // Surface the error so the UI can render a banner.
         if (errorProp?.name) {
@@ -1448,7 +1433,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
@@ -1623,9 +1608,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           const modelId = info.modelID as string | undefined
           const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
-            const formatted = formatModelName(modelId)
-            if (!agent.configuredModel) agent.model = formatted
-            agent.rawModelId = modelId
+            applyObservedModel(agent, modelId)
             const limit = lookupContextLimit(modelId)
             if (limit !== undefined) agent.contextLimit = limit
             agentChanged = true
@@ -1722,7 +1705,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
       // Track invoked-agent nesting depth so model updates from sub-agents
       // don't overwrite the parent agent's displayed model.
-      let modelRestored = false
       if (partType === 'step-start') {
         sessionStepDepth.set(sessionId, (sessionStepDepth.get(sessionId) ?? 0) + 1)
       } else if (partType === 'step-finish') {
@@ -1730,8 +1712,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         if (current > 1) {
           sessionStepDepth.set(sessionId, current - 1)
         } else if (current === 1) {
-          const agent = findAgentBySession(sessionId)
-          if (agent) modelRestored = resetStepDepthAndRestoreModel(sessionId, agent)
+          sessionStepDepth.delete(sessionId)
         }
         // current === 0: no matching step-start, ignore
       }
@@ -1793,7 +1774,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
                 agentChanged = true
               }
             }
-            emitMessagesThrottled(agentChanged || modelRestored)
+            emitMessagesThrottled(agentChanged)
             break
           }
         }
@@ -1889,11 +1870,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           bumpParentActivityForChildSession(sessionId)
         }
 
-        emitMessagesThrottled(agentChanged || modelRestored)
-      } else if (modelRestored) {
-        // step-finish arrived before the parent message exists locally —
-        // still need to emit so the restored model is picked up by the UI.
-        emit({ agents: true })
+        emitMessagesThrottled(agentChanged)
       }
       break
     }
@@ -2469,8 +2446,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
     })
     void refetchChildSessions(payload.id).then(() => emit({ messages: true }))
 
-    // Seed configuredModel from runtime config as an authoritative fallback
-    // in case step-depth tracking misses events or the resume window is too small.
+    // Use runtime config only until a response identifies the model actually used.
     void window.api.getConfig(payload.id).then((result) => {
       if (!result.ok || !result.data) return
       const config = result.data as { model?: string }
@@ -2615,6 +2591,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   const configuredModel = configuredModelPath
     ? formatModelName(configuredModelPath)
     : existingAgent?.configuredModel
+  const modelState = getAgentModelState(existingAgent, configuredModel)
   const status = initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle')
 
   const agent: LiveAgent = {
@@ -2631,7 +2608,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     status,
     inputReason: getReconnectedInputReason(existingAgent, status),
     labelIds: existingAgent?.labelIds ?? [],
-    model: configuredModel ?? existingAgent?.model ?? UNRESOLVED_MODEL_LABEL,
+    ...modelState,
     configuredModel,
     configuredModelPath,
     variant: payload.variantOverride ?? existingAgent?.variant,
@@ -3446,13 +3423,31 @@ export function formatModelName(modelId: string): string {
 }
 
 export function applyConfiguredModel(
-  agent: Pick<LiveAgent, 'model' | 'configuredModel' | 'configuredModelPath'>,
+  agent: Pick<LiveAgent, 'model' | 'configuredModel' | 'configuredModelPath' | 'rawModelId'>,
   modelPath: string
 ): void {
   const formatted = formatModelName(modelPath)
-  agent.model = formatted
   agent.configuredModel = formatted
   agent.configuredModelPath = modelPath
+  if (!agent.rawModelId) agent.model = formatted
+}
+
+export function getAgentModelState(
+  existingAgent: Pick<LiveAgent, 'model' | 'rawModelId'> | undefined,
+  configuredModel?: string
+): Pick<LiveAgent, 'model' | 'rawModelId'> {
+  return {
+    model: existingAgent?.model ?? configuredModel ?? UNRESOLVED_MODEL_LABEL,
+    rawModelId: existingAgent?.rawModelId
+  }
+}
+
+export function applyObservedModel(
+  agent: Pick<LiveAgent, 'model' | 'rawModelId'>,
+  modelId: string
+): void {
+  agent.model = formatModelName(modelId)
+  agent.rawModelId = modelId
 }
 
 function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPayload): void {
