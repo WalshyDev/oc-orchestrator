@@ -10,6 +10,7 @@ export interface ToolCall {
   state: 'running' | 'completed' | 'failed'
   input?: string
   output?: string
+  model?: string
   timestamp: number
   childActivityAt?: number
   /** For the `task` tool — sessionId of the sub-agent, so the UI can
@@ -218,6 +219,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
                 </span>
 
                 <span className="font-mono text-xs text-kumo-default">{tool.name}</span>
+                {tool.model && <span className="font-mono text-[10px] text-kumo-subtle">{tool.model}</span>}
 
                 <span
                   className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${stateStyles[tool.state]}`}

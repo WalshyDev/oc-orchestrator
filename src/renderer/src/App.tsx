@@ -13,9 +13,9 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { getForkedTitle } from '../../shared/project'
 import { McpModal } from './components/McpModal'
 import { WorkspaceView } from './components/WorkspaceView'
-import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
+import { formatModelName, useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
-import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority, getDisplayedModel } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -25,7 +25,8 @@ import {
   getActiveAssistantMessage,
   getLatestChildActivityAt,
   mapToolState,
-  orderTranscriptByActivity
+  orderTranscriptByActivity,
+  resolveCurrentTurnModelId
 } from './lib/subagent-progress'
 import { extractLastAssistantMessage } from './lib/last-message'
 import { getCurrentTaskProgress } from './lib/task-progress'
@@ -198,7 +199,8 @@ export function App() {
           if (builtInCommands.some((local) => local.command === `/${cmd.name}`)) continue
           builtInCommands.push({
             command: `/${cmd.name}`,
-            description: cmd.description || cmd.template || cmd.name
+            description: cmd.description || cmd.template || cmd.name,
+            model: cmd.model
           })
         }
       }
@@ -350,6 +352,12 @@ export function App() {
       // swap the task summary so the fleet table doesn't show a stale prompt.
       const displayStatus = agent.compacting ? 'compacting' : agent.status
       const displayTaskSummary = agent.compacting ? 'Compacting session…' : agent.taskSummary
+      const sessionActive = !['idle', 'completed', 'errored', 'disconnected'].includes(agent.status)
+      const currentTurnModelId = resolveCurrentTurnModelId(
+        agent.sessionId,
+        getMessagesForSession,
+        sessionActive
+      )
 
       return {
         id: agent.id,
@@ -364,6 +372,7 @@ export function App() {
         status: displayStatus,
         labelIds: agent.labelIds,
         model: agent.model,
+        activeModel: currentTurnModelId ? formatModelName(currentTurnModelId) : undefined,
         configuredModelPath: agent.configuredModelPath,
         variant: agent.variant,
         prUrl: agent.prUrl,
@@ -494,8 +503,8 @@ export function App() {
             rightVal = (right.branchName || '').toLowerCase()
             break
           case 'model':
-            leftVal = (left.model || '').toLowerCase()
-            rightVal = (right.model || '').toLowerCase()
+            leftVal = getDisplayedModel(left).toLowerCase()
+            rightVal = getDisplayedModel(right).toLowerCase()
             break
           case 'lastMessage':
             leftVal = (left.lastMessage || '').toLowerCase()
@@ -601,6 +610,7 @@ export function App() {
               state: toolState,
               input: part.toolInput,
               output: part.text ?? undefined,
+              model: msg.modelId ? formatModelName(msg.modelId) : undefined,
               timestamp: msg.createdAt,
               childSessionId: part.childSessionId,
               childActivityAt: part.childSessionId
@@ -663,6 +673,7 @@ export function App() {
           content: textContent,
           timestamp: formatTimeAgo(msg.createdAt),
           activityAt: msg.createdAt,
+          model: msg.role === 'assistant' && msg.modelId ? formatModelName(msg.modelId) : undefined,
           ...(images.length > 0 ? { images } : {})
         })
       }
@@ -902,9 +913,9 @@ export function App() {
 
       default: {
         // Check if it's a custom command from the API (skills, /init, /review, etc.)
-        const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
-        if (isKnownCommand) {
-          await storeExecuteCommand(agentId, commandName, commandArgs)
+        const knownCommand = agentCommands.find((cmd) => cmd.command === `/${commandName}`)
+        if (knownCommand) {
+          await storeExecuteCommand(agentId, commandName, commandArgs, knownCommand.model)
           return true
         }
         return false
@@ -937,12 +948,6 @@ export function App() {
     if (parsed) {
       const handled = await handleBuiltInCommand(selectedAgentId, parsed.name, parsed.args)
       if (handled) return
-
-      // Not a built-in — unknown commands fall through as plain messages
-      if (agentCommands.some((cmd) => cmd.command === `/${parsed.name}`)) {
-        await storeExecuteCommand(selectedAgentId, parsed.name, parsed.args)
-        return
-      }
     }
 
     // Check for @agentname mentions — extract agent name and strip from text
@@ -958,7 +963,7 @@ export function App() {
     }
 
     await storeSendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentCommands, agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeExecuteCommand, storeReplyToQuestion, storeResetSession])
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeReplyToQuestion, storeResetSession])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -1129,11 +1134,13 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleQuickActionForAgent = useCallback(async (agentId: string, action: QuickAction) => {
     const parsed = parseSlashCommand(action.prompt)
     if (parsed) {
-      await storeExecuteCommand(agentId, parsed.name, parsed.args)
+      const commands = await store.listCommands(agentId)
+      const commandModel = commands?.find((command) => command.name === parsed.name)?.model
+      await store.executeCommand(agentId, parsed.name, parsed.args, commandModel)
       return
     }
     await store.sendMessage(agentId, action.prompt.trim(), undefined, undefined, action.label)
-  }, [store, storeExecuteCommand])
+  }, [store])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -1299,9 +1306,9 @@ Then give me a brief summary of what the previous session was working on and whe
         const commandArgs = spaceIndex === -1 ? '' : trimmedPrompt.slice(spaceIndex + 1).trim()
 
         const runtimeCommands = await store.listCommands(agentId)
-        const isCustomCommand = runtimeCommands?.some((cmd: { name: string }) => cmd.name === commandName)
-        if (isCustomCommand) {
-          await store.executeCommand(agentId, commandName, commandArgs)
+        const customCommand = runtimeCommands?.find((cmd: { name: string }) => cmd.name === commandName)
+        if (customCommand) {
+          await store.executeCommand(agentId, commandName, commandArgs, customCommand.model)
         } else {
           await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
         }

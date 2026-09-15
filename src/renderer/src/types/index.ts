@@ -80,6 +80,7 @@ export interface AgentRuntime {
   status: AgentStatus
   labelIds: string[]
   model: string
+  activeModel?: string
   configuredModelPath?: string
   variant?: string
   prUrl: string | null
@@ -240,6 +241,7 @@ export interface Message {
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]
   images?: MessageImage[]
+  model?: string
   /** For compaction rows: whether compaction is still running. */
   compactionActive?: boolean
   /** For compaction rows: whether the compaction was automatic (true) or user-initiated (false). */
@@ -256,6 +258,10 @@ export function isUrgent(agent: { status: AgentStatus; labelIds: string[] }): bo
 
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
   return agent.branchName ?? ''
+}
+
+export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'activeModel'>): string {
+  return agent.activeModel ?? agent.model
 }
 
 export function statusLabel(status: AgentStatus): string {
