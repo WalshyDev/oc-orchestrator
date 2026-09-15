@@ -1890,8 +1890,12 @@ function AgentConfigPanel({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-kumo-subtle">Model</h3>
           <p className="mt-1 text-[11px] text-kumo-subtle">Changes the model for this agent's next prompt.</p>
         </div>
+        <div className="flex items-center justify-between rounded-md border border-kumo-line bg-kumo-control px-3 py-2">
+          <span className="text-[11px] font-medium text-kumo-default">Current / last response</span>
+          <span className="font-mono text-xs text-kumo-strong">{agent.model}</span>
+        </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Model</label>
+          <label className="text-[11px] font-medium text-kumo-default">Next prompt model</label>
           <SelectField
             value={selectedModel}
             options={modelOptions}
