@@ -2,7 +2,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const mocks = vi.hoisted(() => ({
   sessionCreate: vi.fn(),
+  sessionGet: vi.fn(),
+  sessionMessages: vi.fn(),
   sessionCommand: vi.fn(),
+  sessionPrompt: vi.fn(),
   sessionPromptAsync: vi.fn(),
   sessionStatus: vi.fn(),
   sessionTodo: vi.fn(),
@@ -10,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
+  setPreference: vi.fn(),
   bridgeEvent: undefined as ((event: { type: string; properties: unknown }) => void) | undefined,
 }))
 
@@ -38,6 +42,15 @@ const persistedAgents = [
     prompt: '',
     title: 'Default model session',
   },
+  {
+    id: 'agent-4',
+    sessionId: 'attached-client-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Attached client session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+    variantOverride: 'high',
+  },
 ]
 
 const runtime = {
@@ -46,7 +59,10 @@ const runtime = {
   client: {
     session: {
       create: mocks.sessionCreate,
+      get: mocks.sessionGet,
+      messages: mocks.sessionMessages,
       command: mocks.sessionCommand,
+      prompt: mocks.sessionPrompt,
       promptAsync: mocks.sessionPromptAsync,
       status: mocks.sessionStatus,
       todo: mocks.sessionTodo,
@@ -97,7 +113,7 @@ vi.mock('../main/services/notification-service', () => ({
 vi.mock('../main/services/database', () => ({
   database: {
     getPreference: () => JSON.stringify(persistedAgents),
-    setPreference: vi.fn(),
+    setPreference: mocks.setPreference,
   },
 }))
 
@@ -130,6 +146,12 @@ describe('AgentController.executeCommand', () => {
     mocks.sessionPromptAsync.mockResolvedValue({ data: undefined })
     mocks.sessionCreate.mockReset()
     mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
+    mocks.sessionGet.mockReset()
+    mocks.sessionGet.mockResolvedValue({ data: { title: 'Source session' } })
+    mocks.sessionMessages.mockReset()
+    mocks.sessionMessages.mockResolvedValue({ data: [] })
+    mocks.sessionPrompt.mockReset()
+    mocks.sessionPrompt.mockResolvedValue({ data: undefined })
     mocks.sessionStatus.mockReset()
     mocks.sessionStatus.mockResolvedValue({ data: {} })
     mocks.sessionTodo.mockReset()
@@ -139,6 +161,7 @@ describe('AgentController.executeCommand', () => {
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
     mocks.sendToRenderer.mockReset()
+    mocks.setPreference.mockClear()
   })
 
   afterEach(() => {
@@ -252,6 +275,116 @@ describe('AgentController.executeCommand', () => {
       modelOverride: { providerID: 'anthropic', modelID: 'claude-opus-5' },
       variantOverride: 'high',
     })
+  })
+
+  it('uses a model selected by an attached client for later OCO prompts', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'selected-model-message',
+          sessionID: 'attached-client-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        },
+      },
+    })
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'delayed-terra-message',
+          sessionID: 'attached-client-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+          variant: 'high',
+          time: { created: 100 },
+        },
+      },
+    })
+
+    await agentController.sendMessage('agent-4', 'Continue from OCO')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'attached-client-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
+    expect(agentController.getAgent('agent-4')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: undefined,
+    })
+    const persisted = JSON.parse(mocks.setPreference.mock.lastCall?.[1] as string)
+    const persistedAgent = persisted.find((agent: { id: string }) => agent.id === 'agent-4')
+    expect(persistedAgent).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    })
+    expect(persistedAgent).not.toHaveProperty('variantOverride')
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:model-changed', {
+      id: 'agent-4',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: undefined,
+    })
+  })
+
+  it('keeps the selected model while seeding an imported session', async () => {
+    mocks.sessionCreate.mockResolvedValueOnce({ data: { id: 'imported-session' } })
+
+    await agentController.importSession({
+      sourceSessionId: 'source-session',
+      sourceDirectory: '/tmp/project',
+      targetDirectory: '/tmp/project',
+      model: 'openai/gpt-5.6-sol',
+      modelVariant: 'high',
+    })
+
+    expect(mocks.sessionPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'imported-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'high',
+      noReply: true,
+    }))
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      sessionId: 'imported-session',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    }))
+  })
+
+  it('restores the latest model used while OCO was stopped', async () => {
+    mocks.sessionMessages.mockResolvedValueOnce({
+      data: [
+        { info: {
+          id: 'historical-terra-message',
+          sessionID: 'historical-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+          time: { created: 100 },
+        } },
+        { info: {
+          id: 'historical-sol-message',
+          sessionID: 'historical-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        } },
+      ],
+    })
+
+    const handle = await agentController.resumeAgent({
+      directory: '/tmp/project',
+      sessionId: 'historical-session',
+    })
+    await agentController.sendMessage(handle.id, 'Continue after restart')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'historical-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      sessionId: 'historical-session',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
   })
 
   it('fetches the persisted Todo list for an agent session', async () => {
