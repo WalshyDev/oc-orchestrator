@@ -225,6 +225,7 @@ export interface AgentHandle {
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
   variantOverride?: string
+  modelUpdatedAt?: number
   bridge: EventBridge
 }
 
@@ -243,6 +244,7 @@ interface PersistedAgentHandle {
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
   variantOverride?: string
+  modelUpdatedAt?: number
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -291,6 +293,7 @@ class AgentController {
       })
     )
 
+    const restoredHandles: Array<{ handle: AgentHandle; runtime: RuntimeInfo }> = []
     for (const result of results) {
       if (result.status === 'rejected') {
         console.error('[AgentController] Failed to restore agent:', result.reason)
@@ -316,13 +319,18 @@ class AgentController {
         prUrl: persistedAgent.prUrl,
         modelOverride: persistedAgent.modelOverride,
         variantOverride: persistedAgent.variantOverride,
+        modelUpdatedAt: persistedAgent.modelUpdatedAt,
         bridge: this.bridges.get(runtime.id)!
       }
 
       this.agents.set(handle.id, handle)
+      restoredHandles.push({ handle, runtime })
       this.bumpNextId(handle.id)
     }
 
+    await Promise.allSettled(
+      restoredHandles.map(({ handle, runtime }) => this.reconcileModelFromSession(handle, runtime.client))
+    )
     this.persistAgents()
     this.restored = true
   }
@@ -389,6 +397,7 @@ class AgentController {
       taskSummary: '',
       modelOverride,
       variantOverride,
+      modelUpdatedAt: modelOverride || variantOverride ? Date.now() : undefined,
       bridge: this.bridges.get(runtime.id)!
     }
 
@@ -893,6 +902,9 @@ class AgentController {
 
     handle.modelOverride = nextModelOverride
     handle.variantOverride = nextVariantOverride
+    if ('model' in config || 'variant' in config) {
+      handle.modelUpdatedAt = Date.now()
+    }
     this.persistAgents()
     return result
   }
@@ -1179,12 +1191,15 @@ class AgentController {
     if (!handle) throw new Error(`Agent ${agentId} not found`)
     await this.beginUserAction(agentId)
 
-    handle.modelOverride = { providerID, modelID }
+    const modelOverride = { providerID, modelID }
+    const variantOverride = handle.variantOverride
+    handle.modelOverride = modelOverride
+    handle.modelUpdatedAt = Date.now()
     this.persistAgents()
     this.broadcastToRenderer('agent:model-changed', {
       id: handle.id,
-      modelOverride: handle.modelOverride,
-      variantOverride: handle.variantOverride
+      modelOverride,
+      variantOverride
     })
 
     const runtime = await this.ensureRuntimeForAgent(handle)
@@ -1195,8 +1210,8 @@ class AgentController {
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
-      model: handle.modelOverride,
-      ...(handle.variantOverride && { variant: handle.variantOverride })
+      model: modelOverride,
+      ...(variantOverride && { variant: variantOverride })
     })
   }
 
@@ -1568,6 +1583,7 @@ class AgentController {
       taskSummary: '',
       modelOverride,
       variantOverride,
+      modelUpdatedAt: modelOverride || variantOverride ? Date.now() : undefined,
       bridge: this.bridges.get(targetRuntime.id)!
     }
 
@@ -1587,6 +1603,8 @@ class AgentController {
       workspaceName: handle.workspaceName,
       prompt: '',
       title: sessionTitle,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride,
       launchId
     })
 
@@ -1607,7 +1625,9 @@ class AgentController {
           sessionID: newSession.id,
           directory: targetDirectory,
           noReply: true,
-          parts: [{ type: 'text', text: seedText, synthetic: true }]
+          parts: [{ type: 'text', text: seedText, synthetic: true }],
+          ...(handle.modelOverride && { model: handle.modelOverride }),
+          ...(handle.variantOverride && { variant: handle.variantOverride })
         })
       } catch (error) {
         // Seeding is best effort. A fresh session without context still works.
@@ -1656,6 +1676,7 @@ class AgentController {
     }
 
     this.agents.set(agentId, handle)
+    await this.reconcileModelFromSession(handle, runtime.client)
     this.persistAgents()
 
     this.broadcastToRenderer('agent:launched', {
@@ -1668,7 +1689,9 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: '',
-      title: sessionTitle
+      title: sessionTitle,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
     })
 
     console.log(`[AgentController] Resumed agent ${agentId} (session ${sessionId}) in ${directory}`)
@@ -1817,6 +1840,9 @@ class AgentController {
     const nested = (properties.part ?? properties.info) as Record<string, unknown> | undefined
     const sessionId = (properties.sessionID ?? nested?.sessionID) as string | undefined
     if (!sessionId) return
+    if (event.type === 'message.updated') {
+      this.syncModelFromUserMessage(sessionId, nested)
+    }
     if (event.type === 'message.part.updated') {
       const state = nested?.state as Record<string, unknown> | undefined
       const metadata = state?.metadata as Record<string, unknown> | undefined
@@ -1832,6 +1858,60 @@ class AgentController {
       const current = this.sessionActivity.get(currentSessionId)
       this.sessionActivity.set(currentSessionId, { version: (current?.version ?? 0) + 1, at })
       currentSessionId = this.sessionParents.get(currentSessionId)
+    }
+  }
+
+  private syncModelFromUserMessage(sessionId: string, info: Record<string, unknown> | undefined): void {
+    if (info?.role !== 'user') return
+    const model = info.model as Record<string, unknown> | undefined
+    if (typeof model?.providerID !== 'string' || typeof model.modelID !== 'string') return
+
+    const handle = Array.from(this.agents.values()).find((agent) => agent.sessionId === sessionId)
+    if (!handle) return
+
+    const createdAt = this.getModelMessageCreatedAt(info)
+    if (createdAt < (handle.modelUpdatedAt ?? 0)) return
+    handle.modelUpdatedAt = createdAt
+
+    const variantOverride = typeof info.variant === 'string' ? info.variant : undefined
+    if (
+      handle.modelOverride?.providerID === model.providerID &&
+      handle.modelOverride.modelID === model.modelID &&
+      handle.variantOverride === variantOverride
+    ) return
+
+    handle.modelOverride = { providerID: model.providerID, modelID: model.modelID }
+    handle.variantOverride = variantOverride
+    this.persistAgents()
+    this.broadcastToRenderer('agent:model-changed', {
+      id: handle.id,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
+    })
+  }
+
+  private getModelMessageCreatedAt(info: Record<string, unknown>): number {
+    const time = info.time as Record<string, unknown> | undefined
+    return typeof time?.created === 'number' ? time.created : Date.now()
+  }
+
+  private async reconcileModelFromSession(handle: AgentHandle, client: OpencodeClient): Promise<void> {
+    try {
+      const result = await client.session.messages({
+        sessionID: handle.sessionId,
+        directory: handle.directory
+      })
+      let latest: Record<string, unknown> | undefined
+      for (const entry of (result.data ?? []) as Array<{ info?: Record<string, unknown> }>) {
+        const info = entry.info
+        if (info?.role !== 'user' || !info.model) continue
+        if (!latest || this.getModelMessageCreatedAt(info) >= this.getModelMessageCreatedAt(latest)) {
+          latest = info
+        }
+      }
+      if (latest) this.syncModelFromUserMessage(handle.sessionId, latest)
+    } catch {
+      // Model reconciliation is best effort; persisted state remains usable.
     }
   }
 
@@ -1950,7 +2030,8 @@ class AgentController {
       labelIds: agent.labelIds,
       prUrl: agent.prUrl,
       modelOverride: agent.modelOverride,
-      variantOverride: agent.variantOverride
+      variantOverride: agent.variantOverride,
+      modelUpdatedAt: agent.modelUpdatedAt
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))
