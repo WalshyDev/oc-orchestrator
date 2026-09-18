@@ -197,6 +197,18 @@ describe('AgentController.executeCommand', () => {
     }))
   })
 
+  it('broadcasts external PR-link updates to the renderer', () => {
+    agentController.setAgentPrUrl('agent-1', 'https://github.com/example/repo/pull/1')
+
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:pr-url-updated', {
+      id: 'agent-1',
+      prUrl: 'https://github.com/example/repo/pull/1',
+    })
+    const persisted = JSON.parse(mocks.setPreference.mock.lastCall?.[1] as string) as Array<{ id: string; prUrl?: string }>
+    expect(persisted.find((agent) => agent.id === 'agent-1')?.prUrl)
+      .toBe('https://github.com/example/repo/pull/1')
+  })
+
   it('changes one agent model without updating the shared directory config', async () => {
     await agentController.updateConfig('agent-3', {
       model: 'anthropic/claude-sonnet-4-6',

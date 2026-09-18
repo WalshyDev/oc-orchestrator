@@ -148,6 +148,7 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume? }` | `{ agentId, sessionId, runtimeUrl, directory, leaseId, leaseExpiresAt }` |
 | `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
 | `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
+| `PATCH` | `/sessions/:sessionId` | `{ prUrl }` | `{ ok, prUrl }` |
 | `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
 | `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
 

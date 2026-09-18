@@ -4,6 +4,7 @@ import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
   AgentModelChangedPayload,
+  AgentPrUrlUpdatedPayload,
   AgentStatusesPayload,
   IpcResult,
   MessageAttachment,
@@ -342,9 +343,33 @@ const taskSummaryLocked = new Set<string>()
 const recentlyAttachedAgents = new Set<string>()
 const RECENTLY_ATTACHED_TTL_MS = 4_000
 const pendingModelChanges = new Map<string, AgentModelChangedPayload>()
+const pendingPrUrlUpdates = new Map<string, string>()
 
 export function isRecentlyAttached(agentId: string): boolean {
   return recentlyAttachedAgents.has(agentId)
+}
+
+export function applyAgentPrUrlUpdate(
+  agents: Map<string, LiveAgent>,
+  pending: Map<string, string>,
+  payload: AgentPrUrlUpdatedPayload
+): boolean {
+  const agent = agents.get(payload.id)
+  if (!agent) {
+    pending.set(payload.id, payload.prUrl)
+    return false
+  }
+  agent.prUrl = payload.prUrl
+  pending.delete(payload.id)
+  return true
+}
+
+export function consumePendingAgentPrUrl(agent: LiveAgent, pending: Map<string, string>): boolean {
+  const prUrl = pending.get(agent.id)
+  if (prUrl === undefined) return false
+  agent.prUrl = prUrl
+  pending.delete(agent.id)
+  return true
 }
 
 // Tracks agents that should have PR URL extraction enabled.  We only extract
@@ -2560,6 +2585,7 @@ function removeAgentState(agentId: string): void {
   prExtractEnabled.delete(agentId)
   pendingMessages.delete(agentId)
   pendingModelChanges.delete(agentId)
+  pendingPrUrlUpdates.delete(agentId)
   childHydrationRetryAgents.delete(agentId)
   stalledRecoveryStates.delete(agentId)
   deleteAgentSettings(agentId)
@@ -2658,6 +2684,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   }
 
   state.agents.set(payload.id, agent)
+  consumePendingAgentPrUrl(agent, pendingPrUrlUpdates)
   const pendingModelChange = pendingModelChanges.get(payload.id)
   if (pendingModelChange) {
     applyAgentModelChange(agent, pendingModelChange)
@@ -3694,6 +3721,9 @@ export function useAgentStore() {
         }
         applyAgentModelChange(agent, payload)
         emit({ agents: true })
+      }),
+      window.api.onAgentPrUrlUpdated((payload) => {
+        if (applyAgentPrUrlUpdate(state.agents, pendingPrUrlUpdates, payload)) emit({ agents: true })
       }),
       window.api.onSessionReset(handleSessionReset),
       window.api.onExternalAttached((data) => {

@@ -533,6 +533,11 @@ class AgentController {
     }
   }
 
+  setAgentPrUrl(agentId: string, prUrl: string): void {
+    this.updateAgentMeta(agentId, { prUrl })
+    this.broadcastToRenderer('agent:pr-url-updated', { id: agentId, prUrl })
+  }
+
   /**
    * Send a message to an existing agent session.
    * Optionally invoke a specific agent config by name.
