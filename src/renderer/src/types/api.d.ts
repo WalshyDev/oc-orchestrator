@@ -130,6 +130,7 @@ export interface OrchestratorApi {
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
   onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
+  onAgentPrUrlUpdated: (callback: (data: AgentPrUrlUpdatedPayload) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
@@ -275,6 +276,11 @@ export interface AgentModelChangedPayload {
   id: string
   modelOverride: { providerID: string; modelID: string }
   variantOverride?: string
+}
+
+export interface AgentPrUrlUpdatedPayload {
+  id: string
+  prUrl: string
 }
 
 export interface SessionResetPayload {

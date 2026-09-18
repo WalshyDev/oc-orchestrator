@@ -45,6 +45,10 @@ interface PromptBody {
   [k: string]: unknown
 }
 
+interface SessionUpdateBody {
+  prUrl?: unknown
+}
+
 const DISCOVERY_FILENAME = 'api.json'
 
 // The discovery file is the only handshake mechanism for external clients
@@ -249,6 +253,12 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse): Promise<
     return handleSessionAbort(res, sessionId)
   }
 
+  const sessionUpdateMatch = url.match(/^\/sessions\/([^/]+)$/)
+  if (method === 'PATCH' && sessionUpdateMatch) {
+    const body = await readJsonBody<SessionUpdateBody | null>(req)
+    return handleSessionUpdate(res, sessionUpdateMatch[1], body)
+  }
+
   const leaseMatch = url.match(/^\/leases\/([^/]+)(?:\/(refresh))?$/)
   if (leaseMatch) {
     const [, leaseId, action] = leaseMatch
@@ -372,6 +382,30 @@ async function handleSessionAbort(res: ServerResponse, sessionId: string): Promi
   sendJson(res, 200, { ok: true })
 }
 
+function handleSessionUpdate(res: ServerResponse, sessionId: string, body: SessionUpdateBody | null): void {
+  const agents = findAgentsBySession(sessionId)
+  if (agents.length === 0) return sendJson(res, 404, { error: 'session_not_found' })
+
+  const prUrl = parseHttpUrl(body?.prUrl)
+  if (!prUrl) {
+    return sendJson(res, 400, { error: 'bad_request', message: 'prUrl must be an HTTP or HTTPS URL' })
+  }
+
+  for (const agent of agents) agentController.setAgentPrUrl(agent.id, prUrl)
+  sendJson(res, 200, { ok: true, prUrl })
+}
+
+function parseHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const candidate = value.trim()
+  try {
+    const url = new URL(candidate)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? candidate : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function handleLeaseRefresh(res: ServerResponse, leaseId: string): void {
   const lease = leaseRegistry.get(leaseId)
   if (!lease) return sendJson(res, 404, { error: 'lease_not_found_or_expired' })
@@ -399,6 +433,10 @@ function handleLeaseRelease(res: ServerResponse, leaseId: string): void {
 
 function findAgentBySession(sessionId: string): { id: string } | undefined {
   return agentController.getAllAgents().find((handle) => handle.sessionId === sessionId)
+}
+
+function findAgentsBySession(sessionId: string): Array<{ id: string }> {
+  return agentController.getAllAgents().filter((handle) => handle.sessionId === sessionId)
 }
 
 function readSourceHeader(req: IncomingMessage): string {
