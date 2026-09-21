@@ -1381,7 +1381,8 @@ Then give me a brief summary of what the previous session was working on and whe
       launchId = store.beginLaunch({ directory: homeResult.data, title })
       setQuickLaunching(false)
       const epochAtStart = selectionEpochRef.current
-      const result = await store.launchAgent(homeResult.data, undefined, title, 'auto', undefined, undefined, launchId)
+      const { model, modelVariant } = loadSettings()
+      const result = await store.launchAgent(homeResult.data, undefined, title, model, modelVariant, undefined, launchId)
 
       if (!result?.ok) {
         store.failLaunch(launchId, result?.error || 'Failed to launch agent')
