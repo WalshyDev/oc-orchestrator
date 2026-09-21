@@ -50,7 +50,7 @@ import {
 } from '../data/agentSettings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
-import { formatVariantLabel, getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
+import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -62,6 +62,7 @@ import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
@@ -70,14 +71,12 @@ import type { EventEntry } from './EventLog'
 export type { FileChange, ToolCall, EventEntry }
 
 function ResponseMetadata({ message }: { message: Message }) {
-  const model = message.modelID ?? message.model
-  if (!model) return null
+  const metadata = formatResponseMetadata(message)
+  if (!metadata) return null
 
   return (
     <span className="font-mono font-normal normal-case tracking-normal text-kumo-subtle/70">
-      {message.providerID
-        ? `${message.providerID} · ${model} · Effort: ${message.variant ? formatVariantLabel(message.variant) : 'Provider Default'}`
-        : model}
+      {metadata}
     </span>
   )
 }
@@ -2071,7 +2070,6 @@ export const MessageBubble = memo(function MessageBubble({
   prev.message.role === next.message.role &&
   prev.message.model === next.message.model &&
   prev.message.providerID === next.message.providerID &&
-  prev.message.modelID === next.message.modelID &&
   prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
@@ -2183,7 +2181,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
-      {message.providerID && message.modelID && (
+      {message.providerID && message.model && (
         <div className="mb-1 text-[10px]">
           <ResponseMetadata message={message} />
         </div>
@@ -2243,8 +2241,8 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
+  prev.message.model === next.message.model &&
   prev.message.providerID === next.message.providerID &&
-  prev.message.modelID === next.message.modelID &&
   prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity

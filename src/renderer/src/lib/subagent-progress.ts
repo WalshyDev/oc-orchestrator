@@ -13,6 +13,8 @@ export interface ChildTranscriptEntry {
   childSessionId?: string
   childTranscript?: ChildTranscriptEntry[]
   modelId?: string
+  providerID?: string
+  variant?: string
 }
 
 export interface ChildSessionDescriptor {
@@ -226,7 +228,14 @@ export function buildChildTranscript(
 
     for (const part of message.parts) {
       if (part.type === 'text' && part.text) {
-        entries.push({ id: part.id, kind: 'text', label: part.text, modelId: message.modelId })
+        entries.push({
+          id: part.id,
+          kind: 'text',
+          label: part.text,
+          modelId: message.modelId,
+          providerID: message.providerID,
+          variant: message.variant
+        })
       } else if (part.type === 'tool' && part.toolName) {
         const toolState = mapToolState(part.toolName, part.toolState, messageActive)
         entries.push({
@@ -234,6 +243,8 @@ export function buildChildTranscript(
           kind: 'tool',
           label: part.toolName,
           modelId: message.modelId,
+          providerID: message.providerID,
+          variant: message.variant,
           toolState,
           toolSummary: summarizeChildToolInput(part.toolName, part.toolInput),
           toolOutput: part.text,

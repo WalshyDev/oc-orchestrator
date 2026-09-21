@@ -671,7 +671,6 @@ export function App() {
           activityAt: msg.createdAt,
           model: msg.role === 'assistant' && msg.modelId ? formatModelName(msg.modelId) : undefined,
           providerID: msg.providerID,
-          modelID: msg.modelId,
           variant: msg.variant,
           ...(images.length > 0 ? { images } : {})
         })

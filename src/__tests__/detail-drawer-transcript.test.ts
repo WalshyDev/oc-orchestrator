@@ -64,7 +64,7 @@ describe('DetailDrawer transcript metadata', () => {
         content: 'Response text',
         timestamp: 'now',
         providerID: 'opencode',
-        modelID: 'luna',
+        model: 'luna',
         variant
       }],
       onClose: () => {}
@@ -92,7 +92,7 @@ describe('DetailDrawer transcript metadata', () => {
           sessionId: 'session-1',
           parts: [{ id: 'tool-part-1', type: 'tool', toolName: 'read' }]
         },
-        [{ id: 'tool-1', name: 'read', state: 'completed', timestamp: 1 }],
+        [{ id: 'tool-1', name: 'read', state: 'completed', timestamp: 1, model: 'response-model' }],
         'now'
       )],
       onClose: () => {}
