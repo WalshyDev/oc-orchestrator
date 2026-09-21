@@ -262,8 +262,11 @@ export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): stri
   return agent.branchName ?? ''
 }
 
-export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'activeModel'>): string {
-  return agent.activeModel ?? agent.model
+export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'activeModel' | 'variant'>): string {
+  const model = agent.activeModel ?? agent.model
+  if (!agent.variant || agent.variant === 'auto') return model
+  const effort = agent.variant.charAt(0).toUpperCase() + agent.variant.slice(1)
+  return `${model} (${effort})`
 }
 
 export function statusLabel(status: AgentStatus): string {

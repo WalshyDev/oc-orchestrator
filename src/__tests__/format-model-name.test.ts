@@ -5,6 +5,7 @@ import {
   formatModelName,
   getAgentModelState
 } from '../renderer/src/hooks/useAgentStore'
+import { getDisplayedModel } from '../renderer/src/types'
 
 describe('formatModelName', () => {
   describe('Claude models', () => {
@@ -61,6 +62,18 @@ describe('formatModelName', () => {
     it('truncates long unknown names to 16 chars', () => {
       expect(formatModelName('very-long-unknown-model-name-here')).toBe('very-long-unknow')
     })
+  })
+})
+
+describe('getDisplayedModel', () => {
+  it('includes an explicit effort level', () => {
+    expect(getDisplayedModel({ model: 'gpt-5.6-sol', activeModel: 'gpt-5.6-luna', variant: 'max' }))
+      .toBe('gpt-5.6-luna (Max)')
+  })
+
+  it('omits provider-default effort', () => {
+    expect(getDisplayedModel({ model: 'gpt-5.6-luna' })).toBe('gpt-5.6-luna')
+    expect(getDisplayedModel({ model: 'gpt-5.6-luna', variant: 'auto' })).toBe('gpt-5.6-luna')
   })
 })
 
