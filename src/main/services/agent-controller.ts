@@ -1878,7 +1878,9 @@ class AgentController {
     if (createdAt < (handle.modelUpdatedAt ?? 0)) return
     handle.modelUpdatedAt = createdAt
 
-    const variantOverride = typeof info.variant === 'string' ? info.variant : undefined
+    const variantOverride = typeof info.variant === 'string'
+      ? info.variant
+      : handle.variantOverride
     if (
       handle.modelOverride?.providerID === model.providerID &&
       handle.modelOverride.modelID === model.modelID &&
