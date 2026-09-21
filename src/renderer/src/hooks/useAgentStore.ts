@@ -357,64 +357,43 @@ interface PendingMessage {
 const pendingMessages = new Map<string, PendingMessage>()
 const stalledRecoveryStates = new Map<string, 'recovering' | 'attempted'>()
 
-// Safety timers for the `compacting` flag. We set a short "kickoff" watchdog
-// (30s): if the server doesn't produce a compaction part or set
-// session.time.compacting within that window, the RPC effectively did
-// nothing — clear the flag and surface an error so the user isn't staring at
-// a spinner forever. Once real server evidence arrives (see below), the
-// watchdog is cancelled because the session.compacted event will clear the
-// flag authoritatively.
-const compactingTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const COMPACTING_KICKOFF_TIMEOUT_MS = 30_000
+// Locally requested compactions stay pending until the server acknowledges them.
+const pendingCompactionKickoffs = new Map<string, ReturnType<typeof setTimeout>>()
+const COMPACTING_KICKOFF_TIMEOUT_MS = 5 * 60_000
 
-/**
- * Fired when the kickoff watchdog expires without any server activity: the
- * RPC returned 200 but no compaction part or session.time.compacting update
- * arrived. Clears the spinner flag and surfaces an actionable banner error.
- */
-function onCompactingWatchdogExpired(agentId: string): void {
-  compactingTimers.delete(agentId)
-  const agent = state.agents.get(agentId)
-  if (!agent?.compacting) return
-  console.warn('[compacting] kickoff watchdog fired — no server activity', agentId)
-  agent.compacting = undefined
-  agent.lastError = {
-    name: 'CompactionNoResponse',
-    message: 'Compaction request was accepted but the server hasn\'t produced any activity within 30 seconds. Try again, check the npm dev console for errors, or switch models.',
-    sessionId: agent.sessionId,
-    occurredAt: Date.now()
-  }
-  emit({ agents: true })
+function clearPendingCompactionKickoff(agentId: string): void {
+  const timer = pendingCompactionKickoffs.get(agentId)
+  if (timer === undefined) return
+  clearTimeout(timer)
+  pendingCompactionKickoffs.delete(agentId)
+}
+
+function startCompacting(agentId: string): void {
+  clearPendingCompactionKickoff(agentId)
+  const timer = setTimeout(() => {
+    pendingCompactionKickoffs.delete(agentId)
+    setCompacting(agentId, false)
+  }, COMPACTING_KICKOFF_TIMEOUT_MS)
+  pendingCompactionKickoffs.set(agentId, timer)
+  setCompacting(agentId, true)
 }
 
 /**
- * Set or clear the agent's compacting flag. When setting true, also starts a
- * kickoff watchdog (see onCompactingWatchdogExpired). The watchdog is
- * cancelled by cancelCompactingWatchdog() once real server evidence arrives;
- * at that point the flag is authoritative and will be cleared by
- * session.compacted.
+ * Set or clear the agent's compacting flag. Server events and compaction
+ * errors clear the flag.
  */
 function setCompacting(agentId: string, compacting: boolean): void {
   const agent = state.agents.get(agentId)
   if (!agent) return
   if (agent.compacting === compacting) return
   agent.compacting = compacting || undefined
-
-  cancelCompactingWatchdog(agentId)
-
-  if (compacting) {
-    const timer = setTimeout(() => onCompactingWatchdogExpired(agentId), COMPACTING_KICKOFF_TIMEOUT_MS)
-    compactingTimers.set(agentId, timer)
-  }
+  if (!compacting) clearPendingCompactionKickoff(agentId)
   emit({ agents: true })
 }
 
-function cancelCompactingWatchdog(agentId: string): void {
-  const existing = compactingTimers.get(agentId)
-  if (existing) {
-    clearTimeout(existing)
-    compactingTimers.delete(agentId)
-  }
+function acknowledgeCompacting(agentId: string): void {
+  clearPendingCompactionKickoff(agentId)
+  setCompacting(agentId, true)
 }
 
 /**
@@ -1547,21 +1526,16 @@ function processEvent(payload: OpenCodeEventPayload): void {
       if (agent) {
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
 
-        // The server sets session.time.compacting to a timestamp while
-        // compaction is in progress and clears it when done. This is the
-        // authoritative signal — cancel the kickoff watchdog when the server
-        // takes ownership of the flag.
+        // The server owns the compacting flag after it sets this timestamp.
         const serverIsCompacting = typeof time?.compacting === 'number'
         if (serverIsCompacting) {
           if (!agent.compacting) {
             console.log('[session.updated] server started compacting', { agentId: agent.id, at: time?.compacting })
           }
-          cancelCompactingWatchdog(agent.id)
-          if (!agent.compacting) setCompacting(agent.id, true)
-        } else if (agent.compacting && !compactingTimers.has(agent.id)) {
-          // Server has explicitly cleared its compacting timestamp and we're
-          // past the kickoff window — compaction finished (or was cancelled)
-          // but session.compacted didn't fire. Clear our flag to match.
+          acknowledgeCompacting(agent.id)
+        } else if (agent.compacting && !pendingCompactionKickoffs.has(agent.id)) {
+          // The server cleared its compacting timestamp without sending the
+          // dedicated completion event, so match the server state.
           console.log('[session.updated] server cleared compacting without session.compacted event', { agentId: agent.id })
           setCompacting(agent.id, false)
         }
@@ -1707,16 +1681,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const partId = part.id as string
       const partType = part.type as string
 
-      // A `compaction` part is the server's authoritative signal that the
-      // compactor is actively running for this session. Cancel the kickoff
-      // watchdog (compaction has demonstrably started) and set the spinner
-      // flag for auto-compactions that the user didn't initiate.
+      // A compaction part confirms that the compactor is running.
       if (partType === 'compaction') {
         const agent = findAgentBySession(sessionId)
         if (agent) {
           console.log('[compaction part] server acknowledged compaction', { agentId: agent.id, auto: part.auto })
-          cancelCompactingWatchdog(agent.id)
-          if (!agent.compacting) setCompacting(agent.id, true)
+          acknowledgeCompacting(agent.id)
         }
       }
 
@@ -2552,11 +2522,7 @@ function removeAgentState(agentId: string): void {
   childHydrationRetryAgents.delete(agentId)
   stalledRecoveryStates.delete(agentId)
   deleteAgentSettings(agentId)
-  const compactingTimer = compactingTimers.get(agentId)
-  if (compactingTimer) {
-    clearTimeout(compactingTimer)
-    compactingTimers.delete(agentId)
-  }
+  clearPendingCompactionKickoff(agentId)
   sessionStepDepth.delete(agent.sessionId)
   clearChildSessionsForAgent(agentId)
   state.agents.delete(agentId)
@@ -4400,12 +4366,7 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
-  /**
-   * Trigger server-side compaction on the user's behalf. Aborts any running
-   * turn first — compactSession 400s on a busy session. Shows a spinner while
-   * the RPC and the provider-side summarization run; cleared when the server
-   * emits session.compacted (success), the RPC fails, or the watchdog fires.
-   */
+  // Abort a running turn first because compactSession rejects busy sessions.
   const compactSession = useCallback(async (agentId: string): Promise<IpcResult | undefined> => {
     if (!window.api) return
     const agent = getMutableAgent(agentId)
@@ -4427,7 +4388,7 @@ export function useAgentStore() {
       await waitForAgentSettled(agentId, 10_000)
     }
 
-    setCompacting(agentId, true)
+    startCompacting(agentId)
     agent.lastActivityAt = Date.now()
 
     const result = await window.api.compactSession(agentId)
