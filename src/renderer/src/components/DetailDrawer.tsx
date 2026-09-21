@@ -62,12 +62,24 @@ import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
+
+function ResponseMetadata({ message }: { message: Message }) {
+  const metadata = formatResponseMetadata(message)
+  if (!metadata) return null
+
+  return (
+    <span className="font-mono font-normal normal-case tracking-normal text-kumo-subtle/70">
+      {metadata}
+    </span>
+  )
+}
 
 const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'git-pull-request': GitPullRequest,
@@ -1800,12 +1812,10 @@ function AgentConfigPanel({
   }, [agent.model, options, selectedModel])
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(selectedModel, providerData, configModel),
-    [selectedModel, providerData, configModel]
+    () => getVariantOptionsForModel(selectedModel, providerData, configModel, agent.variant),
+    [selectedModel, providerData, configModel, agent.variant]
   )
-  const selectedEffort = effortOptions.some((option) => option.value === agent.variant)
-    ? agent.variant ?? 'auto'
-    : 'auto'
+  const selectedEffort = agent.variant ?? 'auto'
 
   const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
     if (!onChangeModel || savingRef.current) return
@@ -2026,9 +2036,7 @@ export const MessageBubble = memo(function MessageBubble({
       )}
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
         <span>{isUser ? 'You' : 'Agent'}</span>
-        {!isUser && message.model && (
-          <span className="font-mono font-normal normal-case tracking-normal">{message.model}</span>
-        )}
+        {!isUser && <ResponseMetadata message={message} />}
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2061,6 +2069,8 @@ export const MessageBubble = memo(function MessageBubble({
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
   prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.registerRef === next.registerRef
@@ -2171,6 +2181,11 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
+      {message.providerID && message.model && (
+        <div className="mb-1 text-[10px]">
+          <ResponseMetadata message={message} />
+        </div>
+      )}
       <button
         onClick={() => setExpanded((prev) => !prev)}
         className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
@@ -2226,6 +2241,9 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
+  prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity
 )

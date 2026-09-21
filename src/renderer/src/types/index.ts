@@ -237,6 +237,8 @@ export interface Message {
   content: string
   timestamp: string
   activityAt?: number
+  providerID?: string
+  variant?: string
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]

@@ -1,5 +1,6 @@
 import { CircleNotch } from '@phosphor-icons/react'
 import type { ChildTranscriptEntry, DisplayToolState } from '../lib/subagent-progress'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
 
 interface SubagentProgressProps {
   entries: ChildTranscriptEntry[]
@@ -46,7 +47,11 @@ export function SubagentProgress({ entries, state, childSessionId }: SubagentPro
             <div key={entry.id} className="text-[10px] font-mono leading-tight">
               {entry.kind === 'text' ? (
                 <div>
-                  {entry.modelId && <div className="mb-0.5 text-kumo-subtle">{entry.modelId}</div>}
+                  {formatResponseMetadata({ providerID: entry.providerID, model: entry.modelId, variant: entry.variant }) && (
+                    <div className="mb-0.5 text-kumo-subtle">
+                      {formatResponseMetadata({ providerID: entry.providerID, model: entry.modelId, variant: entry.variant })}
+                    </div>
+                  )}
                   <div className="whitespace-pre-wrap break-words text-kumo-default">
                     {entry.label}
                   </div>
@@ -58,7 +63,11 @@ export function SubagentProgress({ entries, state, childSessionId }: SubagentPro
                       {entry.toolState === 'completed' ? '✓' : entry.toolState === 'failed' ? '✗' : '...'}
                     </span>
                     <span className="text-kumo-link">{entry.label}</span>
-                    {entry.modelId && <span className="text-kumo-subtle">{entry.modelId}</span>}
+                    {formatResponseMetadata({ providerID: entry.providerID, model: entry.modelId, variant: entry.variant }) && (
+                      <span className="text-kumo-subtle">
+                        {formatResponseMetadata({ providerID: entry.providerID, model: entry.modelId, variant: entry.variant })}
+                      </span>
+                    )}
                     {entry.toolSummary && (
                       <span className="truncate text-kumo-subtle">{entry.toolSummary}</span>
                     )}

@@ -104,13 +104,11 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
   const { options: modelOptions, providerData, configModel } = useModelOptions()
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(settings.model, providerData, configModel),
-    [settings.model, providerData, configModel]
+    () => getVariantOptionsForModel(settings.model, providerData, configModel, settings.modelVariant),
+    [settings.model, settings.modelVariant, providerData, configModel]
   )
 
-  const selectedEffort = effortOptions.some((option) => option.value === settings.modelVariant)
-    ? settings.modelVariant
-    : 'auto'
+  const selectedEffort = settings.modelVariant
 
   useEffect(() => {
     window.api.getVersion().then((result) => {

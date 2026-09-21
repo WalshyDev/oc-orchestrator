@@ -154,13 +154,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const trimmedPrompt = prompt.trim().toLowerCase()
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(model, providerData, configModel),
-    [model, providerData, configModel]
+    () => getVariantOptionsForModel(model, providerData, configModel, modelVariant),
+    [model, modelVariant, providerData, configModel]
   )
 
-  const selectedEffort = effortOptions.some((option) => option.value === modelVariant)
-    ? modelVariant
-    : 'auto'
+  const selectedEffort = modelVariant
 
   // Only suggest commands while the user is still typing a single-token command
   // (no space or newline yet). Once they add a space, they've committed to that
@@ -1093,7 +1091,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                         <div className="relative">
                           <SelectField
                             value={model}
-                            onChange={(value) => setModel(value)}
+                            onChange={(value) => { setModel(value); setModelVariant('auto') }}
                             options={modelOptions}
                             searchable
                             searchPlaceholder="Search models…"

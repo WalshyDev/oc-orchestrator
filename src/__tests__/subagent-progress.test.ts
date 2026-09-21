@@ -47,9 +47,10 @@ function modelMessage(
   sessionId: string,
   modelId: string,
   parts: LiveMessage['parts'] = [],
-  updatedAt = 1
+  updatedAt = 1,
+  response?: Pick<LiveMessage, 'providerID' | 'variant'>
 ): LiveMessage {
-  return { ...assistantMessage(sessionId, parts, updatedAt), modelId }
+  return { ...assistantMessage(sessionId, parts, updatedAt), modelId, ...response }
 }
 
 describe('subagent progress', () => {
@@ -390,10 +391,10 @@ describe('subagent progress', () => {
           toolState: 'completed',
           childSessionId: 'grandchild'
         }
-      ], 2)]],
+      ], 2, { providerID: 'openai', variant: 'high' })]],
       ['grandchild', [modelMessage('grandchild', 'claude-sonnet-5', [
         { id: 'final', type: 'text', text: 'nested final output' }
-      ], 3)]]
+      ], 3, { providerID: 'anthropic', variant: 'max' })]]
     ])
 
     const transcript = buildChildTranscript('child', (sessionId) => messages.get(sessionId) ?? [])
@@ -402,20 +403,24 @@ describe('subagent progress', () => {
       toolState: 'running',
       toolSummary: 'npm test',
       toolOutput: 'tests are running',
-      modelId: 'gpt-5.6-terra'
+      modelId: 'gpt-5.6-terra',
+      providerID: 'openai',
+      variant: 'high'
     })
     expect(transcript[1].childTranscript?.[0]).toMatchObject({
       kind: 'text',
       label: 'nested final output',
-      modelId: 'claude-sonnet-5'
+      modelId: 'claude-sonnet-5',
+      providerID: 'anthropic',
+      variant: 'max'
     })
     const markup = renderToStaticMarkup(createElement(SubagentProgress, {
       entries: transcript,
       state: 'running',
       childSessionId: 'child'
     }))
-    expect(markup).toContain('gpt-5.6-terra')
-    expect(markup).toContain('claude-sonnet-5')
+    expect(markup).toContain('openai · gpt-5.6-terra · Effort: High')
+    expect(markup).toContain('anthropic · claude-sonnet-5 · Effort: Max')
     expect(getLatestChildActivityAt(
       'child',
       (sessionId) => messages.get(sessionId) ?? [],

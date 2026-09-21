@@ -13,7 +13,7 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { getForkedTitle } from '../../shared/project'
 import { McpModal } from './components/McpModal'
 import { WorkspaceView } from './components/WorkspaceView'
-import { formatModelName, useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
+import { formatModelName, useAgentStore, setViewedAgentId, type LiveAgent, type LiveMessage } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
 import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority, getDisplayedModel } from './types'
 import type { FileChange } from './components/FilesChanged'
@@ -30,6 +30,7 @@ import {
 } from './lib/subagent-progress'
 import { extractLastAssistantMessage } from './lib/last-message'
 import { getCurrentTaskProgress } from './lib/task-progress'
+import { buildToolGroupMessage } from './lib/transcript-metadata'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
@@ -564,24 +565,19 @@ export function App() {
     const activeAssistantMessage = getActiveAssistantMessage(liveMessages, sessionActive)
     const transcriptItems: Message[] = []
     let pendingToolCalls: ToolCall[] = []
-    let pendingToolAnchorId = ''
-    let pendingToolTimestamp = 0
+    let pendingToolAnchor: LiveMessage | undefined
 
     const flushPendingToolCalls = () => {
-      if (pendingToolCalls.length === 0) return
+      if (pendingToolCalls.length === 0 || !pendingToolAnchor) return
 
-      transcriptItems.push({
-        id: `${pendingToolAnchorId}-tools`,
-        role: 'tool-group',
-        content: `${pendingToolCalls.length} tool call${pendingToolCalls.length === 1 ? '' : 's'}`,
-        timestamp: formatTimeAgo(pendingToolTimestamp),
-        activityAt: pendingToolTimestamp,
-        toolCalls: pendingToolCalls
-      })
+      transcriptItems.push(buildToolGroupMessage(
+        pendingToolAnchor,
+        pendingToolCalls,
+        formatTimeAgo(pendingToolAnchor.createdAt)
+      ))
 
       pendingToolCalls = []
-      pendingToolAnchorId = ''
-      pendingToolTimestamp = 0
+      pendingToolAnchor = undefined
     }
 
     for (const msg of liveMessages) {
@@ -674,14 +670,22 @@ export function App() {
           timestamp: formatTimeAgo(msg.createdAt),
           activityAt: msg.createdAt,
           model: msg.role === 'assistant' && msg.modelId ? formatModelName(msg.modelId) : undefined,
+          providerID: msg.providerID,
+          variant: msg.variant,
           ...(images.length > 0 ? { images } : {})
         })
       }
 
       if (toolCalls.length > 0) {
+        if (pendingToolCalls.length > 0 && (
+          pendingToolAnchor?.providerID !== msg.providerID
+          || pendingToolAnchor?.modelId !== msg.modelId
+          || pendingToolAnchor?.variant !== msg.variant
+        )) {
+          flushPendingToolCalls()
+        }
         pendingToolCalls.push(...toolCalls)
-        pendingToolAnchorId = msg.id
-        pendingToolTimestamp = msg.createdAt
+        pendingToolAnchor = msg
       }
 
       if (!textContent.trim() && pendingToolCalls.length > 0 && msg === liveMessages[liveMessages.length - 1]) {

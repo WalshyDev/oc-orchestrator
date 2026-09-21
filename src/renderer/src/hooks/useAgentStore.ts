@@ -44,6 +44,8 @@ interface MessageModelInfo {
   role: 'user' | 'assistant'
   modelID?: string
   model?: { modelID?: string }
+  providerID?: string
+  variant?: string
 }
 
 interface HistoricalMessageInfo extends MessageModelInfo {
@@ -249,7 +251,22 @@ export interface LiveMessage {
   completedAt?: number
   errored?: boolean
   modelId?: string
+  providerID?: string
+  variant?: string
   parts: LiveMessagePart[]
+}
+
+export function getAssistantResponseMetadata(info: {
+  role?: unknown
+  providerID?: unknown
+  variant?: unknown
+}): Pick<LiveMessage, 'providerID' | 'variant'> {
+  if (info.role !== 'assistant') return {}
+
+  return {
+    providerID: typeof info.providerID === 'string' ? info.providerID : undefined,
+    variant: typeof info.variant === 'string' ? info.variant : undefined
+  }
 }
 
 export interface LiveMessagePart {
@@ -943,6 +960,8 @@ function upsertMessage(message: LiveMessage): LiveMessage {
   if (existingMessage) {
     existingMessage.role = message.role
     existingMessage.createdAt = message.createdAt
+    existingMessage.providerID = message.providerID
+    existingMessage.variant = message.variant
     existingMessage.updatedAt = Math.max(
       existingMessage.updatedAt ?? existingMessage.createdAt,
       message.updatedAt ?? message.createdAt
@@ -1108,6 +1127,7 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
       completedAt: entry.info.time?.completed,
       errored: !!entry.info.error?.name,
       modelId,
+      ...getAssistantResponseMetadata(entry.info),
       parts: []
     })
 
@@ -1735,6 +1755,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           completedAt,
           errored: !!msgError?.name,
           modelId,
+          ...getAssistantResponseMetadata(info),
           parts: []
         })
       }
@@ -3969,6 +3990,8 @@ export function useAgentStore() {
           workspaceName: data.workspaceName ?? (directory.split('/').pop() ?? directory),
           prompt: data.prompt ?? prompt ?? '',
           title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug),
+          modelOverride: data.modelOverride,
+          variantOverride: data.variantOverride,
           launchId
         })
       }
