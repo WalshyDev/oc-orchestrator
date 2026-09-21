@@ -51,6 +51,24 @@ const persistedAgents = [
     modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
     variantOverride: 'high',
   },
+  {
+    id: 'agent-5',
+    sessionId: 'max-effort-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Max effort session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    variantOverride: 'max',
+  },
+  {
+    id: 'agent-6',
+    sessionId: 'command-model-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Command model session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    variantOverride: 'max',
+  },
 ]
 
 const runtime = {
@@ -325,7 +343,7 @@ describe('AgentController.executeCommand', () => {
     })
   })
 
-  it('uses a model selected by an attached client for later OCO prompts', async () => {
+  it('uses a model selected by an attached client without clearing pinned effort', async () => {
     mocks.bridgeEvent?.({
       type: 'message.updated',
       properties: {
@@ -357,21 +375,83 @@ describe('AgentController.executeCommand', () => {
     expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionID: 'attached-client-session',
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'high',
     }))
     expect(agentController.getAgent('agent-4')).toMatchObject({
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
-      variantOverride: undefined,
+      variantOverride: 'high',
     })
     const persisted = JSON.parse(mocks.setPreference.mock.lastCall?.[1] as string)
     const persistedAgent = persisted.find((agent: { id: string }) => agent.id === 'agent-4')
     expect(persistedAgent).toMatchObject({
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
     })
-    expect(persistedAgent).not.toHaveProperty('variantOverride')
     expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:model-changed', {
       id: 'agent-4',
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
-      variantOverride: undefined,
+      variantOverride: 'high',
+    })
+  })
+
+  it('preserves the selected effort when a same-model user message omits the variant', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'max-effort-message',
+          sessionID: 'max-effort-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    await agentController.sendMessage('agent-5', 'Continue with max effort')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'max-effort-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'max',
+    }))
+    expect(agentController.getAgent('agent-5')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'max',
+    })
+  })
+
+  it('preserves pinned effort when a slash command changes the model', async () => {
+    mocks.sessionCommand.mockImplementationOnce(async () => {
+      mocks.bridgeEvent?.({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'command-model-message',
+            sessionID: 'command-model-session',
+            role: 'user',
+            model: { providerID: 'opencode', modelID: 'luna' },
+            time: { created: 200 },
+          },
+        },
+      })
+      return { data: undefined }
+    })
+
+    await agentController.executeCommand('agent-6', 'review', '')
+    await agentController.executeCommand('agent-6', 'review', '')
+
+    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      model: 'openai/gpt-5.6-sol',
+      variant: 'max',
+    }))
+    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      model: 'opencode/luna',
+      variant: 'max',
+    }))
+    expect(agentController.getAgent('agent-6')).toMatchObject({
+      modelOverride: { providerID: 'opencode', modelID: 'luna' },
+      variantOverride: 'max',
     })
   })
 
