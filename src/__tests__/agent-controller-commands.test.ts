@@ -142,6 +142,12 @@ describe('AgentController.executeCommand', () => {
   beforeEach(() => {
     mocks.sessionCommand.mockReset()
     mocks.sessionCommand.mockResolvedValue({ data: undefined })
+    mocks.sessionGet.mockReset()
+    mocks.sessionGet.mockResolvedValue({ data: { title: 'Source session' } })
+    mocks.sessionMessages.mockReset()
+    mocks.sessionMessages.mockResolvedValue({ data: [] })
+    mocks.sessionPrompt.mockReset()
+    mocks.sessionPrompt.mockResolvedValue({ data: undefined })
     mocks.sessionPromptAsync.mockReset()
     mocks.sessionPromptAsync.mockResolvedValue({ data: undefined })
     mocks.sessionCreate.mockReset()
@@ -227,6 +233,21 @@ describe('AgentController.executeCommand', () => {
     }))
   })
 
+  it('sends the selected effort on the next prompt', async () => {
+    await agentController.updateConfig('agent-3', {
+      model: 'opencode/luna',
+      variant: 'max',
+    })
+
+    await agentController.sendMessage('agent-3', 'Use maximum effort')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'default-model-session',
+      model: { providerID: 'opencode', modelID: 'luna' },
+      variant: 'max',
+    }))
+  })
+
   it('launches a selected model without updating the shared directory config', async () => {
     const handle = await agentController.launchAgent({
       directory: '/tmp/project',
@@ -241,6 +262,21 @@ describe('AgentController.executeCommand', () => {
       variantOverride: 'high',
     }))
     expect(mocks.configUpdate).not.toHaveBeenCalled()
+  })
+
+  it('includes selected model and effort in an imported session launch event', async () => {
+    await agentController.importSession({
+      sourceSessionId: 'source-session',
+      sourceDirectory: '/tmp/project',
+      targetDirectory: '/tmp/project',
+      model: 'opencode/luna',
+      modelVariant: 'max',
+    })
+
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      modelOverride: { providerID: 'opencode', modelID: 'luna' },
+      variantOverride: 'max',
+    }))
   })
 
   it('keeps the previous override when another config update fails', async () => {

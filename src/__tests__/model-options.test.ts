@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildOptionsFromProviders,
   ensureProvidersLoaded,
+  getVariantOptionsForModel,
   invalidateProviderCache,
   resolveSystemDefaultLabel,
   type ProviderData,
@@ -78,6 +79,15 @@ describe('buildOptionsFromProviders', () => {
     const options = buildOptionsFromProviders(data)
     expect(options).toHaveLength(2) // System Default + one model
     expect(options.every((o) => !o.label.includes('Empty'))).toBe(true)
+  })
+})
+
+describe('getVariantOptionsForModel', () => {
+  it('keeps the selected effort when provider metadata is unavailable', () => {
+    expect(getVariantOptionsForModel('opencode/luna', null, undefined, 'max')).toEqual([
+      { value: 'auto', label: 'Provider Default' },
+      { value: 'max', label: 'Max' },
+    ])
   })
 })
 

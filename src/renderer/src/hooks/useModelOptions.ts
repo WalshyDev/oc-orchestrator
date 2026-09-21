@@ -31,13 +31,19 @@ export function formatVariantLabel(key: string): string {
 export function getVariantOptionsForModel(
   modelValue: string,
   providers: ProviderData | null,
-  configModel: string | undefined
+  configModel: string | undefined,
+  selectedVariant?: string
 ): ModelVariantOption[] {
   const options: ModelVariantOption[] = [{ value: 'auto', label: 'Provider Default' }]
-  if (!providers) return options
+  const includeSelectedVariant = (items: ModelVariantOption[]): ModelVariantOption[] => {
+    if (!selectedVariant || items.some((option) => option.value === selectedVariant)) return items
+    return [...items, { value: selectedVariant, label: formatVariantLabel(selectedVariant) }]
+  }
+
+  if (!providers) return includeSelectedVariant(options)
 
   const resolvedModel = modelValue === 'auto' ? configModel : modelValue
-  if (!resolvedModel) return options
+  if (!resolvedModel) return includeSelectedVariant(options)
 
   const slashIndex = resolvedModel.indexOf('/')
   const providerId = slashIndex > 0 ? resolvedModel.slice(0, slashIndex) : undefined
@@ -50,17 +56,17 @@ export function getVariantOptionsForModel(
       if (model.id !== modelId && model.id !== resolvedModel) continue
 
       const variantKeys = model.variants ? Object.keys(model.variants) : []
-      return [
+      return includeSelectedVariant([
         ...options,
         ...variantKeys.map((variantKey) => ({
           value: variantKey,
           label: formatVariantLabel(variantKey),
         })),
-      ]
+      ])
     }
   }
 
-  return options
+  return includeSelectedVariant(options)
 }
 
 /**

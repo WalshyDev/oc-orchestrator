@@ -1941,7 +1941,9 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: handle.prompt,
-      title: handle.title
+      title: handle.title,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
     })
 
     return runtime
