@@ -33,6 +33,11 @@ import {
   mergeLiveMessagePart,
   type ChildSessionDescriptor
 } from '../lib/subagent-progress'
+import {
+  createOptimisticUserMessage,
+  OPTIMISTIC_PREFIX,
+  replaceNextOptimisticUserFilePart
+} from '../lib/optimistic-message'
 import { getPendingInterruptStatus } from '../lib/interrupt-status'
 import { loadSettings } from '../data/settings'
 import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverStalledResponses } from '../data/agentSettings'
@@ -929,23 +934,17 @@ function inferFileAction(before: string | undefined, after: string | undefined):
 
 // ── Optimistic User Messages ──
 
-const OPTIMISTIC_PREFIX = 'optimistic-user-'
-let optimisticCounter = 0
+function injectOptimisticUserMessage(
+  sessionId: string,
+  text: string,
+  modelId?: string,
+  attachments?: MessageAttachment[]
+): void {
+  const message = createOptimisticUserMessage(sessionId, text, attachments, modelId)
+  if (!message) return
 
-function injectOptimisticUserMessage(sessionId: string, text: string, modelId?: string): void {
-  if (!text.trim()) return
   const messages = state.messages.get(sessionId) ?? []
-  const id = `${OPTIMISTIC_PREFIX}${++optimisticCounter}`
-  const now = Date.now()
-  messages.push({
-    id,
-    role: 'user',
-    sessionId,
-    createdAt: now,
-    updatedAt: now,
-    modelId,
-    parts: [{ id: `${id}-part`, type: 'text', text }]
-  })
+  messages.push(message)
   state.messages.set(sessionId, messages)
 }
 
@@ -1935,7 +1934,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
             newPart.compactionAuto = part.auto as boolean | undefined
             newPart.compactionOverflow = part.overflow as boolean | undefined
           }
-          message.parts.push(newPart)
+          if (!replaceNextOptimisticUserFilePart(message, newPart)) {
+            message.parts.push(newPart)
+          }
         }
 
         // Update agent activity (but don't clobber blocked/stopping/terminal states)
@@ -3399,8 +3400,15 @@ function removeChildSessionTree(sessionId: string): void {
  * Optimistically mark the agent as running and update its task summary.
  * Shared by sendMessage and dispatchPendingMessage to avoid duplication.
  */
-function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: string, taskSummaryOverride?: string): void {
-  if (!text.trim()) return
+function applyOptimisticSendState(
+  agentId: string,
+  agent: LiveAgent,
+  text: string,
+  taskSummaryOverride?: string,
+  attachments?: MessageAttachment[]
+): void {
+  const trimmedText = text.trim()
+  if (!trimmedText && !attachments?.length) return
 
   if (taskSummaryOverride) {
     agent.taskSummary = taskSummaryOverride.slice(0, 120)
@@ -3408,8 +3416,8 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
     if (taskSummaryOverride === 'Create PR') {
       prExtractEnabled.add(agentId)
     }
-  } else {
-    agent.taskSummary = text.trim().slice(0, 120)
+  } else if (trimmedText) {
+    agent.taskSummary = trimmedText.slice(0, 120)
     taskSummaryLocked.delete(agentId)
   }
   agent.status = 'running'
@@ -3421,7 +3429,8 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
   injectOptimisticUserMessage(
     agent.sessionId,
     text,
-    getPendingTurnModel(agent.configuredModelPath, undefined, agent.modelOverridePath)
+    getPendingTurnModel(agent.configuredModelPath, undefined, agent.modelOverridePath),
+    attachments
   )
   persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
 }
@@ -3440,7 +3449,7 @@ function dispatchPendingMessage(agentId: string): void {
 
   const { text, agentConfig, attachments, taskSummaryOverride } = pending
 
-  applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
+  applyOptimisticSendState(agentId, agent, text, taskSummaryOverride, attachments)
 
   for (const [qId, q] of state.questions) {
     if (q.agentId === agentId) {
@@ -4063,7 +4072,7 @@ export function useAgentStore() {
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
 
     if (agent) {
-      applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
+      applyOptimisticSendState(agentId, agent, text, taskSummaryOverride, attachments)
     }
 
     // Optimistically clear any pending questions for this agent
