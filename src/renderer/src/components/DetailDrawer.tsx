@@ -70,8 +70,10 @@ import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
 
-function ResponseMetadata({ message }: { message: Message }) {
-  const metadata = formatResponseMetadata(message)
+function ResponseMetadata({ response }: {
+  response: Pick<Message, 'providerID' | 'model' | 'variant'>
+}) {
+  const metadata = formatResponseMetadata(response)
   if (!metadata) return null
 
   return (
@@ -2036,7 +2038,7 @@ export const MessageBubble = memo(function MessageBubble({
       )}
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
         <span>{isUser ? 'You' : 'Agent'}</span>
-        {!isUser && <ResponseMetadata message={message} />}
+        {!isUser && <ResponseMetadata response={message} />}
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2183,7 +2185,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
     <div ref={rootRef} className="max-w-[95%] self-start">
       {message.providerID && message.model && (
         <div className="mb-1 text-[10px]">
-          <ResponseMetadata message={message} />
+          <ResponseMetadata response={message} />
         </div>
       )}
       <button
@@ -2204,7 +2206,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
             <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
-                {tool.model && <span className="font-mono text-[10px] text-kumo-subtle">{tool.model}</span>}
+                <ResponseMetadata response={tool} />
                 <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
                   {tool.state}
                 </span>

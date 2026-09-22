@@ -607,6 +607,8 @@ export function App() {
               input: part.toolInput,
               output: part.text ?? undefined,
               model: msg.modelId ? formatModelName(msg.modelId) : undefined,
+              providerID: msg.providerID,
+              variant: msg.variant,
               timestamp: msg.createdAt,
               childSessionId: part.childSessionId,
               childActivityAt: part.childSessionId

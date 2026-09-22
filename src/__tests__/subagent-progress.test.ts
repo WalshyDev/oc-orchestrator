@@ -555,6 +555,8 @@ describe('subagent progress', () => {
       state: 'running',
       timestamp: 2,
       model: 'gpt-5.6-terra',
+      providerID: 'openai',
+      variant: 'high',
       input: JSON.stringify({ command: 'pnpm -w format:check' })
     }, {
       id: 'lint',
@@ -583,8 +585,8 @@ describe('subagent progress', () => {
 
     expect(shouldAutoExpandTool(tools[0], 'none', false)).toBe(false)
     expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(true)
-    expect(toolsTab).toContain('gpt-5.6-terra')
-    expect(transcript).toContain('gpt-5.6-terra')
+    expect(toolsTab).toContain('openai · gpt-5.6-terra · Effort: High')
+    expect(transcript).toContain('openai · gpt-5.6-terra · Effort: High')
     for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {
       expect(toolsTab).toContain(command)
       expect(transcript).toContain(command)
