@@ -77,7 +77,7 @@ function ResponseMetadata({ response }: {
   if (!metadata) return null
 
   return (
-    <span className="font-mono font-normal normal-case tracking-normal text-kumo-subtle/70">
+    <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70">
       {metadata}
     </span>
   )
