@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 import { SubagentProgress } from './SubagentProgress'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
 import type { OutputVerbosity } from '../data/settings'
 
 export interface ToolCall {
@@ -11,6 +12,8 @@ export interface ToolCall {
   input?: string
   output?: string
   model?: string
+  providerID?: string
+  variant?: string
   timestamp: number
   childActivityAt?: number
   /** For the `task` tool — sessionId of the sub-agent, so the UI can
@@ -204,6 +207,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
       <div className="flex flex-col gap-1">
         {sorted.map((tool) => {
           const isExpanded = expandedIds.has(tool.id)
+          const metadata = formatResponseMetadata(tool)
 
           return (
             <div
@@ -219,7 +223,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
                 </span>
 
                 <span className="font-mono text-xs text-kumo-default">{tool.name}</span>
-                {tool.model && <span className="font-mono text-[10px] text-kumo-subtle">{tool.model}</span>}
+                {metadata && <span className="font-mono text-[10px] text-kumo-subtle">{metadata}</span>}
 
                 <span
                   className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${stateStyles[tool.state]}`}

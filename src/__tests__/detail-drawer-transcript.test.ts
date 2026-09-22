@@ -51,7 +51,8 @@ describe('DetailDrawer transcript metadata', () => {
 
   it.each([
     { variant: 'max', expectedEffort: 'Max' },
-    { variant: undefined, expectedEffort: 'Provider Default' }
+    { variant: 'auto', expectedEffort: undefined },
+    { variant: undefined, expectedEffort: undefined }
   ])('renders provider, model, and $expectedEffort effort on agent messages', ({ variant, expectedEffort }) => {
     vi.stubGlobal('window', { innerHeight: 1000 })
     vi.stubGlobal('localStorage', { getItem: () => null })
@@ -72,7 +73,11 @@ describe('DetailDrawer transcript metadata', () => {
 
     expect(markup).toContain('opencode')
     expect(markup).toContain('luna')
-    expect(markup).toContain(`Effort: ${expectedEffort}`)
+    if (expectedEffort) {
+      expect(markup).toContain(`Effort: ${expectedEffort}`)
+    } else {
+      expect(markup).not.toContain('Effort:')
+    }
   })
 
   it('renders response metadata for tool-only assistant turns', () => {
@@ -92,7 +97,15 @@ describe('DetailDrawer transcript metadata', () => {
           sessionId: 'session-1',
           parts: [{ id: 'tool-part-1', type: 'tool', toolName: 'read' }]
         },
-        [{ id: 'tool-1', name: 'read', state: 'completed', timestamp: 1, model: 'response-model' }],
+        [{
+          id: 'tool-1',
+          name: 'read',
+          state: 'completed',
+          timestamp: 1,
+          model: 'response-model',
+          providerID: 'response-provider',
+          variant: 'max'
+        }],
         'now'
       )],
       onClose: () => {}

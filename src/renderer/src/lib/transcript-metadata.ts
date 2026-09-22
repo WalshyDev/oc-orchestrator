@@ -8,11 +8,16 @@ export function formatResponseMetadata(response: {
   variant?: string
 }): string | undefined {
   if (!response.model) return undefined
-  if (!response.providerID) return response.model
-  const effort = response.variant
-    ? response.variant.charAt(0).toUpperCase() + response.variant.slice(1)
-    : 'Provider Default'
-  return `${response.providerID} · ${response.model} · Effort: ${effort}`
+
+  const parts = response.providerID
+    ? [response.providerID, response.model]
+    : [response.model]
+  const variant = response.variant?.trim()
+  if (variant && variant !== 'auto') {
+    parts.push(`Effort: ${variant.charAt(0).toUpperCase()}${variant.slice(1)}`)
+  }
+
+  return parts.join(' · ')
 }
 
 export function buildToolGroupMessage(
