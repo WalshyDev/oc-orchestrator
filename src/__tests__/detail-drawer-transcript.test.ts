@@ -114,5 +114,6 @@ describe('DetailDrawer transcript metadata', () => {
     expect(markup).toContain('response-provider')
     expect(markup).toContain('response-model')
     expect(markup).toContain('Effort: Max')
+    expect(markup).toMatch(/class="[^"]*text-\[10px\][^"]*">response-provider · response-model · Effort: Max<\/span>/)
   })
 })
