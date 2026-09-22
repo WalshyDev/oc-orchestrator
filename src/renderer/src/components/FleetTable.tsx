@@ -1628,6 +1628,7 @@ function AgentRow({
               <button
                 onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
                 className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
+                aria-label="Open PR link"
               >
                 <GitPullRequest size={13} weight="bold" />
               </button>
