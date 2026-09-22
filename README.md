@@ -19,7 +19,7 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 - **MCP management** — view, connect, and disconnect MCP servers per agent
 - **`/new`** — reset an agent's conversation and branch without leaving the fleet table
 - **`/model`** — switch models on the fly per agent
-- **Auto PR** — one-click PR creation with editable PR links
+- **Auto PR** supports one click PR creation and editable links. Agents can set the session's PR link by writing `Set OCO PR Link for this session to PR_URL`
 - **Image attachments** — attach images to agent messages
 - **Command palette** — quick access to all actions via `Cmd+K`
 - **Desktop notifications** — configurable alerts for blocked, errored, and completed agents

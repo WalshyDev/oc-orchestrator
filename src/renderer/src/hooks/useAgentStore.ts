@@ -566,10 +566,65 @@ function deriveFreshAgentName(projectName: string): string {
 
 /** Matches GitHub and GitLab PR/MR URLs in message text. */
 const PR_URL_REGEX = /https?:\/\/(?:github\.com|gitlab\.com|gitlab\.[a-z0-9.-]+)\S*\/(?:pull|merge_requests)\/\d+\b/gi
+const PR_LINK_DIRECTIVE_PREFIX = 'Set OCO PR Link for this session to '
 
 function extractPrUrl(text: string): string | null {
   const matches = text.match(PR_URL_REGEX)
   return matches ? matches[matches.length - 1] : null
+}
+
+function extractPrLinkDirective(text: string): string | null {
+  const lines = text.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index].trim()
+    if (!line.startsWith(PR_LINK_DIRECTIVE_PREFIX)) continue
+
+    const candidate = line.slice(PR_LINK_DIRECTIVE_PREFIX.length)
+    if (!candidate || /\s/.test(candidate)) continue
+
+    try {
+      const url = new URL(candidate)
+      if ((url.protocol === 'http:' || url.protocol === 'https:') && extractPrUrl(candidate) === candidate) {
+        return candidate
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+export function applyAssistantPrUrlPart(
+  agent: Pick<LiveAgent, 'prUrl'>,
+  partType: string,
+  partText: string | undefined,
+  allowAutomaticExtraction: boolean,
+  persist: (prUrl: string) => void
+): boolean {
+  if (!partText) return false
+
+  const explicitPrUrl = partType === 'text' ? extractPrLinkDirective(partText) : null
+  const automaticPrUrl = allowAutomaticExtraction && (partType === 'text' || partType === 'tool')
+    ? extractPrUrl(partText)
+    : null
+  const prUrl = explicitPrUrl ?? automaticPrUrl
+  if (!prUrl || agent.prUrl === prUrl) return false
+
+  agent.prUrl = prUrl
+  persist(prUrl)
+  return true
+}
+
+export function applyAssistantPrUrlMessage(
+  agent: Pick<LiveAgent, 'prUrl'>,
+  message: Pick<LiveMessage, 'parts'>,
+  persist: (prUrl: string) => void
+): boolean {
+  for (let index = message.parts.length - 1; index >= 0; index--) {
+    const part = message.parts[index]
+    if (applyAssistantPrUrlPart(agent, part.type, part.text, false, persist)) return true
+  }
+  return false
 }
 
 function subscribe(listener: () => void): () => void {
@@ -1719,8 +1774,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
         adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt, modelId)
       }
 
+      let updatedMessage: LiveMessage | undefined
       if (!adopted) {
-        upsertMessage({
+        updatedMessage = upsertMessage({
           id: messageId,
           role,
           sessionId,
@@ -1732,6 +1788,20 @@ function processEvent(payload: OpenCodeEventPayload): void {
           ...getAssistantResponseMetadata(info),
           parts: []
         })
+      }
+
+      if (
+        agent &&
+        role === 'assistant' &&
+        completedAt !== undefined &&
+        updatedMessage &&
+        applyAssistantPrUrlMessage(
+          agent,
+          updatedMessage,
+          (prUrl) => persistAgentMeta(agent.id, { prUrl })
+        )
+      ) {
+        agentChanged = true
       }
 
       emit({ messages: true, agents: agentChanged })
@@ -1878,15 +1948,18 @@ function processEvent(payload: OpenCodeEventPayload): void {
           associateKnownChildren(sessionId)
         }
         if (agent) {
-          // Extract PR URL from assistant text and tool output parts, but only
-          // when the "Create PR" flow was explicitly triggered by the user.
-          if (prExtractEnabled.has(agent.id) && message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
-            const prUrl = extractPrUrl(partText)
-            if (prUrl && agent.prUrl !== prUrl) {
-              agent.prUrl = prUrl
-              agentChanged = true
-              persistAgentMeta(agent.id, { prUrl })
-            }
+          if (
+            message.role === 'assistant' &&
+            prExtractEnabled.has(agent.id) &&
+            applyAssistantPrUrlPart(
+              agent,
+              partType,
+              partText,
+              true,
+              (prUrl) => persistAgentMeta(agent.id, { prUrl })
+            )
+          ) {
+            agentChanged = true
           }
           agent.lastActivityAt = Date.now()
           if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed' && agent.status !== 'idle') {
