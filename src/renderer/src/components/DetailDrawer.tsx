@@ -1814,10 +1814,10 @@ function AgentConfigPanel({
   }, [agent.model, options, selectedModel])
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(selectedModel, providerData, configModel, agent.variant),
-    [selectedModel, providerData, configModel, agent.variant]
+    () => getVariantOptionsForModel(selectedModel, providerData, configModel, agent.configuredVariant),
+    [selectedModel, providerData, configModel, agent.configuredVariant]
   )
-  const selectedEffort = agent.variant ?? 'auto'
+  const selectedEffort = agent.configuredVariant ?? 'auto'
 
   const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
     if (!onChangeModel || savingRef.current) return

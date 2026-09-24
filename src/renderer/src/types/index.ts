@@ -83,6 +83,7 @@ export interface AgentRuntime {
   configuredModel?: string
   configuredModelPath?: string
   variant?: string
+  configuredVariant?: string
   prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number

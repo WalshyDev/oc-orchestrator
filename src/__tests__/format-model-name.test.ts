@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyConfiguredModel,
+  applyObservedResponse,
   applyObservedModel,
   formatModelName,
-  getAgentModelState
+  getAgentModelState,
+  refreshEffectiveVariant,
+  resetObservedResponse
 } from '../renderer/src/hooks/useAgentStore'
 import { getDisplayedModel } from '../renderer/src/types'
 
@@ -108,5 +111,91 @@ describe('applyConfiguredModel', () => {
 
     expect(modelState.model).toBe('sonnet-5')
     expect(modelState.rawModelId).toBe('claude-sonnet-5')
+  })
+})
+
+describe('effective response variant', () => {
+  const providers = {
+    providers: [{
+      id: 'openai',
+      name: 'OpenAI',
+      models: {
+        'gpt-5.6-luna': {
+          id: 'gpt-5.6-luna',
+          name: 'GPT-5.6 Luna',
+          options: { reasoningEffort: 'max' },
+          variants: { max: { reasoningEffort: 'max' } }
+        }
+      }
+    }]
+  }
+
+  it('does not let delayed history replace a newer live response', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      rawProviderId: 'openai',
+      rawMessageVariant: 'max',
+      observedModelAt: 200
+    }
+
+    expect(applyObservedResponse(agent, 'claude-sonnet-5', 'anthropic', 'high', 100)).toBe(false)
+    expect(agent).toMatchObject({
+      model: 'gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      observedModelAt: 200
+    })
+  })
+
+  it('clears response metadata when a session resets', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'high',
+      configuredVariant: 'max',
+      rawModelId: 'claude-sonnet-5',
+      rawProviderId: 'anthropic',
+      rawMessageVariant: 'high',
+      observedModelAt: 200
+    }
+
+    resetObservedResponse(agent)
+
+    expect(agent).toMatchObject({ model: 'gpt-5.6-luna', variant: 'max' })
+    expect(agent.rawModelId).toBeUndefined()
+    expect(agent.rawProviderId).toBeUndefined()
+    expect(agent.rawMessageVariant).toBeUndefined()
+    expect(agent.observedModelAt).toBeUndefined()
+  })
+
+  it('waits for a model before applying a configured variant', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'Loading...',
+      variant: 'max',
+      configuredVariant: 'max'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(agent.variant).toBe('none')
+  })
+
+  it('uses merged model effort when no explicit variant applies', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'none'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(agent.variant).toBe('max')
   })
 })

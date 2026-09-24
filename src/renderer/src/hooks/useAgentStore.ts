@@ -10,7 +10,14 @@ import type {
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
-import { ensureProvidersLoaded, invalidateProviderCache, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
+import {
+  ensureProvidersLoaded,
+  invalidateProviderCache,
+  lookupContextLimit,
+  resolveEffectiveVariant,
+  subscribeToContextLimits,
+  type ProviderData
+} from './useModelOptions'
 import {
   AbandonedLaunches,
   applyLaunchFailure,
@@ -162,8 +169,10 @@ export interface LiveAgent {
   configuredModelPath?: string
   /** Explicit per-agent override sent with prompts and commands. */
   modelOverridePath?: string
-  /** The currently selected model variant (thinking level). */
-  variant?: string
+  /** The effective variant used by the latest top-level assistant turn. */
+  variant: string
+  /** Variant explicitly configured through OCO, separate from the effective value. */
+  configuredVariant?: string
   lastActivityAt: number
   blockedSince?: number
   prUrl: string | null
@@ -181,6 +190,9 @@ export interface LiveAgent {
    *  Used to look up the context limit from the provider cache. Separate from
    *  `model` (the formatted display name) and `configuredModel` (the setting). */
   rawModelId?: string
+  rawProviderId?: string
+  rawMessageVariant?: string
+  observedModelAt?: number
   /** Whether the name was auto-generated and should be replaced by the first prompt */
   autoNamed?: boolean
   /** Timestamp of last user response (sendMessage/replyToQuestion/respondToPermission).
@@ -467,6 +479,105 @@ function backfillContextLimits(): void {
     }
   }
   if (changed) emit({ agents: true })
+}
+
+const providerDataByAgent = new Map<string, ProviderData>()
+
+type EffectiveVariantAgent = Pick<
+  LiveAgent,
+  | 'id'
+  | 'model'
+  | 'configuredModelPath'
+  | 'variant'
+  | 'configuredVariant'
+  | 'rawModelId'
+  | 'rawProviderId'
+  | 'rawMessageVariant'
+  | 'observedModelAt'
+>
+
+function findProviderModel(
+  providers: ProviderData | undefined,
+  providerId: string | undefined,
+  modelId: string
+): ProviderData['providers'][number]['models'][string] | undefined {
+  if (!providers) return undefined
+
+  for (const provider of providers.providers) {
+    if (providerId && provider.id !== providerId) continue
+    const directMatch = provider.models[modelId]
+    if (directMatch) return directMatch
+    const model = Object.values(provider.models).find((candidate) => candidate.id === modelId)
+    if (model) return model
+  }
+
+  return undefined
+}
+
+function configuredVariantForTurn(
+  agent: EffectiveVariantAgent,
+  providerId: string | undefined,
+  modelId: string
+): string | undefined {
+  if (!agent.configuredVariant || !agent.configuredModelPath) return undefined
+
+  const slashIndex = agent.configuredModelPath.indexOf('/')
+  const configuredProviderId = slashIndex > 0 ? agent.configuredModelPath.slice(0, slashIndex) : undefined
+  const configuredModelId = slashIndex > 0 ? agent.configuredModelPath.slice(slashIndex + 1) : agent.configuredModelPath
+  if (configuredModelId !== modelId) return undefined
+  if (configuredProviderId && providerId && configuredProviderId !== providerId) return undefined
+  return agent.configuredVariant
+}
+
+export function refreshEffectiveVariant(
+  agent: EffectiveVariantAgent,
+  providers = providerDataByAgent.get(agent.id)
+): void {
+  const modelPath = agent.rawModelId ?? agent.configuredModelPath
+  if (!modelPath) {
+    agent.variant = 'none'
+    return
+  }
+
+  const slashIndex = modelPath.indexOf('/')
+  const providerId = agent.rawProviderId ?? (slashIndex > 0 ? modelPath.slice(0, slashIndex) : undefined)
+  const modelId = slashIndex > 0 ? modelPath.slice(slashIndex + 1) : modelPath
+
+  const model = findProviderModel(
+    providers,
+    providerId,
+    modelId
+  )
+  agent.variant = resolveEffectiveVariant(
+    agent.rawMessageVariant,
+    configuredVariantForTurn(agent, providerId, modelId),
+    model
+  )
+}
+
+export function applyObservedResponse(
+  agent: EffectiveVariantAgent,
+  modelId: string,
+  providerId: string | undefined,
+  messageVariant: string | undefined,
+  observedAt: number
+): boolean {
+  if (observedAt < (agent.observedModelAt ?? 0)) return false
+
+  applyObservedModel(agent, modelId)
+  agent.rawProviderId = providerId
+  agent.rawMessageVariant = messageVariant
+  agent.observedModelAt = observedAt
+  refreshEffectiveVariant(agent)
+  return true
+}
+
+export function resetObservedResponse(agent: EffectiveVariantAgent): void {
+  agent.rawModelId = undefined
+  agent.rawProviderId = undefined
+  agent.rawMessageVariant = undefined
+  agent.observedModelAt = undefined
+  refreshEffectiveVariant(agent)
 }
 
 // Tracks how many step-start parts (invoked sub-agents) are currently active
@@ -1200,17 +1311,25 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
 
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
-        applyObservedModel(agent, entry.info.modelID)
-        const limit = lookupContextLimit(entry.info.modelID)
-        if (limit !== undefined) {
-          agent.contextLimit = limit
-        } else {
-          console.debug('[hydrate] no context limit found in cache', {
-            agentId: agent.id,
-            modelId: entry.info.modelID,
-            hasTokens: !!entry.info.tokens,
-            contextTokens: agent.contextTokens
-          })
+        const modelUpdated = applyObservedResponse(
+          agent,
+          entry.info.modelID,
+          entry.info.providerID,
+          entry.info.variant,
+          createdAt
+        )
+        if (modelUpdated) {
+          const limit = lookupContextLimit(entry.info.modelID)
+          if (limit !== undefined) {
+            agent.contextLimit = limit
+          } else {
+            console.debug('[hydrate] no context limit found in cache', {
+              agentId: agent.id,
+              modelId: entry.info.modelID,
+              hasTokens: !!entry.info.tokens,
+              contextTokens: agent.contextTokens
+            })
+          }
         }
       }
 
@@ -1715,10 +1834,18 @@ function processEvent(payload: OpenCodeEventPayload): void {
           // Only update model from top-level (non-invoked) assistant messages
           const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
-            applyObservedModel(agent, modelId)
-            const limit = lookupContextLimit(modelId)
-            if (limit !== undefined) agent.contextLimit = limit
-            agentChanged = true
+            const modelUpdated = applyObservedResponse(
+              agent,
+              modelId,
+              info.providerID as string | undefined,
+              info.variant as string | undefined,
+              createdAt
+            )
+            if (modelUpdated) {
+              const limit = lookupContextLimit(modelId)
+              if (limit !== undefined) agent.contextLimit = limit
+              agentChanged = true
+            }
           }
 
           // Opencode reports provider errors on the assistant message itself via
@@ -2570,6 +2697,14 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (changed) emit({ todos: true })
     })
     void refetchChildSessions(payload.id).then(() => emit({ messages: true }))
+    void window.api.getProviders(payload.id).then((result) => {
+      if (!result.ok || !result.data) return
+      const agent = state.agents.get(payload.id)
+      if (!agent) return
+      providerDataByAgent.set(payload.id, result.data as ProviderData)
+      refreshEffectiveVariant(agent)
+      emit({ agents: true })
+    })
 
     // Use runtime config only until a response identifies the model actually used.
     void window.api.getConfig(payload.id).then((result) => {
@@ -2580,6 +2715,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (!agent) return
       if (agent.configuredModelPath) return
       applyConfiguredModel(agent, config.model)
+      refreshEffectiveVariant(agent)
       emit({ agents: true })
     })
   }
@@ -2621,7 +2757,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   agent.cost = 0
   agent.tokens = { input: 0, output: 0 }
   agent.contextTokens = undefined
-  agent.rawModelId = undefined
+  resetObservedResponse(agent)
   // contextLimit stays cached — the model doesn't change on reset.
   agent.lastActivityAt = Date.now()
   agent.lastError = undefined
@@ -2657,6 +2793,7 @@ function removeAgentState(agentId: string): void {
   clearPendingCompactionKickoff(agentId)
   sessionStepDepth.delete(agent.sessionId)
   clearChildSessionsForAgent(agentId)
+  providerDataByAgent.delete(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.todos.delete(agent.sessionId)
@@ -2736,7 +2873,11 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     configuredModel,
     configuredModelPath,
     modelOverridePath,
-    variant: payload.variantOverride ?? existingAgent?.variant,
+    variant: existingAgent?.variant ?? payload.variantOverride ?? 'none',
+    configuredVariant: payload.variantOverride ?? existingAgent?.configuredVariant,
+    rawProviderId: existingAgent?.rawProviderId,
+    rawMessageVariant: existingAgent?.rawMessageVariant,
+    observedModelAt: existingAgent?.observedModelAt,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
@@ -3595,7 +3736,8 @@ function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPaylo
     : modelOverride.modelID
   applyConfiguredModel(agent, modelPath)
   agent.modelOverridePath = modelPath
-  agent.variant = payload.variantOverride
+  agent.configuredVariant = payload.variantOverride
+  refreshEffectiveVariant(agent)
 }
 
 // ── Tool Call Extraction ──
@@ -3684,19 +3826,23 @@ export function useAgentStore() {
 
         const hydrationResults = await Promise.all(
           agentsResult.data.map(async (agent) => {
-            const [messages, todosChanged, children, config] = await Promise.all([
+            const [messages, todosChanged, children, config, providers] = await Promise.all([
               window.api.getMessages(agent.id),
               refetchTodos(agent.id),
               window.api.getChildSessions(agent.id),
-              window.api.getConfig(agent.id)
+              window.api.getConfig(agent.id),
+              window.api.getProviders(agent.id)
             ])
-            return { agentId: agent.id, messages, todosChanged, children, config }
+            return { agentId: agent.id, messages, todosChanged, children, config, providers }
           })
         )
 
         if (cancelled) return
 
-        for (const { agentId, messages, todosChanged, children, config } of hydrationResults) {
+        for (const { agentId, messages, todosChanged, children, config, providers } of hydrationResults) {
+          if (providers.ok && providers.data) {
+            providerDataByAgent.set(agentId, providers.data as ProviderData)
+          }
           if (messages.ok) {
             hydrateHistoricalMessages(messages.data)
             shouldEmit = true
@@ -3710,8 +3856,11 @@ export function useAgentStore() {
           const configModel = config.ok && config.data
             ? (config.data as { model?: string }).model
             : undefined
-          if (liveAgent && !liveAgent.configuredModelPath && configModel) {
-            applyConfiguredModel(liveAgent, configModel)
+          if (liveAgent) {
+            if (!liveAgent.configuredModelPath && configModel) {
+              applyConfiguredModel(liveAgent, configModel)
+            }
+            refreshEffectiveVariant(liveAgent)
             shouldEmit = true
           }
         }
@@ -3844,9 +3993,20 @@ export function useAgentStore() {
       }),
       // Runtime starts can expose new provider data; notify open model pickers
       // to refresh against the latest config instead of staying frozen at boot.
-      window.api.onRuntimeStarted(() => {
+      window.api.onRuntimeStarted((runtime) => {
         invalidateProviderCache()
         void ensureProvidersLoaded()
+        for (const agent of state.agents.values()) {
+          if (agent.runtimeId !== runtime.id) continue
+          void window.api.getProviders(agent.id).then((result) => {
+            if (!result.ok || !result.data) return
+            const currentAgent = state.agents.get(agent.id)
+            if (!currentAgent) return
+            providerDataByAgent.set(agent.id, result.data as ProviderData)
+            refreshEffectiveVariant(currentAgent)
+            emit({ agents: true })
+          })
+        }
       }),
       // Backfill contextLimit for agents whose modelID was hydrated before the
       // provider fetch completed (common on cold start).
@@ -4488,7 +4648,8 @@ export function useAgentStore() {
     if (!agent) return
     applyConfiguredModel(agent, modelPath)
     agent.modelOverridePath = modelPath
-    agent.variant = variant
+    agent.configuredVariant = variant
+    refreshEffectiveVariant(agent)
     emit({ agents: true })
   }, [])
 

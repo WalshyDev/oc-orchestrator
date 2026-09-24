@@ -19,9 +19,30 @@ export interface ProviderData {
       id: string
       name: string
       limit?: { context?: number; input?: number; output?: number }
+      options?: Record<string, unknown>
       variants?: Record<string, Record<string, unknown>>
     }>
   }>
+}
+
+type ProviderModel = ProviderData['providers'][number]['models'][string]
+
+export function resolveEffectiveVariant(
+  messageVariant: string | undefined,
+  configuredVariant: string | undefined,
+  model: ProviderModel | undefined
+): string {
+  if (messageVariant) return messageVariant
+  if (configuredVariant) return configuredVariant
+
+  const reasoningEffort = model?.options?.reasoningEffort
+  if (typeof reasoningEffort !== 'string') return 'none'
+
+  for (const [variant, options] of Object.entries(model?.variants ?? {})) {
+    if (options.reasoningEffort === reasoningEffort) return variant
+  }
+
+  return 'none'
 }
 
 export function formatVariantLabel(key: string): string {
