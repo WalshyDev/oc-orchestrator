@@ -22,6 +22,7 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 - **Auto PR** supports one click PR creation and editable links. Agents can set the session's PR link by writing `Set OCO PR Link for this session to PR_URL`
 - **Image attachments** — attach images to agent messages
 - **Command palette** — quick access to all actions via `Cmd+K`
+- Reload OpenCode instructions and runtime config from **View > Force Reload**
 - **Desktop notifications** — configurable alerts for blocked, errored, and completed agents
 - **Auto-update** — notifies when a new version is available on npm
 
