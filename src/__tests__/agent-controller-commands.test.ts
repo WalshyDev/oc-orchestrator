@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sessionStatus: vi.fn(),
   sessionTodo: vi.fn(),
   sessionAbort: vi.fn(),
+  sessionSummarize: vi.fn(),
   configUpdate: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
@@ -85,6 +86,7 @@ const runtime = {
       status: mocks.sessionStatus,
       todo: mocks.sessionTodo,
       abort: mocks.sessionAbort,
+      summarize: mocks.sessionSummarize,
     },
     config: {
       update: mocks.configUpdate,
@@ -182,6 +184,8 @@ describe('AgentController.executeCommand', () => {
     mocks.sessionTodo.mockResolvedValue({ data: [] })
     mocks.sessionAbort.mockReset()
     mocks.sessionAbort.mockResolvedValue({ data: undefined })
+    mocks.sessionSummarize.mockReset()
+    mocks.sessionSummarize.mockResolvedValue({ data: true })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
     mocks.sendToRenderer.mockReset()
@@ -421,35 +425,67 @@ describe('AgentController.executeCommand', () => {
     })
   })
 
-  it('preserves pinned effort when a slash command changes the model', async () => {
+  it('keeps the pinned model and effort after a command or compaction uses another model', async () => {
+    const commandMessage = {
+      id: 'command-model-message',
+      sessionID: 'command-model-session',
+      role: 'user',
+      model: { providerID: 'opencode', modelID: 'luna' },
+      time: { created: 200 },
+    }
     mocks.sessionCommand.mockImplementationOnce(async () => {
+      mocks.bridgeEvent?.({ type: 'message.updated', properties: { info: commandMessage } })
+      return { data: undefined }
+    })
+    mocks.sessionSummarize.mockImplementationOnce(async () => {
       mocks.bridgeEvent?.({
         type: 'message.updated',
         properties: {
           info: {
-            id: 'command-model-message',
+            id: 'compaction-message',
             sessionID: 'command-model-session',
             role: 'user',
-            model: { providerID: 'opencode', modelID: 'luna' },
-            time: { created: 200 },
+            model: { providerID: 'anthropic', modelID: 'claude-opus-5' },
+            time: { created: 300 },
           },
         },
       })
-      return { data: undefined }
+      return { data: true }
     })
 
     await agentController.executeCommand('agent-6', 'review', '')
-    await agentController.executeCommand('agent-6', 'review', '')
+    // OpenCode emits message.updated again when it adds the turn summary.
+    mocks.bridgeEvent?.({ type: 'message.updated', properties: { info: commandMessage } })
+    await agentController.compactSession('agent-6')
+    await agentController.sendMessage('agent-6', 'Back to the pinned model')
 
-    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      model: 'openai/gpt-5.6-sol',
-      variant: 'max',
-    }))
-    expect(mocks.sessionCommand).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      model: 'opencode/luna',
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'command-model-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variant: 'max',
     }))
     expect(agentController.getAgent('agent-6')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'max',
+    })
+    expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
+  })
+
+  it('adopts the effort an attached client stores on the message model', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'attached-luna-max-message',
+          sessionID: 'bare-model-session',
+          role: 'user',
+          model: { providerID: 'opencode', modelID: 'luna', variant: 'max' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    expect(agentController.getAgent('agent-2')).toMatchObject({
       modelOverride: { providerID: 'opencode', modelID: 'luna' },
       variantOverride: 'max',
     })
