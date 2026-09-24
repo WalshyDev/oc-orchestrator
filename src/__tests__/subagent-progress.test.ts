@@ -200,6 +200,20 @@ describe('subagent progress', () => {
     expect(markup).toContain('gpt-5.6-terra')
   })
 
+  it('shows the message timestamp before its content', () => {
+    const markup = renderToStaticMarkup(createElement(MessageBubble, {
+      message: {
+        id: 'response',
+        role: 'assistant',
+        content: 'Review complete',
+        timestamp: '12m ago'
+      }
+    }))
+
+    expect(markup).toContain('12m ago')
+    expect(markup.indexOf('12m ago')).toBeLessThan(markup.indexOf('Review complete'))
+  })
+
   it('does not revive a completed Task when a new user message is optimistic', () => {
     const task = {
       ...assistantMessage('child', [{ id: 'task', type: 'tool', toolName: 'task', toolState: 'pending' }]),
