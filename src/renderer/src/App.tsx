@@ -25,8 +25,7 @@ import {
   getActiveAssistantMessage,
   getLatestChildActivityAt,
   mapToolState,
-  orderTranscriptByActivity,
-  resolveCurrentTurnModelId
+  orderTranscriptByActivity
 } from './lib/subagent-progress'
 import { extractLastAssistantMessage } from './lib/last-message'
 import { getCurrentTaskProgress } from './lib/task-progress'
@@ -353,12 +352,6 @@ export function App() {
       // swap the task summary so the fleet table doesn't show a stale prompt.
       const displayStatus = agent.compacting ? 'compacting' : agent.status
       const displayTaskSummary = agent.compacting ? 'Compacting session…' : agent.taskSummary
-      const sessionActive = !['idle', 'completed', 'errored', 'disconnected'].includes(agent.status)
-      const currentTurnModelId = resolveCurrentTurnModelId(
-        agent.sessionId,
-        getMessagesForSession,
-        sessionActive
-      )
 
       return {
         id: agent.id,
@@ -373,7 +366,7 @@ export function App() {
         status: displayStatus,
         labelIds: agent.labelIds,
         model: agent.model,
-        activeModel: currentTurnModelId ? formatModelName(currentTurnModelId) : undefined,
+        configuredModel: agent.configuredModel,
         configuredModelPath: agent.configuredModelPath,
         variant: agent.variant,
         prUrl: agent.prUrl,

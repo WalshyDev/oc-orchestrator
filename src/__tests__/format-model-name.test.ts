@@ -66,9 +66,12 @@ describe('formatModelName', () => {
 })
 
 describe('getDisplayedModel', () => {
-  it('includes an explicit effort level', () => {
-    expect(getDisplayedModel({ model: 'gpt-5.6-sol', activeModel: 'gpt-5.6-luna', variant: 'max' }))
-      .toBe('gpt-5.6-luna (Max)')
+  it('shows the configured next model and effort', () => {
+    expect(getDisplayedModel({
+      model: 'gpt-5.6-sol',
+      configuredModel: 'gpt-5.6-luna',
+      variant: 'max'
+    })).toBe('gpt-5.6-luna (Max)')
   })
 
   it('omits provider-default effort', () => {

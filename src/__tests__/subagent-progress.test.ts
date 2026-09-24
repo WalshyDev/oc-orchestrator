@@ -26,11 +26,10 @@ import {
   collectSessionSubtreeIds,
   mergeLiveMessagePart,
   orderTranscriptByActivity,
-  resolveCurrentTurnModelId,
   type TaskPartDescriptor
 } from '../renderer/src/lib/subagent-progress'
 import { getPendingInterruptStatus } from '../renderer/src/lib/interrupt-status'
-import { getDisplayedModel, type Message } from '../renderer/src/types'
+import { type Message } from '../renderer/src/types'
 
 function assistantMessage(sessionId: string, parts: LiveMessage['parts'], updatedAt = 1): LiveMessage {
   return {
@@ -186,67 +185,6 @@ describe('subagent progress', () => {
     expect(getActiveAssistantMessage([assistantMessage('child', [])], false)).toBeUndefined()
   })
 
-  it('uses the deepest active child model while a Task is running', () => {
-    const parentTask: LiveMessage['parts'][number] = {
-      id: 'task', type: 'tool', toolName: 'task', toolState: 'running', childSessionId: 'child'
-    }
-    const childTask: LiveMessage['parts'][number] = {
-      id: 'nested-task', type: 'tool', toolName: 'task', toolState: 'running', childSessionId: 'grandchild'
-    }
-    const messages = new Map<string, LiveMessage[]>([
-      ['parent', [modelMessage('parent', 'gpt-5.6-sol', [parentTask])]],
-      ['child', [modelMessage('child', 'claude-sonnet-5', [childTask])]],
-      ['grandchild', [modelMessage('grandchild', 'gpt-5.6-terra')]]
-    ])
-
-    expect(resolveCurrentTurnModelId('parent', (sessionId) => messages.get(sessionId) ?? []))
-      .toBe('gpt-5.6-terra')
-
-    childTask.toolState = 'completed'
-    expect(resolveCurrentTurnModelId('parent', (sessionId) => messages.get(sessionId) ?? []))
-      .toBe('claude-sonnet-5')
-
-    parentTask.toolState = 'completed'
-    expect(resolveCurrentTurnModelId('parent', (sessionId) => messages.get(sessionId) ?? []))
-      .toBe('gpt-5.6-sol')
-  })
-
-  it('uses the most recently active parallel child model', () => {
-    const messages = new Map<string, LiveMessage[]>([
-      ['parent', [modelMessage('parent', 'gpt-5.6-sol', [{
-        id: 'first-task', type: 'tool', toolName: 'task', toolState: 'running', childSessionId: 'first'
-      }, {
-        id: 'second-task', type: 'tool', toolName: 'task', toolState: 'running', childSessionId: 'second'
-      }])]],
-      ['first', [{ ...modelMessage('first', 'gpt-5.6-terra'), updatedAt: 5 }]],
-      ['second', [{ ...modelMessage('second', 'claude-sonnet-5'), updatedAt: 3 }]]
-    ])
-
-    expect(resolveCurrentTurnModelId('parent', (sessionId) => messages.get(sessionId) ?? []))
-      .toBe('gpt-5.6-terra')
-  })
-
-  it('uses the next user message model before its assistant starts', () => {
-    const runningTask: LiveMessage['parts'][number] = {
-      id: 'task', type: 'tool', toolName: 'task', toolState: 'running', childSessionId: 'child'
-    }
-    const nextUser: LiveMessage = {
-      id: 'next-user',
-      role: 'user',
-      sessionId: 'parent',
-      createdAt: 3,
-      modelId: 'gpt-5.6-terra',
-      parts: []
-    }
-    const messages = new Map<string, LiveMessage[]>([
-      ['parent', [modelMessage('parent', 'gpt-5.6-sol', [runningTask]), nextUser]],
-      ['child', [modelMessage('child', 'claude-sonnet-5')]]
-    ])
-
-    expect(resolveCurrentTurnModelId('parent', (sessionId) => messages.get(sessionId) ?? []))
-      .toBe('gpt-5.6-terra')
-  })
-
   it('shows the producing model on assistant output', () => {
     const markup = renderToStaticMarkup(createElement(MessageBubble, {
       message: {
@@ -260,11 +198,6 @@ describe('subagent progress', () => {
 
     expect(markup).toContain('Review complete')
     expect(markup).toContain('gpt-5.6-terra')
-  })
-
-  it('uses the active model for Fleet display and sorting', () => {
-    expect(getDisplayedModel({ model: 'gpt-5.6-sol', activeModel: 'gpt-5.6-terra' }))
-      .toBe('gpt-5.6-terra')
   })
 
   it('does not revive a completed Task when a new user message is optimistic', () => {
