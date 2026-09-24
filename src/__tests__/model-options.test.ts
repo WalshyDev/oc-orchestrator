@@ -4,6 +4,7 @@ import {
   ensureProvidersLoaded,
   getVariantOptionsForModel,
   invalidateProviderCache,
+  resolveEffectiveVariant,
   resolveSystemDefaultLabel,
   type ProviderData,
 } from '../renderer/src/hooks/useModelOptions'
@@ -88,6 +89,44 @@ describe('getVariantOptionsForModel', () => {
       { value: 'auto', label: 'Provider Default' },
       { value: 'max', label: 'Max' },
     ])
+  })
+})
+
+describe('resolveEffectiveVariant', () => {
+  const model = {
+    id: 'gpt-6-luna',
+    name: 'GPT-6 Luna',
+    options: { reasoningEffort: 'max' },
+    variants: {
+      high: { reasoningEffort: 'high' },
+      max: { reasoningEffort: 'max' },
+    },
+  }
+
+  it('prefers the variant recorded on the message', () => {
+    expect(resolveEffectiveVariant('low', 'high', model)).toBe('low')
+  })
+
+  it('uses the configured variant when the message omits one', () => {
+    expect(resolveEffectiveVariant(undefined, 'high', model)).toBe('high')
+  })
+
+  it('matches merged model reasoning effort when no explicit variant applies', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, model)).toBe('max')
+  })
+
+  it('returns none when merged model options do not match a variant', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, {
+      ...model,
+      options: { reasoningEffort: 'custom' },
+    })).toBe('none')
+  })
+
+  it('returns none when the model has no reasoning effort', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, {
+      ...model,
+      options: {},
+    })).toBe('none')
   })
 })
 
