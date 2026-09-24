@@ -62,6 +62,12 @@ export function parseModelString(model: string): { providerID: string; modelID: 
   return { providerID: '', modelID: model }
 }
 
+// Older servers put the variant on the message instead of its model.
+function readMessageVariant(info: Record<string, unknown>, model: Record<string, unknown>): string | undefined {
+  const variant = model.variant ?? info.variant
+  return typeof variant === 'string' ? variant : undefined
+}
+
 function sanitizeSlug(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -276,6 +282,7 @@ class AgentController {
   private lastUserActionAt = new Map<string, number>()
   private sessionActivity = new Map<string, { version: number; at: number }>()
   private sessionParents = new Map<string, string>()
+  private activeTransientModelTurns = new Map<string, number>()
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
@@ -849,14 +856,17 @@ class AgentController {
     const model = handle.modelOverride?.providerID
       ? `${handle.modelOverride.providerID}/${handle.modelOverride.modelID}`
       : handle.modelOverride?.modelID
-    const result = await runtime.client.session.command({
-      sessionID: handle.sessionId,
-      directory: handle.directory,
-      command,
-      arguments: args,
-      ...(model && { model }),
-      ...(handle.variantOverride && { variant: handle.variantOverride })
-    })
+    const result = await this.withTransientModelTurn(
+      handle.sessionId,
+      () => runtime.client.session.command({
+        sessionID: handle.sessionId,
+        directory: handle.directory,
+        command,
+        arguments: args,
+        ...(model && { model }),
+        ...(handle.variantOverride && { variant: handle.variantOverride })
+      })
+    )
 
     return result.data
   }
@@ -1090,11 +1100,14 @@ class AgentController {
       ...model
     })
 
-    const result = await runtime.client.session.summarize({
-      sessionID: handle.sessionId,
-      directory: handle.directory,
-      ...model
-    })
+    const result = await this.withTransientModelTurn(
+      handle.sessionId,
+      () => runtime.client.session.summarize({
+        sessionID: handle.sessionId,
+        directory: handle.directory,
+        ...model
+      })
+    )
 
     console.log('[AgentController.compactSession] summarize response', {
       agentId,
@@ -1875,12 +1888,17 @@ class AgentController {
     if (!handle) return
 
     const createdAt = this.getModelMessageCreatedAt(info)
-    if (createdAt < (handle.modelUpdatedAt ?? 0)) return
+    if (createdAt <= (handle.modelUpdatedAt ?? 0)) return
     handle.modelUpdatedAt = createdAt
 
-    const variantOverride = typeof info.variant === 'string'
-      ? info.variant
-      : handle.variantOverride
+    // Commands and compactions use a temporary model for one turn.
+    if (this.activeTransientModelTurns.has(sessionId)) {
+      this.persistAgents()
+      return
+    }
+
+    const messageVariant = readMessageVariant(info, model)
+    const variantOverride = messageVariant ?? handle.variantOverride
     if (
       handle.modelOverride?.providerID === model.providerID &&
       handle.modelOverride.modelID === model.modelID &&
@@ -1895,6 +1913,18 @@ class AgentController {
       modelOverride: handle.modelOverride,
       variantOverride: handle.variantOverride
     })
+  }
+
+  private async withTransientModelTurn<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    const activeTurns = (this.activeTransientModelTurns.get(sessionId) ?? 0) + 1
+    this.activeTransientModelTurns.set(sessionId, activeTurns)
+    try {
+      return await run()
+    } finally {
+      const remainingTurns = (this.activeTransientModelTurns.get(sessionId) ?? 1) - 1
+      if (remainingTurns > 0) this.activeTransientModelTurns.set(sessionId, remainingTurns)
+      else this.activeTransientModelTurns.delete(sessionId)
+    }
   }
 
   private getModelMessageCreatedAt(info: Record<string, unknown>): number {
