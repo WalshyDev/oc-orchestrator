@@ -8,7 +8,7 @@ import {
   refreshEffectiveVariant,
   resetObservedResponse
 } from '../renderer/src/hooks/useAgentStore'
-import { getDisplayedModel } from '../renderer/src/types'
+import { getDisplayedModel, getDisplayedVariant } from '../renderer/src/types'
 
 describe('formatModelName', () => {
   describe('Claude models', () => {
@@ -69,17 +69,27 @@ describe('formatModelName', () => {
 })
 
 describe('getDisplayedModel', () => {
-  it('shows the configured next model and effort', () => {
+  it('shows the configured next model', () => {
     expect(getDisplayedModel({
       model: 'gpt-5.6-sol',
-      configuredModel: 'gpt-5.6-luna',
-      variant: 'max'
-    })).toBe('gpt-5.6-luna (Max)')
+      configuredModel: 'gpt-5.6-luna'
+    })).toBe('gpt-5.6-luna')
   })
 
-  it('omits provider-default effort', () => {
-    expect(getDisplayedModel({ model: 'gpt-5.6-luna' })).toBe('gpt-5.6-luna')
-    expect(getDisplayedModel({ model: 'gpt-5.6-luna', variant: 'auto' })).toBe('gpt-5.6-luna')
+  it('falls back to the active model', () => {
+    expect(getDisplayedModel({ model: 'gpt-5.6-sol' })).toBe('gpt-5.6-sol')
+  })
+})
+
+describe('getDisplayedVariant', () => {
+  it('formats explicit variants', () => {
+    expect(getDisplayedVariant({ variant: 'max' })).toBe('Max')
+  })
+
+  it('labels provider-default variants', () => {
+    expect(getDisplayedVariant({})).toBe('Provider default')
+    expect(getDisplayedVariant({ variant: 'auto' })).toBe('Provider default')
+    expect(getDisplayedVariant({ variant: 'none' })).toBe('Provider default')
   })
 })
 

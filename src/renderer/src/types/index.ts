@@ -263,11 +263,14 @@ export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): stri
   return agent.branchName ?? ''
 }
 
-export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'configuredModel' | 'variant'>): string {
-  const model = agent.configuredModel ?? agent.model
-  if (!agent.variant || agent.variant === 'auto') return model
-  const effort = agent.variant.charAt(0).toUpperCase() + agent.variant.slice(1)
-  return `${model} (${effort})`
+export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'configuredModel'>): string {
+  return agent.configuredModel ?? agent.model
+}
+
+export function getDisplayedVariant(agent: Pick<AgentRuntime, 'variant'>): string {
+  const variant = agent.variant?.trim()
+  if (!variant || variant === 'auto' || variant === 'none') return 'Provider default'
+  return variant.charAt(0).toUpperCase() + variant.slice(1)
 }
 
 export function statusLabel(status: AgentStatus): string {

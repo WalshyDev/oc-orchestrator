@@ -2017,28 +2017,35 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div
       ref={rootRef}
-      className={`group relative px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
+      className={`group px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
         isUser
           ? 'bg-kumo-interact/10 border border-kumo-interact/15 text-kumo-default self-end max-w-[85%]'
           : 'bg-kumo-control border border-kumo-line text-kumo-default max-w-[95%]'
       }`}
     >
-      {message.content && (
-        <button
-          type="button"
-          onClick={handleCopy}
-          title={copyLabel}
-          aria-label={copyLabel}
-          className="absolute top-1.5 right-1.5 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-        >
-          {copied
-            ? <Check size={12} weight="bold" />
-            : <Copy size={12} weight="regular" />}
-        </button>
-      )}
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
-        <span>{isUser ? 'You' : 'Agent'}</span>
-        {!isUser && <ResponseMetadata response={message} />}
+      <div className="mb-1 flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle">
+          <span>{isUser ? 'You' : 'Agent'}</span>
+          {!isUser && <ResponseMetadata response={message} />}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {message.content && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              title={copyLabel}
+              aria-label={copyLabel}
+              className="-my-1 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+            >
+              {copied
+                ? <Check size={12} weight="bold" />
+                : <Copy size={12} weight="regular" />}
+            </button>
+          )}
+          <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70 whitespace-nowrap">
+            {message.timestamp}
+          </span>
+        </div>
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2073,6 +2080,7 @@ export const MessageBubble = memo(function MessageBubble({
   prev.message.model === next.message.model &&
   prev.message.providerID === next.message.providerID &&
   prev.message.variant === next.message.variant &&
+  prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.registerRef === next.registerRef
