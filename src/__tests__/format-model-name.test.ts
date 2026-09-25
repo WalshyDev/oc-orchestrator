@@ -161,7 +161,27 @@ describe('effective response variant', () => {
     })
   })
 
-  it('clears response metadata when a session resets', () => {
+  it('lets a later message with the same timestamp replace the observed response', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      rawProviderId: 'openai',
+      rawMessageVariant: 'max',
+      observedModelAt: 200
+    }
+
+    expect(applyObservedResponse(agent, 'claude-sonnet-5', 'anthropic', 'high', 200)).toBe(true)
+    expect(agent).toMatchObject({
+      model: 'sonnet-5',
+      variant: 'high',
+      rawModelId: 'claude-sonnet-5',
+      observedModelAt: 200
+    })
+  })
+
+  it('restores the configured variant when a session resets', () => {
     const agent = {
       id: 'agent-1',
       model: 'gpt-5.6-luna',
@@ -193,6 +213,26 @@ describe('effective response variant', () => {
 
     refreshEffectiveVariant(agent, providers)
 
+    expect(agent.variant).toBe('none')
+  })
+
+  it('ignores the configured variant when a response used a different model', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-sol',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'high',
+      configuredVariant: 'high',
+      rawModelId: 'gpt-5.6-sol',
+      rawProviderId: 'openai'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+    expect(agent.variant).toBe('none')
+
+    agent.rawModelId = 'gpt-5.6-luna'
+    agent.rawProviderId = 'azure'
+    refreshEffectiveVariant(agent, providers)
     expect(agent.variant).toBe('none')
   })
 
