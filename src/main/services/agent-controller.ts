@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { OpencodeClient, TextPartInput, FilePartInput } from '@opencode-ai/sdk/v2/client'
-import { buildSessionOwnerIndex, collectChildSessionTranscripts, groupRequestsByOwner } from './child-session-hydration'
+import { buildSessionOwnerIndex, collectChildSessionTranscripts, dropSettledToolRequests, groupRequestsByOwner } from './child-session-hydration'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
@@ -1341,7 +1341,7 @@ class AgentController {
         })
 
         if (permissionsResult.data && Array.isArray(permissionsResult.data)) {
-          const permissions = permissionsResult.data as Array<{ id: string; sessionID: string }>
+          const permissions = await dropSettledToolRequests(runtime.client, permissionsResult.data, directory)
           const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
           const ownerResult = permissions.some((permission) => !directOwners.has(permission.sessionID))
             ? await buildSessionOwnerIndex(
@@ -1392,7 +1392,7 @@ class AgentController {
         })
 
         if (questionsResult.data && Array.isArray(questionsResult.data)) {
-          const questions = questionsResult.data as Array<{ id: string; sessionID: string }>
+          const questions = await dropSettledToolRequests(runtime.client, questionsResult.data, directory)
           const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
           const ownerResult = questions.some((question) => !directOwners.has(question.sessionID))
             ? await buildSessionOwnerIndex(
