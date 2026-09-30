@@ -11,11 +11,15 @@ describe('launch PR input', () => {
     'https://github.com/owner/repo/pull/123',
     'https://gitlab.cfdata.org/group/repo/-/merge_requests/42?tab=changes#diff',
     'https://forge.example.org/group/repo/-/merge_requests/42/',
-  ])('accepts and trims a PR or MR URL %s', (url) => {
+    'https://github.com/owner/repo/pull/123/files',
+    'https://github.com/owner/repo',
+    'https://wiki.example.org/page?version=2#notes',
+    'http://localhost:3000/review',
+  ])('accepts and trims any web URL %s', (url) => {
     expect(parseLaunchPrUrl(` ${url} `)).toBe(url)
   })
 
-  it.each(['', 'not a URL', 'https://github.com/owner/repo', 'javascript:alert(1)', 'https://user:password@github.com/owner/repo/pull/1'])('rejects non-PR input %s', (input) => {
+  it.each(['', 'not a URL', 'javascript:alert(1)', 'https://user:password@github.com/owner/repo/pull/1'])('rejects invalid web input %s', (input) => {
     expect(parseLaunchPrUrl(input)).toBeUndefined()
   })
 
@@ -44,6 +48,7 @@ describe('launch PR input', () => {
     }))
     expect(markup).toContain('id="launch-pr-url"')
     expect(markup).toContain('type="url"')
-    expect(markup).toContain('PR / MR Link')
+    expect(markup).toContain('Link <span')
+    expect(markup).toContain('placeholder="https://example.com/review"')
   })
 })

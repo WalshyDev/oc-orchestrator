@@ -110,7 +110,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [prompt, setPrompt] = useState('')
   const [prUrlInput, setPrUrlInput] = useState('')
   const prUrl = parseLaunchPrUrl(prUrlInput)
-  const prUrlError = prUrlInput.trim() && !prUrl ? 'Enter a GitHub PR or GitLab MR URL.' : null
+  const prUrlError = prUrlInput.trim() && !prUrl ? 'Enter an HTTP or HTTPS URL.' : null
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
@@ -808,14 +808,14 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="launch-pr-url" className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  PR / MR Link <span className="text-kumo-subtle/60">(optional)</span>
+                  Link <span className="text-kumo-subtle/60">(optional)</span>
                 </label>
                 <input
                   id="launch-pr-url"
                   type="url"
                   value={prUrlInput}
                   onChange={(event) => setPrUrlInput(event.target.value)}
-                  placeholder="https://github.com/owner/repo/pull/123"
+                  placeholder="https://example.com/review"
                   aria-invalid={!!prUrlError}
                   aria-describedby="launch-pr-url-help"
                   className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
