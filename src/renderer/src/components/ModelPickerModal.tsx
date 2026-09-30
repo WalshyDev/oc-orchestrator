@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, Check, CircleNotch, MagnifyingGlass, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { formatVariantLabel } from '../hooks/useModelOptions'
 
 interface ProviderModel {
   id: string
@@ -20,10 +21,6 @@ interface ModelPickerModalProps {
   currentVariant?: string
   onClose: () => void
   onSelect: (modelPath: string, variant?: string) => void
-}
-
-function formatVariantLabel(key: string): string {
-  return key.charAt(0).toUpperCase() + key.slice(1)
 }
 
 export function ModelPickerModal({ agentId, currentModel, currentVariant, onClose, onSelect }: ModelPickerModalProps) {

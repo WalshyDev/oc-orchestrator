@@ -151,11 +151,11 @@ const api = {
   stopRuntime: (runtimeId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:stop', runtimeId),
 
-  listAllProviders: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:providers'),
+  listAllProviders: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:providers', directory),
 
-  getSystemConfig: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:config'),
+  getSystemConfig: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:config', directory),
 
   listAllCommands: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:commands'),

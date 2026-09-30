@@ -1818,6 +1818,9 @@ function AgentConfigPanel({
     [selectedModel, providerData, configModel, agent.configuredVariant]
   )
   const selectedEffort = agent.configuredVariant ?? 'auto'
+  let variantDescription = "Provider Default removes this agent's variant override."
+  if (loading) variantDescription = 'Loading model variants...'
+  else if (effortOptions.length === 1) variantDescription = 'This model does not expose explicit variants.'
 
   const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
     if (!onChangeModel || savingRef.current) return
@@ -1918,19 +1921,17 @@ function AgentConfigPanel({
           {loading && <span className="text-[10px] text-kumo-subtle">Loading provider models...</span>}
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Effort</label>
+          <label className="text-[11px] font-medium text-kumo-default">Variant</label>
           <SelectField
             value={selectedEffort}
             options={effortOptions}
-            disabled={saving || !onChangeModel}
+            disabled={loading || saving || !onChangeModel}
             onChange={(value) => void updateModel(selectedModel, value === 'auto' ? undefined : value)}
             buttonClassName={selectButtonClasses}
             menuClassName={selectMenuClasses}
           />
           <span className="text-[10px] text-kumo-subtle">
-            {effortOptions.length === 1
-              ? 'This model does not expose explicit effort levels.'
-              : "Provider Default removes this agent's effort override."}
+            {variantDescription}
           </span>
         </div>
         {saving && <span className="text-[11px] text-kumo-link">Saving configuration...</span>}

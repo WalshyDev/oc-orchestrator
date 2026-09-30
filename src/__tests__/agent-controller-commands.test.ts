@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   sessionAbort: vi.fn(),
   sessionSummarize: vi.fn(),
   configUpdate: vi.fn(),
+  configProviders: vi.fn(),
+  configGet: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
   setPreference: vi.fn(),
@@ -90,6 +92,8 @@ const runtime = {
     },
     config: {
       update: mocks.configUpdate,
+      providers: mocks.configProviders,
+      get: mocks.configGet,
     },
   },
 }
@@ -215,6 +219,25 @@ describe('AgentController.executeCommand', () => {
       model: 'openai/gpt-5.6-sol',
       variant: 'high',
     })
+  })
+
+  it('loads providers and defaults from the selected launch project, including custom speed variants', async () => {
+    const directory = '/tmp/selected-project'
+    const providers = {
+      providers: [{
+        id: 'custom',
+        name: 'Custom',
+        models: { model: { id: 'model', name: 'Model', variants: { fast: {}, turbo: {} } } },
+      }],
+    }
+    const config = { model: 'custom/model' }
+    mocks.configProviders.mockResolvedValue({ data: providers })
+    mocks.configGet.mockResolvedValue({ data: config })
+
+    expect(await agentController.getProvidersFromAnyRuntime(directory)).toBe(providers)
+    expect(await agentController.getConfigFromAnyRuntime(directory)).toBe(config)
+    expect(mocks.configProviders).toHaveBeenLastCalledWith({ directory })
+    expect(mocks.configGet).toHaveBeenLastCalledWith({ directory })
   })
 
   it('preserves a bare selected model ID', async () => {

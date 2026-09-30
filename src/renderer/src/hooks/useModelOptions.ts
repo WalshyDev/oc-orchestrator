@@ -236,7 +236,11 @@ function scheduleProviderRetry(): void {
   retryTimer = setTimeout(() => {
     retryTimer = null
     retryDelayMs = Math.min(retryDelayMs * 2, 5000)
-    void ensureProvidersLoaded()
+    void ensureProvidersLoaded().then(({ providerData }) => {
+      if (providerData) {
+        for (const listener of configChangeObservers) listener()
+      }
+    })
   }, retryDelayMs)
 }
 
@@ -297,7 +301,22 @@ async function fetchConfigModel(): Promise<string | undefined> {
   }
 }
 
-export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
+export async function ensureProvidersLoaded(directory?: string): Promise<ProviderFetchResult> {
+  if (directory) {
+    const [providersResult, configResult] = await Promise.all([
+      window.api.listAllProviders(directory),
+      window.api.getSystemConfig(directory),
+    ])
+    return {
+      providerData: providersResult.ok && providersResult.data
+        ? providersResult.data as ProviderData
+        : null,
+      configModel: configResult.ok && configResult.data
+        ? (configResult.data as { model?: string }).model
+        : undefined,
+    }
+  }
+
   const [providerData, configModel] = await Promise.all([
     fetchProviderData(),
     fetchConfigModel(),
@@ -306,7 +325,7 @@ export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
   return { providerData, configModel }
 }
 
-export function useModelOptions(agentId?: string): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
+export function useModelOptions(agentId?: string, directory?: string): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
   const [options, setOptions] = useState<ModelOption[]>(STATIC_MODEL_OPTIONS)
   const [providerData, setProviderData] = useState<ProviderData | null>(null)
   const [configModel, setConfigModel] = useState<string | undefined>(undefined)
@@ -318,6 +337,9 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
 
     const load = (): void => {
       const seq = ++requestSeq
+      setLoading(true)
+      setProviderData(null)
+      setConfigModel(undefined)
       const fetchResult = agentId
         ? Promise.all([window.api.getProviders(agentId), window.api.getConfig(agentId)]).then(([providersResult, configResult]) => ({
             providerData: providersResult.ok && providersResult.data
@@ -327,7 +349,7 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
               ? (configResult.data as { model?: string }).model
               : undefined
           }))
-        : ensureProvidersLoaded()
+        : ensureProvidersLoaded(directory)
 
       void fetchResult.then(({ providerData, configModel }) => {
         if (cancelled || seq !== requestSeq) return
@@ -346,17 +368,22 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
         setProviderData(providerData)
         setConfigModel(configModel)
         setLoading(false)
+      }).catch((error) => {
+        if (cancelled || seq !== requestSeq) return
+        console.warn('[useModelOptions] fetch failed', error)
+        setOptions([...STATIC_MODEL_OPTIONS])
+        setLoading(false)
       })
     }
 
     load()
-    const unsubscribe = agentId ? () => {} : subscribeToConfigChanges(load)
+    const unsubscribe = subscribeToConfigChanges(load)
 
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [agentId])
+  }, [agentId, directory])
 
   return { options, loading, providerData, configModel }
 }

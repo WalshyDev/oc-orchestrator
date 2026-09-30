@@ -201,10 +201,10 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 </p>
               </div>
 
-              {/* Default Effort */}
+              {/* Default Variant */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  Default Effort Level
+                  Default Variant
                 </label>
                 <div className="relative">
                   <SelectField
@@ -216,8 +216,8 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   />
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
-                  Provider Default means no effort override is sent; OpenCode uses the selected model&apos;s provider default.
-                  {effortOptions.length === 1 ? ' This model does not expose explicit effort levels.' : ''}
+                  Provider Default means no variant override is sent; OpenCode uses the selected model&apos;s provider default.
+                  {effortOptions.length === 1 ? ' This model does not expose explicit variants.' : ''}
                 </p>
               </div>
 
