@@ -3931,6 +3931,12 @@ export function useAgentStore() {
     const cleanups = [
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
+      window.api.onAgentLabelsUpdated((payload) => {
+        const agent = state.agents.get(payload.id)
+        if (!agent || agent.sessionId !== payload.sessionId) return
+        agent.labelIds = payload.labelIds
+        emit({ agents: true })
+      }),
       window.api.onAgentModelChanged((payload) => {
         const agent = state.agents.get(payload.id)
         if (!agent) {

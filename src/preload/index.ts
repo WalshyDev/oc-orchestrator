@@ -330,6 +330,12 @@ const api = {
     return () => ipcRenderer.removeListener('agent:pr-url-updated', handler)
   },
 
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:labels-updated', handler)
+    return () => ipcRenderer.removeListener('agent:labels-updated', handler)
+  },
+
   onExternalAttached: (callback: (data: { source: string; projectName?: string; sessionId?: string; agentId?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('external:attached', handler)

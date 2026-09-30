@@ -47,6 +47,7 @@ interface PromptBody {
 
 interface SessionUpdateBody {
   prUrl?: unknown
+  addLabelId?: unknown
 }
 
 const DISCOVERY_FILENAME = 'api.json'
@@ -255,7 +256,13 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse): Promise<
 
   const sessionUpdateMatch = url.match(/^\/sessions\/([^/]+)$/)
   if (method === 'PATCH' && sessionUpdateMatch) {
-    const body = await readJsonBody<SessionUpdateBody | null>(req)
+    let body: SessionUpdateBody | null
+    try {
+      body = await readJsonBody<SessionUpdateBody | null>(req)
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      return sendJson(res, 400, { error: 'bad_request', message: 'Invalid JSON' })
+    }
     return handleSessionUpdate(res, sessionUpdateMatch[1], body)
   }
 
@@ -386,13 +393,31 @@ function handleSessionUpdate(res: ServerResponse, sessionId: string, body: Sessi
   const agents = findAgentsBySession(sessionId)
   if (agents.length === 0) return sendJson(res, 404, { error: 'session_not_found' })
 
+  const addLabelId = body?.addLabelId
+  if (addLabelId !== undefined && addLabelId !== 'done') {
+    return sendJson(res, 400, { error: 'bad_request', message: 'addLabelId must be done' })
+  }
   const prUrl = parseHttpUrl(body?.prUrl)
-  if (!prUrl) {
+  if ((body?.prUrl !== undefined || addLabelId === undefined) && !prUrl) {
     return sendJson(res, 400, { error: 'bad_request', message: 'prUrl must be an HTTP or HTTPS URL' })
   }
 
-  for (const agent of agents) agentController.setAgentPrUrl(agent.id, prUrl)
-  sendJson(res, 200, { ok: true, prUrl })
+  if (addLabelId !== undefined && agents.length !== 1) {
+    return sendJson(res, 409, { error: 'session_ambiguous' })
+  }
+
+  if (prUrl) {
+    for (const agent of agents) agentController.setAgentPrUrl(agent.id, prUrl)
+  }
+  if (addLabelId === undefined) return sendJson(res, 200, { ok: true, prUrl })
+
+  const agent = agents[0]
+  const labelIds = agent.labelIds ?? (agent.labelId ? [agent.labelId] : [])
+  const updatedLabelIds = labelIds.includes('done') ? labelIds : [...labelIds, 'done']
+  if (!labelIds.includes('done')) {
+    agentController.updateAgentMeta(agent.id, { labelIds: updatedLabelIds })
+  }
+  sendJson(res, 200, { ok: true, labelIds: updatedLabelIds })
 }
 
 function parseHttpUrl(value: unknown): string | undefined {
@@ -435,7 +460,7 @@ function findAgentBySession(sessionId: string): { id: string } | undefined {
   return agentController.getAllAgents().find((handle) => handle.sessionId === sessionId)
 }
 
-function findAgentsBySession(sessionId: string): Array<{ id: string }> {
+function findAgentsBySession(sessionId: string) {
   return agentController.getAllAgents().filter((handle) => handle.sessionId === sessionId)
 }
 
