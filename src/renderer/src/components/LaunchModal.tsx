@@ -110,7 +110,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
-  const { options: modelOptions, providerData, configModel } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
@@ -122,6 +121,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
+  const [validatedDirectory, setValidatedDirectory] = useState('')
+  const modelDirectory = validatedDirectory === directory.trim() ? validatedDirectory : undefined
+  const { options: modelOptions, loading: modelsLoading, providerData, configModel } = useModelOptions(undefined, modelDirectory)
   const [worktreeRoot, setWorktreeRoot] = useState('')
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [projectsReady, setProjectsReady] = useState(false)
@@ -334,6 +336,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    setValidatedDirectory('')
     if (!directory.trim()) { setDirError(null); setValidating(false); return }
     const currentDir = directory.trim()
     setValidating(true)
@@ -341,21 +345,21 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       if (onValidateDirectory) {
         try {
           const isValid = await onValidateDirectory(currentDir)
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError(isValid ? null : 'This directory is not a valid git repository.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError(isValid ? null : 'This directory is not a valid git repository.')
+          setValidatedDirectory(isValid ? currentDir : '')
+          setValidating(false)
         } catch {
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError('Could not validate directory.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError('Could not validate directory.')
+          setValidating(false)
         }
       } else {
+        setValidatedDirectory(currentDir)
         setValidating(false)
       }
     }, 500)
-    return () => clearTimeout(timer)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [directory, onValidateDirectory])
 
   // Load per-project settings when directory changes
@@ -474,7 +478,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
    * for it in the meantime, and reports any failure there.
    */
   const handleLaunch = () => {
-    if (!directory.trim() || dirError || validating || launching) return
+    if (!modelDirectory || dirError || validating || modelsLoading || launching) return
     if (activeTab === 'import' && !selectedSession) return
     setLaunching(true)
     try {
@@ -542,9 +546,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
 
-  const isLaunchDisabled = activeTab === 'new'
-    ? !directory.trim() || launching || validating || !!dirError
-    : !directory.trim() || launching || validating || !!dirError || !selectedSession
+  const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
+    || (activeTab === 'import' && !selectedSession)
 
   const launchButtonLabel = launching
     ? 'Launching...'
@@ -779,20 +782,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 </div>
               </div>
 
-              {/* Effort */}
+              {/* Variant */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Effort Level</label>
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Variant</label>
                 <div className="relative">
                   <SelectField
                     value={selectedEffort}
                     onChange={(value) => setModelVariant(value)}
                     options={effortOptions}
+                    disabled={modelsLoading}
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
-                  Provider Default sends no override; OpenCode uses the selected model&apos;s default effort.
+                  {modelsLoading
+                    ? 'Loading model variants...'
+                    : "Provider Default uses the selected model's default variant."}
                 </p>
               </div>
 
@@ -1099,6 +1105,25 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                             menuClassName={selectMenuClasses}
                           />
                         </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                          Variant
+                        </label>
+                        <SelectField
+                          value={selectedEffort}
+                          onChange={setModelVariant}
+                          options={effortOptions}
+                          disabled={modelsLoading}
+                          buttonClassName={selectButtonClasses}
+                          menuClassName={selectMenuClasses}
+                        />
+                        <p className="text-[11px] text-kumo-subtle">
+                          {modelsLoading
+                            ? 'Loading model variants...'
+                            : "Provider Default uses the selected model's default variant."}
+                        </p>
                       </div>
 
                       <div className="flex flex-col gap-1.5">

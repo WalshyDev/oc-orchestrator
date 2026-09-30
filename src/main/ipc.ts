@@ -521,9 +521,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('runtime:providers', async () => {
+  ipcMain.handle('runtime:providers', async (_event, directory?: string) => {
     try {
-      const data = await agentController.getProvidersFromAnyRuntime()
+      const data = await agentController.getProvidersFromAnyRuntime(directory)
       return { ok: true, data }
     } catch (error) {
       logIpcError('runtime:providers', error)
@@ -551,9 +551,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('runtime:config', async () => {
+  ipcMain.handle('runtime:config', async (_event, directory?: string) => {
     try {
-      const data = await agentController.getConfigFromAnyRuntime()
+      const data = await agentController.getConfigFromAnyRuntime(directory)
       return { ok: true, data }
     } catch (error) {
       logIpcError('runtime:config', error)

@@ -945,7 +945,14 @@ class AgentController {
    * List all providers using any available runtime.
    * Useful for settings/launch screens where no specific agent is selected.
    */
-  async getProvidersFromAnyRuntime(): Promise<unknown> {
+  async getProvidersFromAnyRuntime(directory?: string): Promise<unknown> {
+    if (directory) {
+      const runtime = await runtimeManager.ensureRuntime(directory)
+      runtimeManager.touchRuntimeActivity(runtime.id)
+      const result = await runtime.client.config.providers({ directory })
+      return result.data
+    }
+
     // Try to find any agent with a known runtime
     for (const handle of this.agents.values()) {
       try {
@@ -967,7 +974,14 @@ class AgentController {
    * Get config from any available runtime.
    * Useful for inferring the system default model on launch screens.
    */
-  async getConfigFromAnyRuntime(): Promise<unknown> {
+  async getConfigFromAnyRuntime(directory?: string): Promise<unknown> {
+    if (directory) {
+      const runtime = await runtimeManager.ensureRuntime(directory)
+      runtimeManager.touchRuntimeActivity(runtime.id)
+      const result = await runtime.client.config.get({ directory })
+      return result.data
+    }
+
     for (const handle of this.agents.values()) {
       try {
         const runtime = await this.ensureRuntimeForAgent(handle)

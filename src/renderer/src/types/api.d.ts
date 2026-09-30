@@ -67,8 +67,8 @@ export interface OrchestratorApi {
   listPermissions: () => Promise<IpcResult<PendingPermissionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
-  listAllProviders: () => Promise<IpcResult>
-  getSystemConfig: () => Promise<IpcResult>
+  listAllProviders: (directory?: string) => Promise<IpcResult>
+  getSystemConfig: (directory?: string) => Promise<IpcResult>
   listAllCommands: () => Promise<IpcResult>
   listAllAgentConfigs: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
