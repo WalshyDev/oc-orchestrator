@@ -149,13 +149,17 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume? }` | `{ agentId, sessionId, runtimeUrl, directory, leaseId, leaseExpiresAt }` |
 | `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
 | `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
-| `PATCH` | `/sessions/:sessionId` | `{ prUrl }` | `{ ok, prUrl }` |
+| `PATCH` | `/sessions/:sessionId` | `{ prUrl?, addLabelId?: "done" }` | `{ ok, labelIds }` when adding Done; `{ ok, prUrl }` for `prUrl` only |
 | `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
 | `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
 
 `POST /sessions` requires `dir` to be a git repository — non-git paths are rejected with `400 not_a_git_repo`. The directory is normalized to its canonical repo root before any agent or project work happens, and that canonical root is what gets returned in the response (and is what you should pass to `opencode attach --dir`).
 
 `resume` is mutually exclusive with `prompt` and `model`; combining them returns `400 bad_request`. To resume and then send a message, call `POST /sessions { dir, resume }` followed by `POST /sessions/:sessionId/prompt { text }`.
+
+`PATCH /sessions/:sessionId` with `{"addLabelId":"done"}` returns `200 {"ok":true,"labelIds":[...]}` with the full resulting label list. It appends Done only if absent, preserves every other label ID and its order, and persists the result. Repeated calls keep Done without adding a duplicate. Omitting `prUrl` preserves the existing PR link. You can supply both fields; the response then includes `labelIds`. PR updates retain their HTTP/HTTPS URL validation, trim surrounding whitespace, and return `{"ok":true,"prUrl":"..."}` when used alone.
+
+The session must be tracked under that exact `sessionId`. An unknown session or an internal `agentId` returns `404 {"error":"session_not_found"}`. If multiple fleet rows track the same session, adding Done returns `409 {"error":"session_ambiguous"}` without writes. Missing or invalid authentication returns `401 {"error":"unauthorized"}`. Invalid JSON, a missing update field, any `addLabelId` other than `"done"`, or an invalid supplied PR URL returns `400 {"error":"bad_request","message":"..."}` without writes. Unknown fields are ignored, including `labelIds`; callers can't replace the labels through this endpoint.
 
 ### Source attribution
 

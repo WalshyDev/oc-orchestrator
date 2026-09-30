@@ -131,6 +131,7 @@ export interface OrchestratorApi {
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
   onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
   onAgentPrUrlUpdated: (callback: (data: AgentPrUrlUpdatedPayload) => void) => () => void
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void

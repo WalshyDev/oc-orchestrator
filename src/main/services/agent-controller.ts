@@ -525,6 +525,13 @@ class AgentController {
     if (meta.labelIds !== undefined) handle.labelIds = meta.labelIds
     if (meta.prUrl !== undefined) handle.prUrl = meta.prUrl
     this.persistAgents()
+    if (meta.labelIds !== undefined) {
+      this.broadcastToRenderer('agent:labels-updated', {
+        id: agentId,
+        sessionId: handle.sessionId,
+        labelIds: handle.labelIds
+      })
+    }
 
     // Sync display name to the OpenCode session title so it's findable
     // when browsing sessions later (e.g. for import/restore).
