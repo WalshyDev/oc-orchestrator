@@ -5,7 +5,6 @@ export function parseLaunchPrUrl(input: string): string | undefined {
     const url = new URL(value)
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined
     if (url.username || url.password) return undefined
-    if (!/\/(?:pull|merge_requests)\/\d+\/?$/.test(url.pathname)) return undefined
     return value
   } catch {
     return undefined
