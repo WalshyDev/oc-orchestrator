@@ -4,6 +4,7 @@ import { SelectField } from './SelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
+import { buildLaunchPrompt, parseLaunchPrUrl } from '../lib/launch-pr-input'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { LabelDefinition, LabelColorKey } from '../types'
@@ -93,7 +94,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[], prUrl?: string) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -107,6 +108,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [activeTab, setActiveTab] = useState<ModalTab>('new')
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [prUrlInput, setPrUrlInput] = useState('')
+  const prUrl = parseLaunchPrUrl(prUrlInput)
+  const prUrlError = prUrlInput.trim() && !prUrl ? 'Enter a GitHub PR or GitLab MR URL.' : null
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
@@ -472,14 +476,17 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
   }
 
+  const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
+    || (activeTab === 'import' && !selectedSession)
+    || (activeTab === 'new' && !!prUrlError)
+
   /**
-   * Closes the modal as soon as the launch is handed off. The launch itself
+    * Closes the modal as soon as the launch is handed off. The launch itself
    * takes seconds on a cold runtime; the fleet table shows a placeholder row
    * for it in the meantime, and reports any failure there.
    */
   const handleLaunch = () => {
-    if (!modelDirectory || dirError || validating || modelsLoading || launching) return
-    if (activeTab === 'import' && !selectedSession) return
+    if (isLaunchDisabled) return
     setLaunching(true)
     try {
       const effectiveStrategy = activeTab === 'import' ? 'new-worktree' : worktreeStrategy
@@ -506,7 +513,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const effectivePrompt = activeTab === 'import'
         ? (importPrompt.trim() || undefined)
-        : (prompt || undefined)
+        : buildLaunchPrompt(prompt, prUrl)
 
       const effectiveAttachments = activeTab === 'new' && attachments.length > 0
         ? attachments
@@ -515,7 +522,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
-      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
       void persistProjectSettings(directory.trim(), false)
 
       clearAttachments()
@@ -545,9 +552,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
-
-  const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
-    || (activeTab === 'import' && !selectedSession)
 
   const launchButtonLabel = launching
     ? 'Launching...'
@@ -799,6 +803,25 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   {modelsLoading
                     ? 'Loading model variants...'
                     : "Provider Default uses the selected model's default variant."}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="launch-pr-url" className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  PR / MR Link <span className="text-kumo-subtle/60">(optional)</span>
+                </label>
+                <input
+                  id="launch-pr-url"
+                  type="url"
+                  value={prUrlInput}
+                  onChange={(event) => setPrUrlInput(event.target.value)}
+                  placeholder="https://github.com/owner/repo/pull/123"
+                  aria-invalid={!!prUrlError}
+                  aria-describedby="launch-pr-url-help"
+                  className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
+                />
+                <p id="launch-pr-url-help" className={`text-[11px] ${prUrlError ? 'text-kumo-danger' : 'text-kumo-subtle'}`}>
+                  {prUrlError || "Included in the initial prompt and saved as this agent's PR link."}
                 </p>
               </div>
 

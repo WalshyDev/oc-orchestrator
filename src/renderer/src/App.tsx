@@ -1174,7 +1174,8 @@ Then give me a brief summary of what the previous session was working on and whe
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
     importSession?: ImportSessionConfig,
-    labelIds?: string[]
+    labelIds?: string[],
+    prUrl?: string
   ) => {
     let launchDirectory = directory
     // Auto-selecting the new agent is only welcome if the user hasn't moved on
@@ -1283,6 +1284,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
     const agentId = (result.data as { id: string }).id
     selectNewAgent(agentId)
+    if (prUrl) store.setPrUrl(agentId, prUrl)
 
     if (labelIds?.length) {
       for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
@@ -1344,7 +1346,8 @@ Then give me a brief summary of what the previous session was working on and whe
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
     importSession?: ImportSessionConfig,
-    labelIds?: string[]
+    labelIds?: string[],
+    prUrl?: string
   ) => {
     const launchId = store.beginLaunch({
       directory,
@@ -1356,7 +1359,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
     void runLaunch(
       launchId, directory, prompt, title, model, modelVariant, worktreeStrategy,
-      attachments, freshWorktreeConfig, importSession, labelIds
+      attachments, freshWorktreeConfig, importSession, labelIds, prUrl
     ).catch((error) => {
       console.error('[App] Launch failed:', error)
       store.failLaunch(launchId, error instanceof Error ? error.message : String(error))
