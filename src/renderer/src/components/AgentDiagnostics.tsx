@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CaretDown } from '@phosphor-icons/react'
 import { statusLabel, type AgentRuntime, type Message } from '../types'
 import type { EventEntry } from './EventLog'
 
@@ -14,10 +15,12 @@ export function AgentDiagnostics({ agent, workspacePath, messages, events }: {
   events: EventEntry[]
 }): React.JSX.Element {
   const [now, setNow] = useState(Date.now)
+  const [expanded, setExpanded] = useState(false)
   useEffect(() => {
+    if (!expanded) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [expanded])
   let turnStart = 0
   for (let index = messages.length - 1; index >= 0; index--) {
     if (messages[index].role === 'user') {
@@ -45,28 +48,40 @@ export function AgentDiagnostics({ agent, workspacePath, messages, events }: {
 
   return (
     <div data-agent-diagnostics className="shrink-0 px-4 py-2 text-[10px] leading-relaxed text-kumo-subtle break-words">
-      <div>{activity}</div>
-      <div className="break-all">Workspace: {workspacePath ?? 'unknown'}</div>
-      <div className="break-all">Session: {agent.sessionId ?? 'unknown'} · Model: {agent.model}</div>
-      <div>
-        {lastUpdate
-          ? <>
-            Last update: <time dateTime={lastUpdate.toISOString()} title={lastUpdate.toLocaleString()}>{lastUpdate.toLocaleTimeString()}</time>
-            {' · '}{elapsed(agent.lastActivityAtMs, now)} ago
-          </>
-          : 'No session updates received yet'}
-      </div>
-      {retry && <div>{retry.message} · {retry.next > now ? `Next attempt in ${Math.ceil((retry.next - now) / 1000)}s` : 'Waiting for the next retry update'}</div>}
-      {activeTools.map((tool) => (
-        <div key={tool.id}>
-          {tool.name} running for {elapsed(tool.timestamp, now)}
-          {tool.childActivityAt ? ` · child updated ${elapsed(tool.childActivityAt, now)} ago` : ''}
+      <details className="group" onToggle={(event) => {
+        setExpanded(event.currentTarget.open)
+        setNow(Date.now())
+      }}>
+        <summary className="flex w-fit cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+          Diagnostics <CaretDown size={10} aria-hidden="true" className="group-open:rotate-180" />
+        </summary>
+        <div className="mt-1">
+          <div>{activity}</div>
+          <div className="break-all">Workspace: {workspacePath ?? 'unknown'}</div>
+          <div className="break-all">Session: {agent.sessionId ?? 'unknown'}</div>
+          <div className="break-all">Model: {agent.model}</div>
+          {agent.variant && <div className="break-all">Variant: {agent.variant}</div>}
+          <div>
+            {lastUpdate
+              ? <>
+                Last update: <time dateTime={lastUpdate.toISOString()} title={lastUpdate.toLocaleString()}>{lastUpdate.toLocaleTimeString()}</time>
+                {' · '}{elapsed(agent.lastActivityAtMs, now)} ago
+              </>
+              : 'No session updates received yet'}
+          </div>
+          {retry && <div>{retry.message} · {retry.next > now ? `Next attempt in ${Math.ceil((retry.next - now) / 1000)}s` : 'Waiting for the next retry update'}</div>}
+          {activeTools.map((tool) => (
+            <div key={tool.id}>
+              {tool.name} running for {elapsed(tool.timestamp, now)}
+              {tool.childActivityAt ? ` · child updated ${elapsed(tool.childActivityAt, now)} ago` : ''}
+            </div>
+          ))}
+          {agent.status === 'running' && quiet && !retry && activeTools.length === 0 && (
+            <div>No tool is running. OpenCode has not reported a cause; this could be provider latency or a silent stall.</div>
+          )}
+          {latestEvent && <div>Last event: {latestEvent.type} · {elapsed(latestEvent.timestamp, now)} ago · {latestEvent.summary}</div>}
         </div>
-      ))}
-      {agent.status === 'running' && quiet && !retry && activeTools.length === 0 && (
-        <div>No tool is running. OpenCode has not reported a cause; this could be provider latency or a silent stall.</div>
-      )}
-      {latestEvent && <div>Last event: {latestEvent.type} · {elapsed(latestEvent.timestamp, now)} ago · {latestEvent.summary}</div>}
+      </details>
     </div>
   )
 }

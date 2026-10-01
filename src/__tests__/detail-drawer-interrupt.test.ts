@@ -161,7 +161,7 @@ describe('DetailDrawer pending interrupts', () => {
   it('shows retry reasons and tool waits in quiet diagnostics below the transcript', () => {
     vi.stubGlobal('window', { innerHeight: 1000 })
     vi.stubGlobal('localStorage', { getItem: () => null })
-    const agent = { ...createAgent('running'), lastActivityAtMs: Date.now() - 120_000 }
+    const agent = { ...createAgent('running'), variant: 'high', lastActivityAtMs: Date.now() - 120_000 }
     const render = (overrides: Partial<Parameters<typeof DetailDrawer>[0]> = {}): string => renderToStaticMarkup(createElement(DetailDrawer, {
       agent,
       workspacePath: '/worktrees/project',
@@ -175,9 +175,14 @@ describe('DetailDrawer pending interrupts', () => {
     expect(transcript).not.toContain(diagnostics)
     expect(retryMarkup.indexOf(diagnostics)).toBeGreaterThan(retryMarkup.indexOf(transcript) + transcript.length)
     expect(diagnostics).toContain('text-kumo-subtle')
-    expect(diagnostics).not.toMatch(/border|animate-|<svg/)
+    expect(diagnostics).not.toMatch(/border|animate-/)
+    expect(diagnostics).toContain('<details class="group">')
+    expect(diagnostics).not.toMatch(/<details[^>]*\bopen(?:[\s=>])/)
+    expect(diagnostics).toContain('Diagnostics <svg')
     expect(diagnostics).toContain('Workspace: /worktrees/project')
-    expect(diagnostics).toContain('Session: session-1')
+    expect(diagnostics).toContain('<div class="break-all">Session: session-1</div>')
+    expect(diagnostics).toContain('<div class="break-all">Model: model</div>')
+    expect(diagnostics).toContain('<div class="break-all">Variant: high</div>')
     expect(diagnostics).toContain(`dateTime="${new Date(agent.lastActivityAtMs).toISOString()}"`)
     expect(diagnostics).toContain('Last update:')
     expect(diagnostics).toContain('Provider retry #3')
@@ -218,5 +223,6 @@ describe('DetailDrawer pending interrupts', () => {
     expect(diagnostics).toContain('Workspace: /worktrees/project')
     expect(diagnostics).toContain('Last update:')
     expect(diagnostics).not.toMatch(/Provider retry|Provider overloaded|Waiting for|bash running/)
+    expect(diagnostics).not.toContain('Variant:')
   })
 })
