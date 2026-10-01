@@ -158,18 +158,30 @@ describe('DetailDrawer pending interrupts', () => {
     expect(dismissedMarkup).not.toContain('data-pending-interrupt')
   })
 
-  it('shows retry reasons, tool waits, and unknown quiet periods in the transcript', () => {
+  it('shows retry reasons and tool waits in quiet diagnostics below the transcript', () => {
     vi.stubGlobal('window', { innerHeight: 1000 })
     vi.stubGlobal('localStorage', { getItem: () => null })
     const agent = { ...createAgent('running'), lastActivityAtMs: Date.now() - 120_000 }
     const render = (overrides: Partial<Parameters<typeof DetailDrawer>[0]> = {}): string => renderToStaticMarkup(createElement(DetailDrawer, {
       agent,
+      workspacePath: '/worktrees/project',
       messages: [],
       onClose: () => {},
       ...overrides
     }))
     const retryMarkup = render({ agent: { ...agent, retry: { attempt: 3, message: '429 Too Many Requests', next: Date.now() + 30_000 } } })
-    expect(getElementContents(retryMarkup, 'data-transcript-scroll')).toContain('Provider retry #3')
+    const transcript = getElementContents(retryMarkup, 'data-transcript-scroll')
+    const diagnostics = getElementContents(retryMarkup, 'data-agent-diagnostics')
+    expect(transcript).not.toContain(diagnostics)
+    expect(retryMarkup.indexOf(diagnostics)).toBeGreaterThan(retryMarkup.indexOf(transcript) + transcript.length)
+    expect(diagnostics).toContain('text-kumo-subtle')
+    expect(diagnostics).not.toMatch(/border|animate-|<svg/)
+    expect(diagnostics).toContain('Workspace: /worktrees/project')
+    expect(diagnostics).toContain('Session: session-1')
+    expect(diagnostics).toContain(`dateTime="${new Date(agent.lastActivityAtMs).toISOString()}"`)
+    expect(diagnostics).toContain('Last update:')
+    expect(diagnostics).toContain('Provider retry #3')
+    expect(retryMarkup).not.toContain('data-agent-activity')
     expect(retryMarkup).toContain('429 Too Many Requests')
     expect(retryMarkup).toContain('Next attempt in 30s')
     const toolMarkup = render({ messages: [{
@@ -182,5 +194,29 @@ describe('DetailDrawer pending interrupts', () => {
     expect(quietMarkup).toContain('Waiting for model output')
     expect(quietMarkup).toContain('OpenCode has not reported a cause')
     expect(quietMarkup).not.toContain('Agent is thinking')
+  })
+
+  it.each([
+    ['idle', 'Idle'],
+    ['completed', 'Completed'],
+    ['errored', 'Errored'],
+    ['disconnected', 'Disconnected']
+  ] as const)('keeps %s diagnostics visible without stale running activity', (status, label) => {
+    vi.stubGlobal('window', { innerHeight: 1000 })
+    vi.stubGlobal('localStorage', { getItem: () => null })
+    const markup = renderToStaticMarkup(createElement(DetailDrawer, {
+      agent: { ...createAgent(status), retry: { attempt: 1, message: 'Provider overloaded', next: Date.now() } },
+      workspacePath: '/worktrees/project',
+      messages: [{
+        id: 'tools', role: 'tool-group', content: '', timestamp: 'now',
+        toolCalls: [{ id: 'bash', name: 'bash', state: 'running', timestamp: 1 }]
+      }],
+      onClose: () => {}
+    }))
+    const diagnostics = getElementContents(markup, 'data-agent-diagnostics')
+    expect(diagnostics).toContain(`<div>${label}</div>`)
+    expect(diagnostics).toContain('Workspace: /worktrees/project')
+    expect(diagnostics).toContain('Last update:')
+    expect(diagnostics).not.toMatch(/Provider retry|Provider overloaded|Waiting for|bash running/)
   })
 })
