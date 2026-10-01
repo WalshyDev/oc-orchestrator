@@ -173,6 +173,7 @@ export interface LiveAgent {
   variant: string
   /** Variant explicitly configured through OCO, separate from the effective value. */
   configuredVariant?: string
+  configuredEffectiveVariant?: string
   lastActivityAt: number
   blockedSince?: number
   prUrl: string | null
@@ -490,6 +491,7 @@ type EffectiveVariantAgent = Pick<
   | 'configuredModelPath'
   | 'variant'
   | 'configuredVariant'
+  | 'configuredEffectiveVariant'
   | 'rawModelId'
   | 'rawProviderId'
   | 'rawMessageVariant'
@@ -533,6 +535,20 @@ export function refreshEffectiveVariant(
   agent: EffectiveVariantAgent,
   providers = providerDataByAgent.get(agent.id)
 ): void {
+  const configuredPath = agent.configuredModelPath
+  if (configuredPath) {
+    const slashIndex = configuredPath.indexOf('/')
+    const providerId = slashIndex > 0 ? configuredPath.slice(0, slashIndex) : undefined
+    const modelId = slashIndex > 0 ? configuredPath.slice(slashIndex + 1) : configuredPath
+    agent.configuredEffectiveVariant = resolveEffectiveVariant(
+      undefined,
+      agent.configuredVariant,
+      findProviderModel(providers, providerId, modelId)
+    )
+  } else {
+    agent.configuredEffectiveVariant = undefined
+  }
+
   const modelPath = agent.rawModelId ?? agent.configuredModelPath
   if (!modelPath) {
     agent.variant = 'none'
@@ -2885,6 +2901,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     autoNamed
   }
 
+  refreshEffectiveVariant(agent)
   state.agents.set(payload.id, agent)
   consumePendingAgentPrUrl(agent, pendingPrUrlUpdates)
   const pendingModelChange = pendingModelChanges.get(payload.id)

@@ -370,6 +370,7 @@ export function App() {
         configuredModelPath: agent.configuredModelPath,
         variant: agent.variant,
         configuredVariant: agent.configuredVariant,
+        configuredEffectiveVariant: agent.configuredEffectiveVariant,
         prUrl: agent.prUrl,
         lastActivityAt: formatTimeAgo(agent.lastActivityAt),
         lastActivityAtMs: agent.lastActivityAt,
