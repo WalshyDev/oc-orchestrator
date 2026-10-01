@@ -60,7 +60,7 @@ import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
-import { AgentActivity } from './AgentActivity'
+import { AgentDiagnostics } from './AgentDiagnostics'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
 import { formatResponseMetadata } from '../lib/transcript-metadata'
@@ -948,11 +948,6 @@ export const DetailDrawer = memo(function DetailDrawer({
                   </>
                 )}
 
-                {/* Loading indicator when agent is running */}
-                {agent.status === 'running' && (
-                  <AgentActivity agent={agent} messages={messages} events={events} />
-                )}
-
                 {(permission || question || showQuestionFallback) && (
                   <div
                     data-pending-interrupt
@@ -1060,6 +1055,10 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           )}
         </div>
+
+        {activeTab === 'transcript' && (
+          <AgentDiagnostics agent={agent} workspacePath={workspacePath} messages={messages} events={events} />
+        )}
 
         {/* Vertical resize handle */}
         {/* Resize handle + bottom pane (chat input + action rail) only show
