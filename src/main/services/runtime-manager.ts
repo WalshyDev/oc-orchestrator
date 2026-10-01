@@ -23,6 +23,12 @@ const HEALTH_CHECK_INTERVAL_MS = 30_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000
 const AUTO_RESTART_COOLDOWN_MS = 10_000
+const CONFIG_RELOAD_TIMEOUT_MS = 5_000
+
+interface AiConfigReloadResult {
+  skippedBusy: string[]
+  failed: string[]
+}
 
 interface OpencodeServer {
   url: string
@@ -521,6 +527,36 @@ class RuntimeManager {
 
   getAllRuntimes(): RuntimeInfo[] {
     return Array.from(this.runtimes.values())
+  }
+
+  async reloadAiConfig(): Promise<AiConfigReloadResult> {
+    const result: AiConfigReloadResult = { skippedBusy: [], failed: [] }
+
+    await Promise.all(this.getAllRuntimes().map(async (runtime) => {
+      try {
+        const { data: statuses } = await runtime.client.session.status({}, {
+          throwOnError: true,
+          signal: AbortSignal.timeout(CONFIG_RELOAD_TIMEOUT_MS)
+        })
+        // Only dispose runtimes that were idle at the status snapshot.
+        const busy = Object.values(statuses ?? {}).some((status) => status.type !== 'idle')
+        if (busy) {
+          result.skippedBusy.push(runtime.directory)
+          return
+        }
+
+        await runtime.client.instance.dispose({}, {
+          throwOnError: true,
+          signal: AbortSignal.timeout(CONFIG_RELOAD_TIMEOUT_MS)
+        })
+      } catch (error) {
+        console.warn(`[RuntimeManager] AI config reload failed for ${runtime.id}:`, error)
+        result.failed.push(runtime.directory)
+      }
+    }))
+
+    console.log('[RuntimeManager] AI config reload', result)
+    return result
   }
 
   private async getAvailablePort(): Promise<number> {

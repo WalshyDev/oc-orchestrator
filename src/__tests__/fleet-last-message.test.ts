@@ -119,6 +119,23 @@ describe('Fleet Last Message navigation', () => {
     expect(markup).toContain('text-kumo-success')
   })
 
+  it('shows the PR link control when the agent has a persisted URL', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {}
+    })
+    const markup = renderToStaticMarkup(createElement(FleetTable, {
+      agents: [{ ...agent, prUrl: 'https://github.com/example/repo/pull/42' }],
+      selectedId: null,
+      onSelect: () => {},
+      visibleColumns: new Set(),
+      columnWidths: {}
+    }))
+
+    expect(markup).toContain('aria-label="Open PR link"')
+    expect(markup).not.toContain('title="Add PR link"')
+  })
+
   it('resolves the latest rendered assistant text message', () => {
     expect(findLastTranscriptMessageId(messages, 'last-assistant-message')).toBe('assistant-2')
     expect(findLastTranscriptMessageId([

@@ -4,12 +4,20 @@ import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
   AgentModelChangedPayload,
+  AgentPrUrlUpdatedPayload,
   AgentStatusesPayload,
   IpcResult,
   MessageAttachment,
   PermissionRequest as PermissionRequestPayload
 } from '../types/api'
-import { ensureProvidersLoaded, invalidateProviderCache, lookupContextLimit, subscribeToContextLimits } from './useModelOptions'
+import {
+  ensureProvidersLoaded,
+  invalidateProviderCache,
+  lookupContextLimit,
+  resolveEffectiveVariant,
+  subscribeToContextLimits,
+  type ProviderData
+} from './useModelOptions'
 import {
   AbandonedLaunches,
   applyLaunchFailure,
@@ -32,6 +40,11 @@ import {
   mergeLiveMessagePart,
   type ChildSessionDescriptor
 } from '../lib/subagent-progress'
+import {
+  createOptimisticUserMessage,
+  OPTIMISTIC_PREFIX,
+  replaceNextOptimisticUserFilePart
+} from '../lib/optimistic-message'
 import { getPendingInterruptStatus } from '../lib/interrupt-status'
 import { loadSettings } from '../data/settings'
 import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverStalledResponses } from '../data/agentSettings'
@@ -39,17 +52,23 @@ import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverSta
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
 const toastDedup = new Map<string, { sig: string; expiresAt: number }>()
 
-interface HistoricalMessageInfo {
+interface MessageModelInfo {
+  role: 'user' | 'assistant'
+  modelID?: string
+  model?: { modelID?: string }
+  providerID?: string
+  variant?: string
+}
+
+interface HistoricalMessageInfo extends MessageModelInfo {
   id: string
   sessionID: string
-  role: 'user' | 'assistant'
   /** Present on AssistantMessage — the ID of the user message that triggered this response */
   parentID?: string
   time?: {
     created?: number
     completed?: number
   }
-  modelID?: string
   cost?: number
   tokens?: {
     total?: number
@@ -144,14 +163,17 @@ export interface LiveAgent {
   status: AgentStatus
   labelIds: string[]
   model: string
-  /** The model set by the user or resolved from the runtime config.
-   *  Used to restore the displayed model after an invoked agent
-   *  (which may use a different model) finishes. */
+  /** The model set by the user or resolved from the runtime config. */
   configuredModel?: string
   /** Full provider/model value used by model selectors and prompt overrides. */
   configuredModelPath?: string
-  /** The currently selected model variant (thinking level). */
-  variant?: string
+  /** Explicit per-agent override sent with prompts and commands. */
+  modelOverridePath?: string
+  /** The effective variant used by the latest top-level assistant turn. */
+  variant: string
+  /** Variant explicitly configured through OCO, separate from the effective value. */
+  configuredVariant?: string
+  configuredEffectiveVariant?: string
   lastActivityAt: number
   retry?: AgentRetry
   blockedSince?: number
@@ -170,6 +192,9 @@ export interface LiveAgent {
    *  Used to look up the context limit from the provider cache. Separate from
    *  `model` (the formatted display name) and `configuredModel` (the setting). */
   rawModelId?: string
+  rawProviderId?: string
+  rawMessageVariant?: string
+  observedModelAt?: number
   /** Whether the name was auto-generated and should be replaced by the first prompt */
   autoNamed?: boolean
   /** Timestamp of last user response (sendMessage/replyToQuestion/respondToPermission).
@@ -244,7 +269,23 @@ export interface LiveMessage {
   updatedAt?: number
   completedAt?: number
   errored?: boolean
+  modelId?: string
+  providerID?: string
+  variant?: string
   parts: LiveMessagePart[]
+}
+
+export function getAssistantResponseMetadata(info: {
+  role?: unknown
+  providerID?: unknown
+  variant?: unknown
+}): Pick<LiveMessage, 'providerID' | 'variant'> {
+  if (info.role !== 'assistant') return {}
+
+  return {
+    providerID: typeof info.providerID === 'string' ? info.providerID : undefined,
+    variant: typeof info.variant === 'string' ? info.variant : undefined
+  }
 }
 
 export interface LiveMessagePart {
@@ -338,9 +379,33 @@ const taskSummaryLocked = new Set<string>()
 const recentlyAttachedAgents = new Set<string>()
 const RECENTLY_ATTACHED_TTL_MS = 4_000
 const pendingModelChanges = new Map<string, AgentModelChangedPayload>()
+const pendingPrUrlUpdates = new Map<string, string>()
 
 export function isRecentlyAttached(agentId: string): boolean {
   return recentlyAttachedAgents.has(agentId)
+}
+
+export function applyAgentPrUrlUpdate(
+  agents: Map<string, LiveAgent>,
+  pending: Map<string, string>,
+  payload: AgentPrUrlUpdatedPayload
+): boolean {
+  const agent = agents.get(payload.id)
+  if (!agent) {
+    pending.set(payload.id, payload.prUrl)
+    return false
+  }
+  agent.prUrl = payload.prUrl
+  pending.delete(payload.id)
+  return true
+}
+
+export function consumePendingAgentPrUrl(agent: LiveAgent, pending: Map<string, string>): boolean {
+  const prUrl = pending.get(agent.id)
+  if (prUrl === undefined) return false
+  agent.prUrl = prUrl
+  pending.delete(agent.id)
+  return true
 }
 
 // Tracks agents that should have PR URL extraction enabled.  We only extract
@@ -358,64 +423,43 @@ interface PendingMessage {
 const pendingMessages = new Map<string, PendingMessage>()
 const stalledRecoveryStates = new Map<string, 'recovering' | 'attempted'>()
 
-// Safety timers for the `compacting` flag. We set a short "kickoff" watchdog
-// (30s): if the server doesn't produce a compaction part or set
-// session.time.compacting within that window, the RPC effectively did
-// nothing — clear the flag and surface an error so the user isn't staring at
-// a spinner forever. Once real server evidence arrives (see below), the
-// watchdog is cancelled because the session.compacted event will clear the
-// flag authoritatively.
-const compactingTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const COMPACTING_KICKOFF_TIMEOUT_MS = 30_000
+// Locally requested compactions stay pending until the server acknowledges them.
+const pendingCompactionKickoffs = new Map<string, ReturnType<typeof setTimeout>>()
+const COMPACTING_KICKOFF_TIMEOUT_MS = 5 * 60_000
 
-/**
- * Fired when the kickoff watchdog expires without any server activity: the
- * RPC returned 200 but no compaction part or session.time.compacting update
- * arrived. Clears the spinner flag and surfaces an actionable banner error.
- */
-function onCompactingWatchdogExpired(agentId: string): void {
-  compactingTimers.delete(agentId)
-  const agent = state.agents.get(agentId)
-  if (!agent?.compacting) return
-  console.warn('[compacting] kickoff watchdog fired — no server activity', agentId)
-  agent.compacting = undefined
-  agent.lastError = {
-    name: 'CompactionNoResponse',
-    message: 'Compaction request was accepted but the server hasn\'t produced any activity within 30 seconds. Try again, check the npm dev console for errors, or switch models.',
-    sessionId: agent.sessionId,
-    occurredAt: Date.now()
-  }
-  emit({ agents: true })
+function clearPendingCompactionKickoff(agentId: string): void {
+  const timer = pendingCompactionKickoffs.get(agentId)
+  if (timer === undefined) return
+  clearTimeout(timer)
+  pendingCompactionKickoffs.delete(agentId)
+}
+
+function startCompacting(agentId: string): void {
+  clearPendingCompactionKickoff(agentId)
+  const timer = setTimeout(() => {
+    pendingCompactionKickoffs.delete(agentId)
+    setCompacting(agentId, false)
+  }, COMPACTING_KICKOFF_TIMEOUT_MS)
+  pendingCompactionKickoffs.set(agentId, timer)
+  setCompacting(agentId, true)
 }
 
 /**
- * Set or clear the agent's compacting flag. When setting true, also starts a
- * kickoff watchdog (see onCompactingWatchdogExpired). The watchdog is
- * cancelled by cancelCompactingWatchdog() once real server evidence arrives;
- * at that point the flag is authoritative and will be cleared by
- * session.compacted.
+ * Set or clear the agent's compacting flag. Server events and compaction
+ * errors clear the flag.
  */
 function setCompacting(agentId: string, compacting: boolean): void {
   const agent = state.agents.get(agentId)
   if (!agent) return
   if (agent.compacting === compacting) return
   agent.compacting = compacting || undefined
-
-  cancelCompactingWatchdog(agentId)
-
-  if (compacting) {
-    const timer = setTimeout(() => onCompactingWatchdogExpired(agentId), COMPACTING_KICKOFF_TIMEOUT_MS)
-    compactingTimers.set(agentId, timer)
-  }
+  if (!compacting) clearPendingCompactionKickoff(agentId)
   emit({ agents: true })
 }
 
-function cancelCompactingWatchdog(agentId: string): void {
-  const existing = compactingTimers.get(agentId)
-  if (existing) {
-    clearTimeout(existing)
-    compactingTimers.delete(agentId)
-  }
+function acknowledgeCompacting(agentId: string): void {
+  clearPendingCompactionKickoff(agentId)
+  setCompacting(agentId, true)
 }
 
 /**
@@ -439,6 +483,120 @@ function backfillContextLimits(): void {
   if (changed) emit({ agents: true })
 }
 
+const providerDataByAgent = new Map<string, ProviderData>()
+
+type EffectiveVariantAgent = Pick<
+  LiveAgent,
+  | 'id'
+  | 'model'
+  | 'configuredModelPath'
+  | 'variant'
+  | 'configuredVariant'
+  | 'configuredEffectiveVariant'
+  | 'rawModelId'
+  | 'rawProviderId'
+  | 'rawMessageVariant'
+  | 'observedModelAt'
+>
+
+function findProviderModel(
+  providers: ProviderData | undefined,
+  providerId: string | undefined,
+  modelId: string
+): ProviderData['providers'][number]['models'][string] | undefined {
+  if (!providers) return undefined
+
+  for (const provider of providers.providers) {
+    if (providerId && provider.id !== providerId) continue
+    const directMatch = provider.models[modelId]
+    if (directMatch) return directMatch
+    const model = Object.values(provider.models).find((candidate) => candidate.id === modelId)
+    if (model) return model
+  }
+
+  return undefined
+}
+
+function configuredVariantForTurn(
+  agent: EffectiveVariantAgent,
+  providerId: string | undefined,
+  modelId: string
+): string | undefined {
+  if (!agent.configuredVariant || !agent.configuredModelPath) return undefined
+
+  const slashIndex = agent.configuredModelPath.indexOf('/')
+  const configuredProviderId = slashIndex > 0 ? agent.configuredModelPath.slice(0, slashIndex) : undefined
+  const configuredModelId = slashIndex > 0 ? agent.configuredModelPath.slice(slashIndex + 1) : agent.configuredModelPath
+  if (configuredModelId !== modelId) return undefined
+  if (configuredProviderId && providerId && configuredProviderId !== providerId) return undefined
+  return agent.configuredVariant
+}
+
+export function refreshEffectiveVariant(
+  agent: EffectiveVariantAgent,
+  providers = providerDataByAgent.get(agent.id)
+): void {
+  const configuredPath = agent.configuredModelPath
+  if (configuredPath) {
+    const slashIndex = configuredPath.indexOf('/')
+    const providerId = slashIndex > 0 ? configuredPath.slice(0, slashIndex) : undefined
+    const modelId = slashIndex > 0 ? configuredPath.slice(slashIndex + 1) : configuredPath
+    agent.configuredEffectiveVariant = resolveEffectiveVariant(
+      undefined,
+      agent.configuredVariant,
+      findProviderModel(providers, providerId, modelId)
+    )
+  } else {
+    agent.configuredEffectiveVariant = undefined
+  }
+
+  const modelPath = agent.rawModelId ?? agent.configuredModelPath
+  if (!modelPath) {
+    agent.variant = 'none'
+    return
+  }
+
+  const slashIndex = modelPath.indexOf('/')
+  const providerId = agent.rawProviderId ?? (slashIndex > 0 ? modelPath.slice(0, slashIndex) : undefined)
+  const modelId = slashIndex > 0 ? modelPath.slice(slashIndex + 1) : modelPath
+
+  const model = findProviderModel(
+    providers,
+    providerId,
+    modelId
+  )
+  agent.variant = resolveEffectiveVariant(
+    agent.rawMessageVariant,
+    configuredVariantForTurn(agent, providerId, modelId),
+    model
+  )
+}
+
+export function applyObservedResponse(
+  agent: EffectiveVariantAgent,
+  modelId: string,
+  providerId: string | undefined,
+  messageVariant: string | undefined,
+  observedAt: number
+): boolean {
+  if (observedAt < (agent.observedModelAt ?? 0)) return false
+
+  applyObservedModel(agent, modelId)
+  agent.rawProviderId = providerId
+  agent.rawMessageVariant = messageVariant
+  agent.observedModelAt = observedAt
+  refreshEffectiveVariant(agent)
+  return true
+}
+
+export function resetObservedResponse(agent: EffectiveVariantAgent): void {
+  agent.rawModelId = undefined
+  agent.rawProviderId = undefined
+  agent.rawMessageVariant = undefined
+  agent.observedModelAt = undefined
+  refreshEffectiveVariant(agent)
+}
+
 // Tracks how many step-start parts (invoked sub-agents) are currently active
 // per session. When depth > 0, message.updated model changes come from an
 // invoked agent and should not overwrite the parent agent's displayed model.
@@ -454,17 +612,6 @@ const childSessions = new Map<string, ChildSessionInfo>()
 const childHydrationRetryAgents = new Set<string>()
 const todoEventRevisions = new Map<string, number>()
 const todoFetchGenerations = new Map<string, number>()
-
-/** Clear step depth for a session and restore the parent model if it was
- *  overwritten by a sub-agent. Returns true if the model was restored. */
-function resetStepDepthAndRestoreModel(sessionId: string, agent: LiveAgent): boolean {
-  if (!sessionStepDepth.delete(sessionId)) return false
-  if (agent.configuredModel && agent.model !== agent.configuredModel) {
-    agent.model = agent.configuredModel
-    return true
-  }
-  return false
-}
 
 const listeners = new Set<() => void>()
 
@@ -552,10 +699,65 @@ function deriveFreshAgentName(projectName: string): string {
 
 /** Matches GitHub and GitLab PR/MR URLs in message text. */
 const PR_URL_REGEX = /https?:\/\/(?:github\.com|gitlab\.com|gitlab\.[a-z0-9.-]+)\S*\/(?:pull|merge_requests)\/\d+\b/gi
+const PR_LINK_DIRECTIVE_PREFIX = 'Set OCO PR Link for this session to '
 
 function extractPrUrl(text: string): string | null {
   const matches = text.match(PR_URL_REGEX)
   return matches ? matches[matches.length - 1] : null
+}
+
+function extractPrLinkDirective(text: string): string | null {
+  const lines = text.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index].trim()
+    if (!line.startsWith(PR_LINK_DIRECTIVE_PREFIX)) continue
+
+    const candidate = line.slice(PR_LINK_DIRECTIVE_PREFIX.length)
+    if (!candidate || /\s/.test(candidate)) continue
+
+    try {
+      const url = new URL(candidate)
+      if ((url.protocol === 'http:' || url.protocol === 'https:') && extractPrUrl(candidate) === candidate) {
+        return candidate
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+export function applyAssistantPrUrlPart(
+  agent: Pick<LiveAgent, 'prUrl'>,
+  partType: string,
+  partText: string | undefined,
+  allowAutomaticExtraction: boolean,
+  persist: (prUrl: string) => void
+): boolean {
+  if (!partText) return false
+
+  const explicitPrUrl = partType === 'text' ? extractPrLinkDirective(partText) : null
+  const automaticPrUrl = allowAutomaticExtraction && (partType === 'text' || partType === 'tool')
+    ? extractPrUrl(partText)
+    : null
+  const prUrl = explicitPrUrl ?? automaticPrUrl
+  if (!prUrl || agent.prUrl === prUrl) return false
+
+  agent.prUrl = prUrl
+  persist(prUrl)
+  return true
+}
+
+export function applyAssistantPrUrlMessage(
+  agent: Pick<LiveAgent, 'prUrl'>,
+  message: Pick<LiveMessage, 'parts'>,
+  persist: (prUrl: string) => void
+): boolean {
+  for (let index = message.parts.length - 1; index >= 0; index--) {
+    const part = message.parts[index]
+    if (applyAssistantPrUrlPart(agent, part.type, part.text, false, persist)) return true
+  }
+  return false
 }
 
 function subscribe(listener: () => void): () => void {
@@ -863,22 +1065,17 @@ function inferFileAction(before: string | undefined, after: string | undefined):
 
 // ── Optimistic User Messages ──
 
-const OPTIMISTIC_PREFIX = 'optimistic-user-'
-let optimisticCounter = 0
+function injectOptimisticUserMessage(
+  sessionId: string,
+  text: string,
+  modelId?: string,
+  attachments?: MessageAttachment[]
+): void {
+  const message = createOptimisticUserMessage(sessionId, text, attachments, modelId)
+  if (!message) return
 
-function injectOptimisticUserMessage(sessionId: string, text: string): void {
-  if (!text.trim()) return
   const messages = state.messages.get(sessionId) ?? []
-  const id = `${OPTIMISTIC_PREFIX}${++optimisticCounter}`
-  const now = Date.now()
-  messages.push({
-    id,
-    role: 'user',
-    sessionId,
-    createdAt: now,
-    updatedAt: now,
-    parts: [{ id: `${id}-part`, type: 'text', text }]
-  })
+  messages.push(message)
   state.messages.set(sessionId, messages)
 }
 
@@ -895,7 +1092,12 @@ function removeOptimisticUserMessages(sessionId: string): void {
  * assistant starts responding. Returns true if an optimistic message was
  * adopted, false otherwise.
  */
-function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, createdAt: number): boolean {
+function adoptOptimisticUserMessage(
+  sessionId: string,
+  serverMessageId: string,
+  createdAt: number,
+  modelId?: string
+): boolean {
   const messages = state.messages.get(sessionId)
   if (!messages) return false
   // Find the most recent optimistic placeholder for this session. Multiple
@@ -910,6 +1112,7 @@ function adoptOptimisticUserMessage(sessionId: string, serverMessageId: string, 
   target.id = serverMessageId
   target.createdAt = createdAt
   target.updatedAt = Date.now()
+  target.modelId = modelId ?? target.modelId
   messages.sort((left, right) => left.createdAt - right.createdAt)
   return true
 }
@@ -921,6 +1124,8 @@ function upsertMessage(message: LiveMessage): LiveMessage {
   if (existingMessage) {
     existingMessage.role = message.role
     existingMessage.createdAt = message.createdAt
+    existingMessage.providerID = message.providerID
+    existingMessage.variant = message.variant
     existingMessage.updatedAt = Math.max(
       existingMessage.updatedAt ?? existingMessage.createdAt,
       message.updatedAt ?? message.createdAt
@@ -929,6 +1134,7 @@ function upsertMessage(message: LiveMessage): LiveMessage {
       existingMessage.completedAt = Math.max(existingMessage.completedAt ?? 0, message.completedAt)
     }
     existingMessage.errored = existingMessage.errored || message.errored || undefined
+    existingMessage.modelId = message.modelId ?? existingMessage.modelId
     messages.sort((left, right) => left.createdAt - right.createdAt)
     return existingMessage
   }
@@ -937,6 +1143,18 @@ function upsertMessage(message: LiveMessage): LiveMessage {
   messages.sort((left, right) => left.createdAt - right.createdAt)
   state.messages.set(message.sessionId, messages)
   return message
+}
+
+export function getMessageModelId(info: MessageModelInfo): string | undefined {
+  return info.role === 'assistant' ? info.modelID : info.model?.modelID
+}
+
+export function getPendingTurnModel(
+  configuredModelPath?: string,
+  commandModel?: string,
+  modelOverridePath?: string
+): string | undefined {
+  return modelOverridePath ?? commandModel ?? configuredModelPath
 }
 
 function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): void {
@@ -989,7 +1207,7 @@ function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
  *  A top-level assistant message contains step-start/step-finish parts, and its
  *  parentID points to a top-level user message. Any assistant whose parentID
  *  references a user message NOT in the top-level set is a sub-agent response. */
-function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<string> {
+export function identifySubAgentMessages(entries: HistoricalSessionMessage[]): Set<string> {
   const topLevelParentUserIds = new Set<string>()
   const allUserMessageIds = new Set<string>()
   const assistantParentIds = new Map<string, string>() // assistantId → parentID
@@ -1038,11 +1256,12 @@ function computeContextTokens(tokens: {
   return sum > 0 ? sum : undefined
 }
 
-function hydrateHistoricalMessages(entries: unknown): void {
+function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
   if (!Array.isArray(entries)) return
 
-  const typed = entries as HistoricalSessionMessage[]
-  const subAgentAssistantIds = identifySubAgentMessages(typed)
+  const history = entries as HistoricalSessionMessage[]
+  const subAgentAssistantIds = identifySubAgentMessages(history)
+  const typed = limit ? history.slice(-limit) : history
   const optimisticsCleaned = new Set<string>()
 
   // Track the last assistant entry per session so we can lift a persisted
@@ -1062,6 +1281,7 @@ function hydrateHistoricalMessages(entries: unknown): void {
     }
 
     const createdAt = getMessageCreatedAt(entry.info)
+    const modelId = getMessageModelId(entry.info)
     const message = upsertMessage({
       id: entry.info.id,
       role: entry.info.role,
@@ -1070,6 +1290,8 @@ function hydrateHistoricalMessages(entries: unknown): void {
       updatedAt: entry.info.time?.completed ?? createdAt,
       completedAt: entry.info.time?.completed,
       errored: !!entry.info.error?.name,
+      modelId,
+      ...getAssistantResponseMetadata(entry.info),
       parts: []
     })
 
@@ -1109,19 +1331,25 @@ function hydrateHistoricalMessages(entries: unknown): void {
 
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
-        const formatted = formatModelName(entry.info.modelID)
-        if (!agent.configuredModel) agent.model = formatted
-        agent.rawModelId = entry.info.modelID
-        const limit = lookupContextLimit(entry.info.modelID)
-        if (limit !== undefined) {
-          agent.contextLimit = limit
-        } else {
-          console.debug('[hydrate] no context limit found in cache', {
-            agentId: agent.id,
-            modelId: entry.info.modelID,
-            hasTokens: !!entry.info.tokens,
-            contextTokens: agent.contextTokens
-          })
+        const modelUpdated = applyObservedResponse(
+          agent,
+          entry.info.modelID,
+          entry.info.providerID,
+          entry.info.variant,
+          createdAt
+        )
+        if (modelUpdated) {
+          const limit = lookupContextLimit(entry.info.modelID)
+          if (limit !== undefined) {
+            agent.contextLimit = limit
+          } else {
+            console.debug('[hydrate] no context limit found in cache', {
+              agentId: agent.id,
+              modelId: entry.info.modelID,
+              hasTokens: !!entry.info.tokens,
+              contextTokens: agent.contextTokens
+            })
+          }
         }
       }
 
@@ -1396,7 +1624,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           agent.inputReason = undefined
         }
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         // Deliberately DO NOT clear lastError or lastDispatchedMessage here.
         // The opencode server emits session.error immediately followed by
@@ -1425,7 +1653,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.lastActivityAt = Date.now()
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         // Surface the error so the UI can render a banner.
         if (errorProp?.name) {
@@ -1456,7 +1684,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         agent.blockedSince = undefined
         agent.respondedAt = undefined
         prExtractEnabled.delete(agent.id)
-        resetStepDepthAndRestoreModel(sessionId, agent)
+        sessionStepDepth.delete(sessionId)
 
         persistAgentMeta(agent.id, { persistedStatus: 'completed' })
         emit({ agents: true })
@@ -1555,21 +1783,16 @@ function processEvent(payload: OpenCodeEventPayload): void {
       if (agent) {
         agent.lastActivityAt = typeof time?.updated === 'number' ? time.updated : Date.now()
 
-        // The server sets session.time.compacting to a timestamp while
-        // compaction is in progress and clears it when done. This is the
-        // authoritative signal — cancel the kickoff watchdog when the server
-        // takes ownership of the flag.
+        // The server owns the compacting flag after it sets this timestamp.
         const serverIsCompacting = typeof time?.compacting === 'number'
         if (serverIsCompacting) {
           if (!agent.compacting) {
             console.log('[session.updated] server started compacting', { agentId: agent.id, at: time?.compacting })
           }
-          cancelCompactingWatchdog(agent.id)
-          if (!agent.compacting) setCompacting(agent.id, true)
-        } else if (agent.compacting && !compactingTimers.has(agent.id)) {
-          // Server has explicitly cleared its compacting timestamp and we're
-          // past the kickoff window — compaction finished (or was cancelled)
-          // but session.compacted didn't fire. Clear our flag to match.
+          acknowledgeCompacting(agent.id)
+        } else if (agent.compacting && !pendingCompactionKickoffs.has(agent.id)) {
+          // The server cleared its compacting timestamp without sending the
+          // dedicated completion event, so match the server state.
           console.log('[session.updated] server cleared compacting without session.compacted event', { agentId: agent.id })
           setCompacting(agent.id, false)
         }
@@ -1600,6 +1823,11 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const time = info.time as { completed?: number } | undefined
       const completedAt = typeof time?.completed === 'number' ? time.completed : undefined
       const msgError = info.error as { name?: string; message?: string; data?: unknown } | undefined
+      const modelId = getMessageModelId({
+        role,
+        modelID: info.modelID as string | undefined,
+        model: info.model as { modelID?: string } | undefined
+      })
 
       let agentChanged = false
       const agent = findAgentBySession(sessionId)
@@ -1628,15 +1856,20 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
 
           // Only update model from top-level (non-invoked) assistant messages
-          const modelId = info.modelID as string | undefined
           const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
-            const formatted = formatModelName(modelId)
-            if (!agent.configuredModel) agent.model = formatted
-            agent.rawModelId = modelId
-            const limit = lookupContextLimit(modelId)
-            if (limit !== undefined) agent.contextLimit = limit
-            agentChanged = true
+            const modelUpdated = applyObservedResponse(
+              agent,
+              modelId,
+              info.providerID as string | undefined,
+              info.variant as string | undefined,
+              createdAt
+            )
+            if (modelUpdated) {
+              const limit = lookupContextLimit(modelId)
+              if (limit !== undefined) agent.contextLimit = limit
+              agentChanged = true
+            }
           }
 
           // Opencode reports provider errors on the assistant message itself via
@@ -1688,11 +1921,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // starts responding; without adoption the bubble would empty in between.
       let adopted = false
       if (role === 'user') {
-        adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt)
+        adopted = adoptOptimisticUserMessage(sessionId, messageId, createdAt, modelId)
       }
 
+      let updatedMessage: LiveMessage | undefined
       if (!adopted) {
-        upsertMessage({
+        updatedMessage = upsertMessage({
           id: messageId,
           role,
           sessionId,
@@ -1700,8 +1934,24 @@ function processEvent(payload: OpenCodeEventPayload): void {
           updatedAt: Date.now(),
           completedAt,
           errored: !!msgError?.name,
+          modelId,
+          ...getAssistantResponseMetadata(info),
           parts: []
         })
+      }
+
+      if (
+        agent &&
+        role === 'assistant' &&
+        completedAt !== undefined &&
+        updatedMessage &&
+        applyAssistantPrUrlMessage(
+          agent,
+          updatedMessage,
+          (prUrl) => persistAgentMeta(agent.id, { prUrl })
+        )
+      ) {
+        agentChanged = true
       }
 
       emit({ messages: true, agents: agentChanged })
@@ -1715,22 +1965,17 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const partId = part.id as string
       const partType = part.type as string
 
-      // A `compaction` part is the server's authoritative signal that the
-      // compactor is actively running for this session. Cancel the kickoff
-      // watchdog (compaction has demonstrably started) and set the spinner
-      // flag for auto-compactions that the user didn't initiate.
+      // A compaction part confirms that the compactor is running.
       if (partType === 'compaction') {
         const agent = findAgentBySession(sessionId)
         if (agent) {
           console.log('[compaction part] server acknowledged compaction', { agentId: agent.id, auto: part.auto })
-          cancelCompactingWatchdog(agent.id)
-          if (!agent.compacting) setCompacting(agent.id, true)
+          acknowledgeCompacting(agent.id)
         }
       }
 
       // Track invoked-agent nesting depth so model updates from sub-agents
       // don't overwrite the parent agent's displayed model.
-      let modelRestored = false
       if (partType === 'step-start') {
         sessionStepDepth.set(sessionId, (sessionStepDepth.get(sessionId) ?? 0) + 1)
       } else if (partType === 'step-finish') {
@@ -1738,8 +1983,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
         if (current > 1) {
           sessionStepDepth.set(sessionId, current - 1)
         } else if (current === 1) {
-          const agent = findAgentBySession(sessionId)
-          if (agent) modelRestored = resetStepDepthAndRestoreModel(sessionId, agent)
+          sessionStepDepth.delete(sessionId)
         }
         // current === 0: no matching step-start, ignore
       }
@@ -1801,7 +2045,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
                 agentChanged = true
               }
             }
-            emitMessagesThrottled(agentChanged || modelRestored)
+            emitMessagesThrottled(agentChanged)
             break
           }
         }
@@ -1841,7 +2085,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
             newPart.compactionAuto = part.auto as boolean | undefined
             newPart.compactionOverflow = part.overflow as boolean | undefined
           }
-          message.parts.push(newPart)
+          if (!replaceNextOptimisticUserFilePart(message, newPart)) {
+            message.parts.push(newPart)
+          }
         }
 
         // Update agent activity (but don't clobber blocked/stopping/terminal states)
@@ -1854,15 +2100,18 @@ function processEvent(payload: OpenCodeEventPayload): void {
           associateKnownChildren(sessionId)
         }
         if (agent) {
-          // Extract PR URL from assistant text and tool output parts, but only
-          // when the "Create PR" flow was explicitly triggered by the user.
-          if (prExtractEnabled.has(agent.id) && message.role === 'assistant' && (partType === 'text' || partType === 'tool') && partText) {
-            const prUrl = extractPrUrl(partText)
-            if (prUrl && agent.prUrl !== prUrl) {
-              agent.prUrl = prUrl
-              agentChanged = true
-              persistAgentMeta(agent.id, { prUrl })
-            }
+          if (
+            message.role === 'assistant' &&
+            prExtractEnabled.has(agent.id) &&
+            applyAssistantPrUrlPart(
+              agent,
+              partType,
+              partText,
+              true,
+              (prUrl) => persistAgentMeta(agent.id, { prUrl })
+            )
+          ) {
+            agentChanged = true
           }
           agent.lastActivityAt = Date.now()
           if (agent.status !== 'needs_input' && agent.status !== 'needs_approval' && agent.status !== 'stopping' && agent.status !== 'completed' && agent.status !== 'idle') {
@@ -1897,11 +2146,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           bumpParentActivityForChildSession(sessionId)
         }
 
-        emitMessagesThrottled(agentChanged || modelRestored)
-      } else if (modelRestored) {
-        // step-finish arrived before the parent message exists locally —
-        // still need to emit so the restored model is picked up by the UI.
-        emit({ agents: true })
+        emitMessagesThrottled(agentChanged)
       }
       break
     }
@@ -2468,7 +2713,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       const entries = result.data as HistoricalSessionMessage[]
       console.debug(`[handleAgentLaunched:hydrate] id=${payload.id} session=${payload.sessionId.slice(-8)} historicalMsgs=${entries?.length ?? 0} currentStoreMsgs=${state.messages.get(payload.sessionId)?.length ?? 0}`)
       if (!Array.isArray(entries) || entries.length === 0) return
-      hydrateHistoricalMessages(entries.slice(-RESUME_MESSAGE_LIMIT))
+      hydrateHistoricalMessages(entries, RESUME_MESSAGE_LIMIT)
       console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
       emit({ messages: true })
     })
@@ -2476,9 +2721,16 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (changed) emit({ todos: true })
     })
     void refetchChildSessions(payload.id).then(() => emit({ messages: true }))
+    void window.api.getProviders(payload.id).then((result) => {
+      if (!result.ok || !result.data) return
+      const agent = state.agents.get(payload.id)
+      if (!agent) return
+      providerDataByAgent.set(payload.id, result.data as ProviderData)
+      refreshEffectiveVariant(agent)
+      emit({ agents: true })
+    })
 
-    // Seed configuredModel from runtime config as an authoritative fallback
-    // in case step-depth tracking misses events or the resume window is too small.
+    // Use runtime config only until a response identifies the model actually used.
     void window.api.getConfig(payload.id).then((result) => {
       if (!result.ok || !result.data) return
       const config = result.data as { model?: string }
@@ -2487,6 +2739,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
       if (!agent) return
       if (agent.configuredModelPath) return
       applyConfiguredModel(agent, config.model)
+      refreshEffectiveVariant(agent)
       emit({ agents: true })
     })
   }
@@ -2528,7 +2781,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   agent.cost = 0
   agent.tokens = { input: 0, output: 0 }
   agent.contextTokens = undefined
-  agent.rawModelId = undefined
+  resetObservedResponse(agent)
   // contextLimit stays cached — the model doesn't change on reset.
   agent.lastActivityAt = Date.now()
   agent.lastError = undefined
@@ -2539,7 +2792,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   if (hasPrompt) {
     agent.taskSummary = payload.prompt.slice(0, 120)
     agent.status = 'running'
-    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
   } else {
     agent.taskSummary = 'Waiting for prompt...'
     agent.status = 'idle'
@@ -2557,16 +2810,14 @@ function removeAgentState(agentId: string): void {
   prExtractEnabled.delete(agentId)
   pendingMessages.delete(agentId)
   pendingModelChanges.delete(agentId)
+  pendingPrUrlUpdates.delete(agentId)
   childHydrationRetryAgents.delete(agentId)
   stalledRecoveryStates.delete(agentId)
   deleteAgentSettings(agentId)
-  const compactingTimer = compactingTimers.get(agentId)
-  if (compactingTimer) {
-    clearTimeout(compactingTimer)
-    compactingTimers.delete(agentId)
-  }
+  clearPendingCompactionKickoff(agentId)
   sessionStepDepth.delete(agent.sessionId)
   clearChildSessionsForAgent(agentId)
+  providerDataByAgent.delete(agentId)
   state.agents.delete(agentId)
   state.messages.delete(agent.sessionId)
   state.todos.delete(agent.sessionId)
@@ -2615,14 +2866,17 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     ? existingAgent.autoNamed
     : isAutoTitle
 
-  const configuredModelPath = payload.modelOverride
+  const payloadModelOverridePath = payload.modelOverride
     ? payload.modelOverride.providerID
       ? `${payload.modelOverride.providerID}/${payload.modelOverride.modelID}`
       : payload.modelOverride.modelID
-    : existingAgent?.configuredModelPath
+    : undefined
+  const modelOverridePath = payloadModelOverridePath ?? existingAgent?.modelOverridePath
+  const configuredModelPath = payloadModelOverridePath ?? existingAgent?.configuredModelPath
   const configuredModel = configuredModelPath
     ? formatModelName(configuredModelPath)
     : existingAgent?.configuredModel
+  const modelState = getAgentModelState(existingAgent, configuredModel)
   const status = initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle')
 
   const agent: LiveAgent = {
@@ -2639,10 +2893,15 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     status,
     inputReason: getReconnectedInputReason(existingAgent, status),
     labelIds: existingAgent?.labelIds ?? [],
-    model: configuredModel ?? existingAgent?.model ?? UNRESOLVED_MODEL_LABEL,
+    ...modelState,
     configuredModel,
     configuredModelPath,
-    variant: payload.variantOverride ?? existingAgent?.variant,
+    modelOverridePath,
+    variant: existingAgent?.variant ?? payload.variantOverride ?? 'none',
+    configuredVariant: payload.variantOverride ?? existingAgent?.configuredVariant,
+    rawProviderId: existingAgent?.rawProviderId,
+    rawMessageVariant: existingAgent?.rawMessageVariant,
+    observedModelAt: existingAgent?.observedModelAt,
     prUrl: existingAgent?.prUrl ?? payload.prUrl ?? null,
     lastActivityAt: existingAgent?.lastActivityAt ?? Date.now(),
     cost: existingAgent?.cost ?? 0,
@@ -2650,7 +2909,9 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     autoNamed
   }
 
+  refreshEffectiveVariant(agent)
   state.agents.set(payload.id, agent)
+  consumePendingAgentPrUrl(agent, pendingPrUrlUpdates)
   const pendingModelChange = pendingModelChanges.get(payload.id)
   if (pendingModelChange) {
     applyAgentModelChange(agent, pendingModelChange)
@@ -2661,7 +2922,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
 
   if (hasPrompt && !existingAgent) {
-    injectOptimisticUserMessage(payload.sessionId, payload.prompt)
+    injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
   }
 }
 
@@ -3324,8 +3585,15 @@ function removeChildSessionTree(sessionId: string): void {
  * Optimistically mark the agent as running and update its task summary.
  * Shared by sendMessage and dispatchPendingMessage to avoid duplication.
  */
-function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: string, taskSummaryOverride?: string): void {
-  if (!text.trim()) return
+function applyOptimisticSendState(
+  agentId: string,
+  agent: LiveAgent,
+  text: string,
+  taskSummaryOverride?: string,
+  attachments?: MessageAttachment[]
+): void {
+  const trimmedText = text.trim()
+  if (!trimmedText && !attachments?.length) return
 
   if (taskSummaryOverride) {
     agent.taskSummary = taskSummaryOverride.slice(0, 120)
@@ -3333,8 +3601,8 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
     if (taskSummaryOverride === 'Create PR') {
       prExtractEnabled.add(agentId)
     }
-  } else {
-    agent.taskSummary = text.trim().slice(0, 120)
+  } else if (trimmedText) {
+    agent.taskSummary = trimmedText.slice(0, 120)
     taskSummaryLocked.delete(agentId)
   }
   agent.status = 'running'
@@ -3343,7 +3611,12 @@ function applyOptimisticSendState(agentId: string, agent: LiveAgent, text: strin
   agent.respondedAt = Date.now()
   agent.inputReason = undefined
 
-  injectOptimisticUserMessage(agent.sessionId, text)
+  injectOptimisticUserMessage(
+    agent.sessionId,
+    text,
+    getPendingTurnModel(agent.configuredModelPath, undefined, agent.modelOverridePath),
+    attachments
+  )
   persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
 }
 
@@ -3361,7 +3634,7 @@ function dispatchPendingMessage(agentId: string): void {
 
   const { text, agentConfig, attachments, taskSummaryOverride } = pending
 
-  applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
+  applyOptimisticSendState(agentId, agent, text, taskSummaryOverride, attachments)
 
   for (const [qId, q] of state.questions) {
     if (q.agentId === agentId) {
@@ -3473,13 +3746,31 @@ export function formatModelName(modelId: string): string {
 }
 
 export function applyConfiguredModel(
-  agent: Pick<LiveAgent, 'model' | 'configuredModel' | 'configuredModelPath'>,
+  agent: Pick<LiveAgent, 'model' | 'configuredModel' | 'configuredModelPath' | 'rawModelId'>,
   modelPath: string
 ): void {
   const formatted = formatModelName(modelPath)
-  agent.model = formatted
   agent.configuredModel = formatted
   agent.configuredModelPath = modelPath
+  if (!agent.rawModelId) agent.model = formatted
+}
+
+export function getAgentModelState(
+  existingAgent: Pick<LiveAgent, 'model' | 'rawModelId'> | undefined,
+  configuredModel?: string
+): Pick<LiveAgent, 'model' | 'rawModelId'> {
+  return {
+    model: existingAgent?.model ?? configuredModel ?? UNRESOLVED_MODEL_LABEL,
+    rawModelId: existingAgent?.rawModelId
+  }
+}
+
+export function applyObservedModel(
+  agent: Pick<LiveAgent, 'model' | 'rawModelId'>,
+  modelId: string
+): void {
+  agent.model = formatModelName(modelId)
+  agent.rawModelId = modelId
 }
 
 function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPayload): void {
@@ -3488,7 +3779,9 @@ function applyAgentModelChange(agent: LiveAgent, payload: AgentModelChangedPaylo
     ? `${modelOverride.providerID}/${modelOverride.modelID}`
     : modelOverride.modelID
   applyConfiguredModel(agent, modelPath)
-  agent.variant = payload.variantOverride
+  agent.modelOverridePath = modelPath
+  agent.configuredVariant = payload.variantOverride
+  refreshEffectiveVariant(agent)
 }
 
 // ── Tool Call Extraction ──
@@ -3577,19 +3870,23 @@ export function useAgentStore() {
 
         const hydrationResults = await Promise.all(
           agentsResult.data.map(async (agent) => {
-            const [messages, todosChanged, children, config] = await Promise.all([
+            const [messages, todosChanged, children, config, providers] = await Promise.all([
               window.api.getMessages(agent.id),
               refetchTodos(agent.id),
               window.api.getChildSessions(agent.id),
-              window.api.getConfig(agent.id)
+              window.api.getConfig(agent.id),
+              window.api.getProviders(agent.id)
             ])
-            return { agentId: agent.id, messages, todosChanged, children, config }
+            return { agentId: agent.id, messages, todosChanged, children, config, providers }
           })
         )
 
         if (cancelled) return
 
-        for (const { agentId, messages, todosChanged, children, config } of hydrationResults) {
+        for (const { agentId, messages, todosChanged, children, config, providers } of hydrationResults) {
+          if (providers.ok && providers.data) {
+            providerDataByAgent.set(agentId, providers.data as ProviderData)
+          }
           if (messages.ok) {
             hydrateHistoricalMessages(messages.data)
             shouldEmit = true
@@ -3603,8 +3900,11 @@ export function useAgentStore() {
           const configModel = config.ok && config.data
             ? (config.data as { model?: string }).model
             : undefined
-          if (liveAgent && !liveAgent.configuredModelPath && configModel) {
-            applyConfiguredModel(liveAgent, configModel)
+          if (liveAgent) {
+            if (!liveAgent.configuredModelPath && configModel) {
+              applyConfiguredModel(liveAgent, configModel)
+            }
+            refreshEffectiveVariant(liveAgent)
             shouldEmit = true
           }
         }
@@ -3675,6 +3975,12 @@ export function useAgentStore() {
     const cleanups = [
       window.api.onEvent(processEvent),
       window.api.onAgentLaunched(handleAgentLaunched),
+      window.api.onAgentLabelsUpdated((payload) => {
+        const agent = state.agents.get(payload.id)
+        if (!agent || agent.sessionId !== payload.sessionId) return
+        agent.labelIds = payload.labelIds
+        emit({ agents: true })
+      }),
       window.api.onAgentModelChanged((payload) => {
         const agent = state.agents.get(payload.id)
         if (!agent) {
@@ -3683,6 +3989,9 @@ export function useAgentStore() {
         }
         applyAgentModelChange(agent, payload)
         emit({ agents: true })
+      }),
+      window.api.onAgentPrUrlUpdated((payload) => {
+        if (applyAgentPrUrlUpdate(state.agents, pendingPrUrlUpdates, payload)) emit({ agents: true })
       }),
       window.api.onSessionReset(handleSessionReset),
       window.api.onExternalAttached((data) => {
@@ -3734,9 +4043,20 @@ export function useAgentStore() {
       }),
       // Runtime starts can expose new provider data; notify open model pickers
       // to refresh against the latest config instead of staying frozen at boot.
-      window.api.onRuntimeStarted(() => {
+      window.api.onRuntimeStarted((runtime) => {
         invalidateProviderCache()
         void ensureProvidersLoaded()
+        for (const agent of state.agents.values()) {
+          if (agent.runtimeId !== runtime.id) continue
+          void window.api.getProviders(agent.id).then((result) => {
+            if (!result.ok || !result.data) return
+            const currentAgent = state.agents.get(agent.id)
+            if (!currentAgent) return
+            providerDataByAgent.set(agent.id, result.data as ProviderData)
+            refreshEffectiveVariant(currentAgent)
+            emit({ agents: true })
+          })
+        }
       }),
       // Backfill contextLimit for agents whose modelID was hydrated before the
       // provider fetch completed (common on cold start).
@@ -3928,6 +4248,8 @@ export function useAgentStore() {
           workspaceName: data.workspaceName ?? (directory.split('/').pop() ?? directory),
           prompt: data.prompt ?? prompt ?? '',
           title: data.title ?? title ?? (prompt ? prompt.slice(0, 80) : projectSlug),
+          modelOverride: data.modelOverride,
+          variantOverride: data.variantOverride,
           launchId
         })
       }
@@ -3960,7 +4282,7 @@ export function useAgentStore() {
     const previousLabelIds = agent?.labelIds ? [...agent.labelIds] : []
 
     if (agent) {
-      applyOptimisticSendState(agentId, agent, text, taskSummaryOverride)
+      applyOptimisticSendState(agentId, agent, text, taskSummaryOverride, attachments)
     }
 
     // Optimistically clear any pending questions for this agent
@@ -4005,7 +4327,7 @@ export function useAgentStore() {
       console.error('Failed to list commands:', result.error)
       return null
     }
-    return result.data as Array<{ name: string; description?: string; template: string }> | null
+    return result.data as Array<{ name: string; description?: string; template: string; model?: string }> | null
   }, [])
 
   const listAgentConfigs = useCallback(async (agentId: string) => {
@@ -4018,7 +4340,7 @@ export function useAgentStore() {
     return result.data as Array<{ name: string; description?: string }> | null
   }, [])
 
-  const executeCommand = useCallback(async (agentId: string, command: string, args: string) => {
+  const executeCommand = useCallback(async (agentId: string, command: string, args: string, model?: string) => {
     if (!window.api) return
 
     const agent = state.agents.get(agentId)
@@ -4035,6 +4357,11 @@ export function useAgentStore() {
       agent.lastActivityAt = Date.now()
       agent.blockedSince = undefined
       taskSummaryLocked.add(agentId)
+      injectOptimisticUserMessage(
+        agent.sessionId,
+        cmdText,
+        getPendingTurnModel(agent.configuredModelPath, model, agent.modelOverridePath)
+      )
       persistAgentMeta(agentId, { taskSummary: agent.taskSummary, persistedStatus: 'running' })
       emit({ agents: true })
     }
@@ -4370,7 +4697,9 @@ export function useAgentStore() {
     const agent = getMutableAgent(agentId)
     if (!agent) return
     applyConfiguredModel(agent, modelPath)
-    agent.variant = variant
+    agent.modelOverridePath = modelPath
+    agent.configuredVariant = variant
+    refreshEffectiveVariant(agent)
     emit({ agents: true })
   }, [])
 
@@ -4427,12 +4756,7 @@ export function useAgentStore() {
     emit({ agents: true })
   }, [])
 
-  /**
-   * Trigger server-side compaction on the user's behalf. Aborts any running
-   * turn first — compactSession 400s on a busy session. Shows a spinner while
-   * the RPC and the provider-side summarization run; cleared when the server
-   * emits session.compacted (success), the RPC fails, or the watchdog fires.
-   */
+  // Abort a running turn first because compactSession rejects busy sessions.
   const compactSession = useCallback(async (agentId: string): Promise<IpcResult | undefined> => {
     if (!window.api) return
     const agent = getMutableAgent(agentId)
@@ -4454,7 +4778,7 @@ export function useAgentStore() {
       await waitForAgentSettled(agentId, 10_000)
     }
 
-    setCompacting(agentId, true)
+    startCompacting(agentId)
     agent.lastActivityAt = Date.now()
 
     const result = await window.api.compactSession(agentId)

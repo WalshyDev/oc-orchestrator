@@ -151,11 +151,11 @@ const api = {
   stopRuntime: (runtimeId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:stop', runtimeId),
 
-  listAllProviders: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:providers'),
+  listAllProviders: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:providers', directory),
 
-  getSystemConfig: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:config'),
+  getSystemConfig: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:config', directory),
 
   listAllCommands: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:commands'),
@@ -322,6 +322,18 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('agent:model-changed', handler)
     return () => ipcRenderer.removeListener('agent:model-changed', handler)
+  },
+
+  onAgentPrUrlUpdated: (callback: (data: { id: string; prUrl: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:pr-url-updated', handler)
+    return () => ipcRenderer.removeListener('agent:pr-url-updated', handler)
+  },
+
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:labels-updated', handler)
+    return () => ipcRenderer.removeListener('agent:labels-updated', handler)
   },
 
   onExternalAttached: (callback: (data: { source: string; projectName?: string; sessionId?: string; agentId?: string }) => void) => {

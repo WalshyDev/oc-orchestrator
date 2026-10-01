@@ -67,8 +67,8 @@ export interface OrchestratorApi {
   listPermissions: () => Promise<IpcResult<PendingPermissionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
-  listAllProviders: () => Promise<IpcResult>
-  getSystemConfig: () => Promise<IpcResult>
+  listAllProviders: (directory?: string) => Promise<IpcResult>
+  getSystemConfig: (directory?: string) => Promise<IpcResult>
   listAllCommands: () => Promise<IpcResult>
   listAllAgentConfigs: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
@@ -130,6 +130,8 @@ export interface OrchestratorApi {
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
   onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
+  onAgentPrUrlUpdated: (callback: (data: AgentPrUrlUpdatedPayload) => void) => () => void
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
@@ -275,6 +277,11 @@ export interface AgentModelChangedPayload {
   id: string
   modelOverride: { providerID: string; modelID: string }
   variantOverride?: string
+}
+
+export interface AgentPrUrlUpdatedPayload {
+  id: string
+  prUrl: string
 }
 
 export interface SessionResetPayload {

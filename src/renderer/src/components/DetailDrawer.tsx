@@ -63,12 +63,26 @@ import { EventLog } from './EventLog'
 import { AgentActivity } from './AgentActivity'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
+
+function ResponseMetadata({ response }: {
+  response: Pick<Message, 'providerID' | 'model' | 'variant'>
+}) {
+  const metadata = formatResponseMetadata(response)
+  if (!metadata) return null
+
+  return (
+    <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70">
+      {metadata}
+    </span>
+  )
+}
 
 const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'git-pull-request': GitPullRequest,
@@ -143,6 +157,7 @@ const todoStatusStyles: Record<TodoStatus, string> = {
 export interface ChatCommand {
   command: string
   description: string
+  model?: string
 }
 
 export interface AgentConfigItem {
@@ -1793,12 +1808,13 @@ function AgentConfigPanel({
   }, [agent.model, options, selectedModel])
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(selectedModel, providerData, configModel),
-    [selectedModel, providerData, configModel]
+    () => getVariantOptionsForModel(selectedModel, providerData, configModel, agent.configuredVariant),
+    [selectedModel, providerData, configModel, agent.configuredVariant]
   )
-  const selectedEffort = effortOptions.some((option) => option.value === agent.variant)
-    ? agent.variant ?? 'auto'
-    : 'auto'
+  const selectedEffort = agent.configuredVariant ?? 'auto'
+  let variantDescription = "Provider Default removes this agent's variant override."
+  if (loading) variantDescription = 'Loading model variants...'
+  else if (effortOptions.length === 1) variantDescription = 'This model does not expose explicit variants.'
 
   const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
     if (!onChangeModel || savingRef.current) return
@@ -1885,7 +1901,7 @@ function AgentConfigPanel({
           <p className="mt-1 text-[11px] text-kumo-subtle">Changes the model for this agent's next prompt.</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Model</label>
+          <label className="text-[11px] font-medium text-kumo-default">Next prompt model</label>
           <SelectField
             value={selectedModel}
             options={modelOptions}
@@ -1899,19 +1915,17 @@ function AgentConfigPanel({
           {loading && <span className="text-[10px] text-kumo-subtle">Loading provider models...</span>}
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Effort</label>
+          <label className="text-[11px] font-medium text-kumo-default">Variant</label>
           <SelectField
             value={selectedEffort}
             options={effortOptions}
-            disabled={saving || !onChangeModel}
+            disabled={loading || saving || !onChangeModel}
             onChange={(value) => void updateModel(selectedModel, value === 'auto' ? undefined : value)}
             buttonClassName={selectButtonClasses}
             menuClassName={selectMenuClasses}
           />
           <span className="text-[10px] text-kumo-subtle">
-            {effortOptions.length === 1
-              ? 'This model does not expose explicit effort levels.'
-              : "Provider Default removes this agent's effort override."}
+            {variantDescription}
           </span>
         </div>
         {saving && <span className="text-[11px] text-kumo-link">Saving configuration...</span>}
@@ -1923,7 +1937,7 @@ function AgentConfigPanel({
 
 type MessageRefCallback = (id: string, node: HTMLElement | null) => void
 
-const MessageBubble = memo(function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   verbosity = 'none',
   registerRef
@@ -1998,27 +2012,35 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div
       ref={rootRef}
-      className={`group relative px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
+      className={`group px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
         isUser
           ? 'bg-kumo-interact/10 border border-kumo-interact/15 text-kumo-default self-end max-w-[85%]'
           : 'bg-kumo-control border border-kumo-line text-kumo-default max-w-[95%]'
       }`}
     >
-      {message.content && (
-        <button
-          type="button"
-          onClick={handleCopy}
-          title={copyLabel}
-          aria-label={copyLabel}
-          className="absolute top-1.5 right-1.5 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-        >
-          {copied
-            ? <Check size={12} weight="bold" />
-            : <Copy size={12} weight="regular" />}
-        </button>
-      )}
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
-        {isUser ? 'You' : 'Agent'}
+      <div className="mb-1 flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle">
+          <span>{isUser ? 'You' : 'Agent'}</span>
+          {!isUser && <ResponseMetadata response={message} />}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {message.content && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              title={copyLabel}
+              aria-label={copyLabel}
+              className="-my-1 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+            >
+              {copied
+                ? <Check size={12} weight="bold" />
+                : <Copy size={12} weight="regular" />}
+            </button>
+          )}
+          <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70 whitespace-nowrap">
+            {message.timestamp}
+          </span>
+        </div>
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2050,6 +2072,10 @@ const MessageBubble = memo(function MessageBubble({
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
+  prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
+  prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.registerRef === next.registerRef
@@ -2134,6 +2160,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
+  const toolModels = [...new Set(toolCalls.map((tool) => tool.model).filter(Boolean))].join(', ')
 
   // Auto-expand the bubble when any tool in the group is still running so
   // the user can see progress without having to click. Otherwise the bubble
@@ -2159,6 +2186,11 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
+      {message.providerID && message.model && (
+        <div className="mb-1 text-[10px]">
+          <ResponseMetadata response={message} />
+        </div>
+      )}
       <button
         onClick={() => setExpanded((prev) => !prev)}
         className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
@@ -2168,6 +2200,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
         </span>
         <Wrench size={13} className="text-kumo-subtle" />
         <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
+        {toolModels && <span className="font-mono text-[10px] text-kumo-subtle">{toolModels}</span>}
       </button>
 
       {expanded && (
@@ -2176,6 +2209,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
             <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
+                <ResponseMetadata response={tool} />
                 <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
                   {tool.state}
                 </span>
@@ -2212,6 +2246,9 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
+  prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity
 )

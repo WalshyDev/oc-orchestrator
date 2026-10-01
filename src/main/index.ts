@@ -1,5 +1,5 @@
 import './logger'
-import { app, shell, BrowserWindow, nativeImage, Menu } from 'electron'
+import { app, shell, BrowserWindow, nativeImage, Menu, dialog } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers } from './ipc'
 import { agentController } from './services/agent-controller'
@@ -110,6 +110,31 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
+async function forceReloadWithAiConfig(win: BrowserWindow | undefined): Promise<void> {
+  let result
+  try {
+    result = await runtimeManager.reloadAiConfig()
+  } finally {
+    win?.webContents.reloadIgnoringCache()
+  }
+
+  const { skippedBusy, failed } = result
+
+  if (skippedBusy.length === 0 && failed.length === 0) return
+
+  const lines = [
+    ...skippedBusy.map((dir) => `Busy, not reloaded: ${dir}`),
+    ...failed.map((dir) => `Failed: ${dir}`)
+  ]
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    message: 'Some runtimes kept their old AI config',
+    detail: `${lines.join('\n')}\n\nForce Reload again once those agents are idle.`
+  }
+  if (win) void dialog.showMessageBox(win, options)
+  else void dialog.showMessageBox(options)
+}
+
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -141,7 +166,15 @@ app.whenReady().then(async () => {
       label: 'View',
       submenu: [
         { role: 'reload' },
-        { role: 'forceReload' },
+        {
+          label: 'Force Reload',
+          accelerator: 'Shift+CmdOrCtrl+R',
+          click: (_item, win) => {
+            forceReloadWithAiConfig(win instanceof BrowserWindow ? win : undefined).catch((error) => {
+              console.error('[Main] Force reload failed:', error)
+            })
+          }
+        },
         { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'resetZoom' },
