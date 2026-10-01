@@ -369,6 +369,7 @@ export function App() {
         prUrl: agent.prUrl,
         lastActivityAt: formatTimeAgo(agent.lastActivityAt),
         lastActivityAtMs: agent.lastActivityAt,
+        retry: agent.retry,
         blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
         blockedSinceMs: agent.blockedSince,
         lastMessage,

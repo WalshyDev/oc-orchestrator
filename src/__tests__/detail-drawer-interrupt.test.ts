@@ -157,4 +157,30 @@ describe('DetailDrawer pending interrupts', () => {
     expect(dismissedMarkup).not.toContain('Waiting for your response')
     expect(dismissedMarkup).not.toContain('data-pending-interrupt')
   })
+
+  it('shows retry reasons, tool waits, and unknown quiet periods in the transcript', () => {
+    vi.stubGlobal('window', { innerHeight: 1000 })
+    vi.stubGlobal('localStorage', { getItem: () => null })
+    const agent = { ...createAgent('running'), lastActivityAtMs: Date.now() - 120_000 }
+    const render = (overrides: Partial<Parameters<typeof DetailDrawer>[0]> = {}): string => renderToStaticMarkup(createElement(DetailDrawer, {
+      agent,
+      messages: [],
+      onClose: () => {},
+      ...overrides
+    }))
+    const retryMarkup = render({ agent: { ...agent, retry: { attempt: 3, message: '429 Too Many Requests', next: Date.now() + 30_000 } } })
+    expect(getElementContents(retryMarkup, 'data-transcript-scroll')).toContain('Provider retry #3')
+    expect(retryMarkup).toContain('429 Too Many Requests')
+    expect(retryMarkup).toContain('Next attempt in 30s')
+    const toolMarkup = render({ messages: [{
+      id: 'tools', role: 'tool-group', content: '', timestamp: 'now',
+      toolCalls: [{ id: 'bash', name: 'bash', state: 'running', timestamp: Date.now() - 120_000 }]
+    }] })
+    expect(toolMarkup).toContain('Waiting for bash')
+    expect(toolMarkup).not.toContain('No tool is running')
+    const quietMarkup = render()
+    expect(quietMarkup).toContain('Waiting for model output')
+    expect(quietMarkup).toContain('OpenCode has not reported a cause')
+    expect(quietMarkup).not.toContain('Agent is thinking')
+  })
 })
