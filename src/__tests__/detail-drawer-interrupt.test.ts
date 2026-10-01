@@ -180,9 +180,9 @@ describe('DetailDrawer pending interrupts', () => {
     expect(diagnostics).not.toMatch(/<details[^>]*\bopen(?:[\s=>])/)
     expect(diagnostics).toContain('Diagnostics <svg')
     expect(diagnostics).toContain('Workspace: /worktrees/project')
-    expect(diagnostics).toContain('<div class="break-all">Session: session-1</div>')
-    expect(diagnostics).toContain('<div class="break-all">Model: model</div>')
-    expect(diagnostics).toContain('<div class="break-all">Variant: high</div>')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Session"')).toContain('>Session: session-1</div>')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Model"')).toContain('>Model: model</div>')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Variant"')).toContain('>Variant: high</div>')
     expect(diagnostics).toContain(`dateTime="${new Date(agent.lastActivityAtMs).toISOString()}"`)
     expect(diagnostics).toContain('Last update:')
     expect(diagnostics).toContain('Provider retry #3')
@@ -191,7 +191,10 @@ describe('DetailDrawer pending interrupts', () => {
     expect(retryMarkup).toContain('Next attempt in 30s')
     const toolMarkup = render({ messages: [{
       id: 'tools', role: 'tool-group', content: '', timestamp: 'now',
-      toolCalls: [{ id: 'bash', name: 'bash', state: 'running', timestamp: Date.now() - 120_000 }]
+      toolCalls: [
+        { id: 'bash', name: 'bash', state: 'running', timestamp: Date.now() - 120_000 },
+        { id: 'todo', name: 'todowrite', state: 'running', timestamp: Date.now() }
+      ]
     }] })
     expect(toolMarkup).toContain('Waiting for bash')
     expect(toolMarkup).not.toContain('No tool is running')
@@ -199,6 +202,14 @@ describe('DetailDrawer pending interrupts', () => {
     expect(quietMarkup).toContain('Waiting for model output')
     expect(quietMarkup).toContain('OpenCode has not reported a cause')
     expect(quietMarkup).not.toContain('Agent is thinking')
+    const fields = (markup: string): string[] => Array.from(markup.matchAll(/data-diagnostic-field="([^"]+)" class="truncate"/g), (match) => match[1])
+    const expectedFields = ['Activity', 'Workspace', 'Session', 'Model', 'Variant', 'Last update', 'Tools', 'Provider', 'Last event']
+    for (const markup of [retryMarkup, toolMarkup, quietMarkup, render({ agent: createAgent('idle') })]) {
+      expect(fields(markup)).toEqual(expectedFields)
+    }
+    const toolsRow = getElementContents(toolMarkup, 'data-diagnostic-field="Tools"')
+    expect(toolsRow).toContain('bash running for')
+    expect(toolsRow).toContain('todowrite running for')
   })
 
   it.each([
@@ -219,10 +230,10 @@ describe('DetailDrawer pending interrupts', () => {
       onClose: () => {}
     }))
     const diagnostics = getElementContents(markup, 'data-agent-diagnostics')
-    expect(diagnostics).toContain(`<div>${label}</div>`)
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Activity"')).toContain(`>Activity: ${label}</div>`)
     expect(diagnostics).toContain('Workspace: /worktrees/project')
     expect(diagnostics).toContain('Last update:')
     expect(diagnostics).not.toMatch(/Provider retry|Provider overloaded|Waiting for|bash running/)
-    expect(diagnostics).not.toContain('Variant:')
+    expect(diagnostics).toContain('Variant: Default')
   })
 })
