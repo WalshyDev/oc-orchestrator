@@ -2785,6 +2785,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   // contextLimit stays cached — the model doesn't change on reset.
   agent.lastActivityAt = Date.now()
   agent.lastError = undefined
+  agent.retry = undefined
   taskSummaryLocked.delete(payload.id)
   prExtractEnabled.delete(payload.id)
 
