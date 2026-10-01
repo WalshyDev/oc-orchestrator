@@ -93,6 +93,66 @@ describe('getDisplayedVariant', () => {
   })
 })
 
+describe('configured model and effort display', () => {
+  it.each([
+    ['gpt-6-luna', undefined, 'Provider default'],
+    ['gpt-6.1-sol', undefined, 'Provider default'],
+    ['gpt-6-luna', 'high', 'High'],
+    ['gpt-6.1-sol', 'high', 'High']
+  ])('ignores %s command effort with configured effort %s', (commandModel, configuredVariant, displayedVariant) => {
+    const agent = {
+      id: 'command-agent',
+      model: 'gpt-6.1-sol',
+      configuredModel: 'gpt-6.1-sol',
+      configuredModelPath: 'openai/gpt-6.1-sol',
+      configuredVariant,
+      variant: 'none'
+    }
+
+    applyObservedResponse(agent, commandModel, 'openai', 'max', 100)
+
+    expect(getDisplayedModel(agent)).toBe('gpt-6.1-sol')
+    expect(getDisplayedVariant(agent)).toBe(displayedVariant)
+    expect(agent.variant).toBe('max')
+  })
+
+  it('resolves configured defaults when providers load after a command response', () => {
+    const agent = {
+      id: 'command-agent',
+      model: 'gpt-6.1-sol',
+      configuredModel: 'gpt-6.1-sol',
+      configuredModelPath: 'openai/gpt-6.1-sol',
+      variant: 'none'
+    }
+    applyObservedResponse(agent, 'gpt-6-luna', 'openai', 'max', 100)
+    const providers = {
+      providers: [{
+        id: 'openai',
+        name: 'OpenAI',
+        models: {
+          'gpt-6.1-sol': {
+            id: 'gpt-6.1-sol',
+            name: 'GPT-6.1 Sol',
+            options: { reasoningEffort: 'medium' },
+            variants: { medium: { reasoningEffort: 'medium' } }
+          }
+        }
+      }]
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(getDisplayedVariant(agent)).toBe('Medium')
+    expect(agent.variant).toBe('max')
+
+    applyConfiguredModel(agent, 'openai/gpt-6-luna')
+    refreshEffectiveVariant(agent, providers)
+    expect(getDisplayedModel(agent)).toBe('gpt-6-luna')
+    expect(getDisplayedVariant(agent)).toBe('Provider default')
+    expect(agent.variant).toBe('max')
+  })
+})
+
 describe('applyConfiguredModel', () => {
   it('uses the configured model until an assistant response identifies the active model', () => {
     const agent = { model: 'Loading...' }

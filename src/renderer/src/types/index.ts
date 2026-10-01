@@ -84,6 +84,7 @@ export interface AgentRuntime {
   configuredModelPath?: string
   variant?: string
   configuredVariant?: string
+  configuredEffectiveVariant?: string
   prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number
@@ -267,8 +268,13 @@ export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'configure
   return agent.configuredModel ?? agent.model
 }
 
-export function getDisplayedVariant(agent: Pick<AgentRuntime, 'variant'>): string {
-  const variant = agent.variant?.trim()
+export function getDisplayedVariant(
+  agent: Pick<AgentRuntime, 'variant' | 'configuredModel' | 'configuredVariant' | 'configuredEffectiveVariant'>
+): string {
+  const effort = agent.configuredModel !== undefined
+    ? agent.configuredEffectiveVariant ?? agent.configuredVariant
+    : agent.variant
+  const variant = effort?.trim()
   if (!variant || variant === 'auto' || variant === 'none') return 'Provider default'
   return variant.charAt(0).toUpperCase() + variant.slice(1)
 }

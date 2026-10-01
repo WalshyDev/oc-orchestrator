@@ -68,6 +68,11 @@ function readMessageVariant(info: Record<string, unknown>, model: Record<string,
   return typeof variant === 'string' ? variant : undefined
 }
 
+// The SDK returns fetch failures and HTTP errors as `{ error }` instead of throwing.
+function hasRequestError(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && (result as { error?: unknown }).error !== undefined
+}
+
 function sanitizeSlug(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -283,6 +288,8 @@ class AgentController {
   private sessionActivity = new Map<string, { version: number; at: number }>()
   private sessionParents = new Map<string, string>()
   private activeTransientModelTurns = new Map<string, number>()
+  private transientTurnsAwaitingIdle = new Map<string, number>()
+  private nextTransientTurnToken = 0
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
@@ -864,7 +871,8 @@ class AgentController {
       ? `${handle.modelOverride.providerID}/${handle.modelOverride.modelID}`
       : handle.modelOverride?.modelID
     const result = await this.withTransientModelTurn(
-      handle.sessionId,
+      handle,
+      runtime,
       () => runtime.client.session.command({
         sessionID: handle.sessionId,
         directory: handle.directory,
@@ -1122,7 +1130,8 @@ class AgentController {
     })
 
     const result = await this.withTransientModelTurn(
-      handle.sessionId,
+      handle,
+      runtime,
       () => runtime.client.session.summarize({
         sessionID: handle.sessionId,
         directory: handle.directory,
@@ -1317,6 +1326,7 @@ class AgentController {
 
       try {
         const directory = handles[0].directory
+        const awaitingIdleTokens = new Map(this.transientTurnsAwaitingIdle)
         const result = await runtime.client.session.status({
           directory
         })
@@ -1324,6 +1334,7 @@ class AgentController {
         if (result.data) {
           const sessionStatuses = result.data as Record<string, { type: string }>
           for (const handle of handles) {
+            this.releaseIdleTransientTurn(handle.sessionId, sessionStatuses, awaitingIdleTokens.get(handle.sessionId))
             statuses[handle.sessionId] = {
               agentId: handle.id,
               status: sessionStatuses[handle.sessionId] ?? { type: 'idle' }
@@ -1873,6 +1884,14 @@ class AgentController {
       if (childSessionId && parentSessionId) this.sessionParents.set(childSessionId, parentSessionId)
       return
     }
+    if (event.type === 'session.idle' || event.type === 'session.status') {
+      const status = properties.status as Record<string, unknown> | undefined
+      const sessionId = properties.sessionID as string | undefined
+      if (sessionId && (event.type === 'session.idle' || status?.type === 'idle')) {
+        this.transientTurnsAwaitingIdle.delete(sessionId)
+      }
+      return
+    }
     if (!event.type.startsWith('message.') && event.type !== 'question.asked' && event.type !== 'permission.asked') {
       return
     }
@@ -1913,7 +1932,7 @@ class AgentController {
     handle.modelUpdatedAt = createdAt
 
     // Commands and compactions use a temporary model for one turn.
-    if (this.activeTransientModelTurns.has(sessionId)) {
+    if (this.isTransientModelTurnActive(sessionId)) {
       this.persistAgents()
       return
     }
@@ -1936,16 +1955,58 @@ class AgentController {
     })
   }
 
-  private async withTransientModelTurn<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+  private async withTransientModelTurn<T>(
+    handle: AgentHandle,
+    runtime: RuntimeInfo,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const sessionId = handle.sessionId
     const activeTurns = (this.activeTransientModelTurns.get(sessionId) ?? 0) + 1
     this.activeTransientModelTurns.set(sessionId, activeTurns)
+    let requestCompleted = false
     try {
-      return await run()
+      const result = await run()
+      requestCompleted = !hasRequestError(result)
+      return result
     } finally {
+      // A failed request, such as a client timeout on a long command, does not
+      // stop the server turn. Keep the guard until the session reports idle.
+      const awaitingIdleToken = requestCompleted ? undefined : ++this.nextTransientTurnToken
+      if (awaitingIdleToken) this.transientTurnsAwaitingIdle.set(sessionId, awaitingIdleToken)
       const remainingTurns = (this.activeTransientModelTurns.get(sessionId) ?? 1) - 1
       if (remainingTurns > 0) this.activeTransientModelTurns.set(sessionId, remainingTurns)
       else this.activeTransientModelTurns.delete(sessionId)
+      if (awaitingIdleToken) void this.releaseTransientTurnIfIdle(handle.directory, runtime, sessionId, awaitingIdleToken)
     }
+  }
+
+  private isTransientModelTurnActive(sessionId: string): boolean {
+    return this.activeTransientModelTurns.has(sessionId) || this.transientTurnsAwaitingIdle.has(sessionId)
+  }
+
+  private async releaseTransientTurnIfIdle(
+    directory: string,
+    runtime: RuntimeInfo,
+    sessionId: string,
+    token: number
+  ): Promise<void> {
+    try {
+      const result = await runtime.client.session.status({ directory })
+      const statuses = result.data as Record<string, { type: string }> | undefined
+      if (statuses) this.releaseIdleTransientTurn(sessionId, statuses, token)
+    } catch {
+      // Status polling or the next session idle event releases the guard.
+    }
+  }
+
+  // The token rejects a snapshot taken before a newer failed request replaced the guard.
+  private releaseIdleTransientTurn(
+    sessionId: string,
+    statuses: Record<string, { type: string }>,
+    token: number | undefined
+  ): void {
+    if (token === undefined || this.transientTurnsAwaitingIdle.get(sessionId) !== token) return
+    if ((statuses[sessionId]?.type ?? 'idle') === 'idle') this.transientTurnsAwaitingIdle.delete(sessionId)
   }
 
   private getModelMessageCreatedAt(info: Record<string, unknown>): number {

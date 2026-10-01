@@ -72,6 +72,30 @@ const persistedAgents = [
     modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
     variantOverride: 'max',
   },
+  {
+    id: 'agent-7',
+    sessionId: 'long-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Long command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
+  {
+    id: 'agent-8',
+    sessionId: 'polled-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Polled command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
+  {
+    id: 'agent-9',
+    sessionId: 'overlapping-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Overlapping command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
 ]
 
 const runtime = {
@@ -492,6 +516,86 @@ describe('AgentController.executeCommand', () => {
       variantOverride: 'max',
     })
     expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
+  })
+
+  it.each([
+    ['an idle event', 'agent-7', 'long-command-session', async (sessionId: string) => {
+      mocks.bridgeEvent?.({
+        type: 'session.status',
+        properties: { sessionID: sessionId, status: { type: 'idle' } },
+      })
+    }],
+    ['status polling', 'agent-8', 'polled-command-session', async () => {
+      await agentController.getSessionStatuses()
+    }],
+  ])('keeps the pinned model after a failed command request until %s', async (_name, agentId, sessionId, release) => {
+    const lunaMessage = (id: string, created: number) => ({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id,
+          sessionID: sessionId,
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-6-luna' },
+          time: { created },
+        },
+      },
+    })
+    mocks.sessionCommand.mockResolvedValueOnce({ error: { name: 'HeadersTimeoutError' } })
+    mocks.sessionStatus.mockResolvedValueOnce({ error: { name: 'TypeError' } })
+
+    await agentController.executeCommand(agentId, 'pull-request', '')
+    await vi.waitFor(() => expect(mocks.sessionStatus).toHaveBeenCalledOnce())
+    // OpenCode auto compaction adds a user message with the command model.
+    mocks.bridgeEvent?.(lunaMessage('auto-compaction-message', 200))
+    await agentController.sendMessage(agentId, 'Back to the pinned model')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: sessionId,
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
+    expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
+
+    mocks.sessionStatus.mockResolvedValueOnce({ data: { [sessionId]: { type: 'busy' } } })
+    await agentController.getSessionStatuses()
+    mocks.bridgeEvent?.(lunaMessage('mid-turn-message', 300))
+    expect(agentController.getAgent(agentId)?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
+
+    await release(sessionId)
+    mocks.bridgeEvent?.(lunaMessage('attached-client-message', 400))
+
+    expect(agentController.getAgent(agentId)?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-6-luna' })
+  })
+
+  it('ignores an idle snapshot from before a newer command request failed', async () => {
+    let resolveStaleStatus: ((value: unknown) => void) | undefined
+    mocks.sessionCommand.mockResolvedValue({ error: { name: 'HeadersTimeoutError' } })
+    mocks.sessionStatus
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleStatus = resolve }))
+      .mockResolvedValueOnce({ data: { 'overlapping-command-session': { type: 'busy' } } })
+
+    await agentController.executeCommand('agent-9', 'review', '')
+    await agentController.executeCommand('agent-9', 'pull-request', '')
+    expect(mocks.sessionStatus).toHaveBeenCalledTimes(2)
+    resolveStaleStatus?.({ data: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'overlapping-compaction-message',
+          sessionID: 'overlapping-command-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-6-luna' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    expect(agentController.getAgent('agent-9')?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
   })
 
   it('adopts the effort an attached client stores on the message model', async () => {
