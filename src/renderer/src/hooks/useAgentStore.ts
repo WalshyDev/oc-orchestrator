@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
-import type { AgentStatus } from '../types'
+import type { AgentRetry, AgentStatus } from '../types'
 import type {
   OpenCodeEventPayload,
   AgentLaunchedPayload,
@@ -175,6 +175,7 @@ export interface LiveAgent {
   configuredVariant?: string
   configuredEffectiveVariant?: string
   lastActivityAt: number
+  retry?: AgentRetry
   blockedSince?: number
   prUrl: string | null
   cost: number
@@ -798,6 +799,9 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
   switch (type) {
     case 'session.status': {
       const statusInfo = props.status as Record<string, unknown> | undefined
+      if (statusInfo?.type === 'retry') {
+        return `Provider retry #${statusInfo.attempt}: ${statusInfo.message}`
+      }
       return `Session status changed to ${statusInfo?.type ?? 'unknown'}`
     }
     case 'session.idle':
@@ -1548,9 +1552,10 @@ function processEvent(payload: OpenCodeEventPayload): void {
 
     case 'session.status': {
       const sessionId = props.sessionID as string
-      const statusInfo = props.status as { type: string }
+      const statusInfo = props.status as AgentStatusesPayload[string]['status']
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        if (applySessionRetry(agent, statusInfo)) emit({ agents: true })
         const newStatus = resolveServerStatus(agent, mapSessionStatus(statusInfo.type))
         if (newStatus === 'idle' || newStatus === 'completed' || newStatus === 'errored') {
           clearStalledRecoveryAttempt(agent.id)
@@ -1607,6 +1612,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        agent.retry = undefined
         clearStalledRecoveryAttempt(agent.id)
         const newStatus = resolveServerStatus(agent, 'idle')
         notifyIfNeeded(agent, newStatus)
@@ -1640,6 +1646,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       console.error('[session.error]', { sessionId, error: errorProp, fullProps: props })
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        agent.retry = undefined
         clearStalledRecoveryAttempt(agent.id)
         notifyIfNeeded(agent, 'errored')
         agent.status = 'errored'
@@ -1669,6 +1676,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const agent = findAgentBySession(sessionId)
       if (agent) {
+        agent.retry = undefined
         clearStalledRecoveryAttempt(agent.id)
         notifyIfNeeded(agent, 'completed')
         agent.status = 'completed'
@@ -2777,6 +2785,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   // contextLimit stays cached — the model doesn't change on reset.
   agent.lastActivityAt = Date.now()
   agent.lastError = undefined
+  agent.retry = undefined
   taskSummaryLocked.delete(payload.id)
   prExtractEnabled.delete(payload.id)
 
@@ -2923,6 +2932,7 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
     const agent = state.agents.get(statusEntry.agentId)
     if (!agent) continue
 
+    applySessionRetry(agent, statusEntry.status)
     const nextStatus = resolveServerStatus(agent, mapSessionStatus(statusEntry.status.type))
     // Don't let the server override a derived completed status with idle.
     // The server reports idle for finished sessions, but we track completion separately.
@@ -2940,6 +2950,23 @@ function applyStatuses(statuses: AgentStatusesPayload): void {
 
     }
   }
+}
+
+export function applySessionRetry(
+  agent: Pick<LiveAgent, 'retry'>,
+  status: AgentStatusesPayload[string]['status']
+): boolean {
+  const retry = status.type === 'retry'
+    && typeof status.attempt === 'number'
+    && typeof status.message === 'string'
+    && typeof status.next === 'number'
+    ? { attempt: status.attempt, message: status.message, next: status.next }
+    : undefined
+  if (agent.retry?.attempt === retry?.attempt
+    && agent.retry?.message === retry?.message
+    && agent.retry?.next === retry?.next) return false
+  agent.retry = retry
+  return true
 }
 
 export function applyReconciledStatus(
@@ -2989,6 +3016,7 @@ function reconcileStatuses(statuses: AgentStatusesPayload): void {
     const agent = state.agents.get(statusEntry.agentId)
     if (!agent) continue
 
+    if (applySessionRetry(agent, statusEntry.status)) changed = true
     const serverStatus = resolveServerStatus(agent, mapSessionStatus(statusEntry.status.type))
 
     // Never override user-driven states
@@ -3304,7 +3332,7 @@ function getStalledResponseTimeout(
 }
 
 export function isStalledResponse(
-  agent: Pick<LiveAgent, 'status' | 'lastActivityAt'>,
+  agent: Pick<LiveAgent, 'status' | 'lastActivityAt' | 'retry'>,
   messages: readonly LiveMessage[] | undefined,
   now: number,
   getChildActivityAt?: (sessionId: string) => number | undefined
@@ -3313,7 +3341,7 @@ export function isStalledResponse(
   return agent.status === 'running'
     && agent.lastActivityAt > 0
     && timeout !== undefined
-    && now - agent.lastActivityAt >= timeout
+    && now - Math.max(agent.lastActivityAt, agent.retry?.next ?? 0) >= timeout
 }
 
 export function isRetryableApiError(

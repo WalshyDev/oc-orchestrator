@@ -67,6 +67,12 @@ export interface Project {
   color: string
 }
 
+export interface AgentRetry {
+  attempt: number
+  message: string
+  next: number
+}
+
 export interface AgentRuntime {
   id: string
   sessionId?: string
@@ -88,6 +94,7 @@ export interface AgentRuntime {
   prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number
+  retry?: AgentRetry
   blockedSince?: string
   blockedSinceMs?: number
   lastMessage?: string

@@ -306,6 +306,9 @@ export type AgentStatusesPayload = Record<string, {
   agentId: string
   status: {
     type: string
+    attempt?: number
+    message?: string
+    next?: number
   }
 }>
 

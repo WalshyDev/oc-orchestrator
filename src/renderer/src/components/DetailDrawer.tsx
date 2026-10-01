@@ -60,6 +60,7 @@ import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
+import { AgentActivity } from './AgentActivity'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
 import { formatResponseMetadata } from '../lib/transcript-metadata'
@@ -949,14 +950,7 @@ export const DetailDrawer = memo(function DetailDrawer({
 
                 {/* Loading indicator when agent is running */}
                 {agent.status === 'running' && (
-                  <div className="flex items-center gap-2 px-3 py-2">
-                    <span className="text-[11px] text-kumo-subtle">Agent is thinking</span>
-                    <span className="flex gap-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:0ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:150ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:300ms]" />
-                    </span>
-                  </div>
+                  <AgentActivity agent={agent} messages={messages} events={events} />
                 )}
 
                 {(permission || question || showQuestionFallback) && (
