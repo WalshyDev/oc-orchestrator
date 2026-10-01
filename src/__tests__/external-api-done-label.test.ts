@@ -122,6 +122,40 @@ describe('External API Done labels', () => {
     }
   })
 
+  it.each([
+    [{ clearLabels: true }, []],
+    [{ clearLabels: true, addLabelId: 'done' }, ['done']]
+  ])('clears existing labels with %j and persists the result once', async (body, expected) => {
+    const agent = agentController.getAllAgents().find((agent) => agent.id === 'agent-test')!
+    agent.labelIds = ['in_review', 'custom-label', 'done']
+    const response = { status: 200, body: { ok: true, labelIds: expected } }
+    expect(await patch(JSON.stringify(body))).toEqual(response)
+    expect(await patch(JSON.stringify(body))).toEqual(response)
+    expect(mocks.setPreference).toHaveBeenCalledTimes(1)
+    expect(persistedAgents()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'agent-test', labelIds: expected, prUrl: existingPrUrl }),
+      expect.objectContaining({ id: 'other-agent', labelIds: ['blocked'] })
+    ]))
+    expect(mocks.sendToRenderer).toHaveBeenCalledExactlyOnceWith('agent:labels-updated', {
+      id: 'agent-test', sessionId: 'session-test', labelIds: expected
+    })
+  })
+
+  it('clears a legacy label and updates the PR link in the same request', async () => {
+    const agent = agentController.getAllAgents().find((agent) => agent.id === 'agent-test')!
+    agent.labelIds = undefined
+    agent.labelId = 'draft'
+    const prUrl = 'https://example.com/pr/3'
+    try {
+      expect(await patch(JSON.stringify({ clearLabels: true, prUrl }))).toEqual({
+        status: 200, body: { ok: true, labelIds: [] }
+      })
+      expect(persistedAgents().find((agent) => agent.id === 'agent-test')).toMatchObject({ labelIds: [], prUrl })
+    } finally {
+      delete agent.labelId
+    }
+  })
+
   it.each([null, 'wrong-token', '0'.repeat(64)])('requires valid authentication (%j)', async (token) => {
     expect(await patch('{"addLabelId":"done"}', 'session-test', token)).toEqual({ status: 401, body: { error: 'unauthorized' } })
     expect(mocks.setPreference).not.toHaveBeenCalled()
@@ -134,6 +168,10 @@ describe('External API Done labels', () => {
 
   it.each([
     '{', 'null', '[]', 'true', '{}',
+    '{"clearLabels":null}', '{"clearLabels":false}', '{"clearLabels":"true"}',
+    '{"clearLabels":true,"addLabelId":"close"}',
+    '{"clearLabels":true,"prUrl":"file:///tmp/pr"}',
+    '{"clearLabels":"true","prUrl":"https://example.com/pr"}',
     '{"addLabelId":null}', '{"addLabelId":"Done"}', '{"addLabelId":false}',
     '{"addLabelId":"blocked","prUrl":"https://example.com/pr"}',
     '{"addLabelId":"done","prUrl":"file:///tmp/pr"}',
@@ -166,6 +204,7 @@ describe('External API Done labels', () => {
     other.sessionId = 'session-test'
     try {
       expect(await patch(JSON.stringify({ addLabelId: 'done', prUrl: existingPrUrl }))).toEqual({ status: 409, body: { error: 'session_ambiguous' } })
+      expect(await patch(JSON.stringify({ clearLabels: true, prUrl: existingPrUrl }))).toEqual({ status: 409, body: { error: 'session_ambiguous' } })
       expect(mocks.setPreference).not.toHaveBeenCalled()
       expect(await patch(JSON.stringify({ prUrl: existingPrUrl }))).toEqual({ status: 200, body: { ok: true, prUrl: existingPrUrl } })
       expect(persistedAgents().every((agent) => agent.prUrl === existingPrUrl)).toBe(true)

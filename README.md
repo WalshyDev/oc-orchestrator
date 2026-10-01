@@ -149,7 +149,7 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume? }` | `{ agentId, sessionId, runtimeUrl, directory, leaseId, leaseExpiresAt }` |
 | `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
 | `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
-| `PATCH` | `/sessions/:sessionId` | `{ prUrl?, addLabelId?: "done" }` | `{ ok, labelIds }` when adding Done; `{ ok, prUrl }` for `prUrl` only |
+| `PATCH` | `/sessions/:sessionId` | `{ prUrl?, addLabelId?: "done", clearLabels?: true }` | `{ ok, labelIds }` when updating labels; `{ ok, prUrl }` for `prUrl` only |
 | `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
 | `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
 
@@ -159,7 +159,9 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 
 `PATCH /sessions/:sessionId` with `{"addLabelId":"done"}` returns `200 {"ok":true,"labelIds":[...]}` with the full resulting label list. It appends Done only if absent, preserves every other label ID and its order, and persists the result. Repeated calls keep Done without adding a duplicate. Omitting `prUrl` preserves the existing PR link. You can supply both fields; the response then includes `labelIds`. PR updates retain their HTTP/HTTPS URL validation, trim surrounding whitespace, and return `{"ok":true,"prUrl":"..."}` when used alone.
 
-The session must be tracked under that exact `sessionId`. An unknown session or an internal `agentId` returns `404 {"error":"session_not_found"}`. If multiple fleet rows track the same session, adding Done returns `409 {"error":"session_ambiguous"}` without writes. Missing or invalid authentication returns `401 {"error":"unauthorized"}`. Invalid JSON, a missing update field, any `addLabelId` other than `"done"`, or an invalid supplied PR URL returns `400 {"error":"bad_request","message":"..."}` without writes. Unknown fields are ignored, including `labelIds`; callers can't replace the labels through this endpoint.
+To remove every label, send `{"clearLabels":true}`. To replace every label with Done, send `{"clearLabels":true,"addLabelId":"done"}`. Clearing applies before adding Done, and OCO saves and broadcasts the final label set once. The response contains `labelIds: []` or `labelIds: ["done"]`. These requests also accept `prUrl`. OCO's closing label uses the ID `done`.
+
+The session must be tracked under that exact `sessionId`. An unknown session or an internal `agentId` returns `404 {"error":"session_not_found"}`. If multiple fleet rows track the same session, updating labels returns `409 {"error":"session_ambiguous"}` without writes. Missing or invalid authentication returns `401 {"error":"unauthorized"}`. Invalid JSON, a missing update field, any `addLabelId` other than `"done"`, any supplied `clearLabels` value other than `true`, or an invalid supplied PR URL returns `400 {"error":"bad_request","message":"..."}` without writes. Unknown fields are ignored, including `labelIds`.
 
 ### Source attribution
 

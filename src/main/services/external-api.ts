@@ -48,6 +48,7 @@ interface PromptBody {
 interface SessionUpdateBody {
   prUrl?: unknown
   addLabelId?: unknown
+  clearLabels?: unknown
 }
 
 const DISCOVERY_FILENAME = 'api.json'
@@ -397,24 +398,30 @@ function handleSessionUpdate(res: ServerResponse, sessionId: string, body: Sessi
   if (addLabelId !== undefined && addLabelId !== 'done') {
     return sendJson(res, 400, { error: 'bad_request', message: 'addLabelId must be done' })
   }
+  const clearLabels = body?.clearLabels
+  if (clearLabels !== undefined && clearLabels !== true) {
+    return sendJson(res, 400, { error: 'bad_request', message: 'clearLabels must be true' })
+  }
+  const updatesLabels = addLabelId !== undefined || clearLabels === true
   const prUrl = parseHttpUrl(body?.prUrl)
-  if ((body?.prUrl !== undefined || addLabelId === undefined) && !prUrl) {
+  if ((body?.prUrl !== undefined || !updatesLabels) && !prUrl) {
     return sendJson(res, 400, { error: 'bad_request', message: 'prUrl must be an HTTP or HTTPS URL' })
   }
 
-  if (addLabelId !== undefined && agents.length !== 1) {
+  if (updatesLabels && agents.length !== 1) {
     return sendJson(res, 409, { error: 'session_ambiguous' })
   }
 
   if (prUrl) {
     for (const agent of agents) agentController.setAgentPrUrl(agent.id, prUrl)
   }
-  if (addLabelId === undefined) return sendJson(res, 200, { ok: true, prUrl })
+  if (!updatesLabels) return sendJson(res, 200, { ok: true, prUrl })
 
   const agent = agents[0]
   const labelIds = agent.labelIds ?? (agent.labelId ? [agent.labelId] : [])
-  const updatedLabelIds = labelIds.includes('done') ? labelIds : [...labelIds, 'done']
-  if (!labelIds.includes('done')) {
+  const updatedLabelIds = clearLabels === true ? [] : [...labelIds]
+  if (addLabelId === 'done' && !updatedLabelIds.includes('done')) updatedLabelIds.push('done')
+  if (labelIds.length !== updatedLabelIds.length || labelIds.some((id, index) => id !== updatedLabelIds[index])) {
     agentController.updateAgentMeta(agent.id, { labelIds: updatedLabelIds })
   }
   sendJson(res, 200, { ok: true, labelIds: updatedLabelIds })
