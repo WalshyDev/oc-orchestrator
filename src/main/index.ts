@@ -195,12 +195,10 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers()
 
-  // Create the window before DB init so the UI appears immediately.
-  mainWindowRef = createWindow()
-
   await database.init()
   console.log('[Main] Database initialized')
   database.logEvent(null, 'app:started')
+  mainWindowRef = createWindow()
   applySavedBounds(mainWindowRef)
 
   runtimeManager.startHealthChecks()
