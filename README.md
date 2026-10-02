@@ -32,7 +32,11 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 npm install -g oc-orchestrator
 ```
 
-Requires [OpenCode](https://github.com/nichochar/opencode) to be installed and available in your PATH (or set `OPENCODE_PATH`).
+Requires [OpenCode](https://github.com/anomalyco/opencode) to be installed and available in your PATH (or set `OPENCODE_PATH`).
+
+### OpenCode versions
+
+Set `OPENCODE_PATH` to the executable for either official OpenCode v1 or the `2.0` branch. OCO checks message persistence at startup with a temporary session that it deletes without calling a model. If the runtime drops message parts, OCO installs the `oco_message_part_compat_v1` trigger in that runtime's SQLite database and restarts it with event journaling enabled. The trigger remains in the database and saves parts within OpenCode's own transactions. OCO also keeps prompt requests open in the background for these runtimes. Working runtimes use their native prompt API. This doesn't migrate sessions between v1 and v2 databases or recover parts that were already lost.
 
 ## Run
 
