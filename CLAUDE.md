@@ -31,7 +31,7 @@ Test runtime compatibility with `OPENCODE_INTEGRATION=1 OPENCODE_PATH=/path/to/o
 **Main process** (`src/main/`) — Electron backend with seven service singletons:
 
 - **RuntimeManager** — spawns one `opencode serve` process per project directory, maintains SDK client connections, health checks every 30s with exponential backoff reconnection
-  - `opencode-compat.ts` checks `/global/health` and saved message parts at startup. If OpenCode drops parts, it installs a SQLite event trigger and restarts with `OPENCODE_DB` pinned to that database and `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. This path also adapts async prompts through the synchronous endpoint. Working runtimes use their native prompt transport.
+  - `opencode-compat.ts` checks `/global/health` and saved message parts at startup. If OpenCode drops parts, it installs the `oco_message_part_compat_v1` SQLite event trigger and restarts with `OPENCODE_DB` pinned to that database and `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. This path also adapts async prompts through the synchronous endpoint. Working runtimes use their native prompt transport.
 - **AgentController** — manages agent sessions (launch, send message, respond to permission, reply to questions, abort)
 - **EventBridge** — bridges SSE events from OpenCode servers to the renderer via `opencode:event` IPC
 - **Database** — SQLite with prepared statements; tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in constructor

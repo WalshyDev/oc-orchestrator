@@ -16,8 +16,16 @@ const children: Array<{
   kill: ReturnType<typeof vi.fn>
   env: NodeJS.ProcessEnv
 }> = []
+const broadcast = vi.hoisted(() => vi.fn())
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
+vi.mock('electron', () => ({
+  BrowserWindow: {
+    getAllWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, send: broadcast }
+    }]
+  }
+}))
 vi.mock('@opencode-ai/sdk/v2/client', () => ({ createOpencodeClient: vi.fn(() => ({})) }))
 vi.mock('../main/services/opencode-compat', () => ({
   readRuntimeHealth: vi.fn(),
@@ -51,6 +59,7 @@ beforeEach(() => {
 
 afterEach(() => {
   runtimeManager.stopAll()
+  vi.useRealTimers()
 })
 
 describe('runtime compatibility startup', () => {
@@ -100,5 +109,24 @@ describe('runtime compatibility startup', () => {
     vi.mocked(hasMessagePersistence).mockResolvedValue(true)
     await runtimeManager.ensureRuntime('/failed-project')
     expect(children).toHaveLength(2)
+  })
+
+  it('marks periodic health failures and restores health and version on recovery', async () => {
+    vi.mocked(hasMessagePersistence).mockResolvedValue(true)
+    const runtime = await runtimeManager.ensureRuntime('/health-project')
+    vi.useFakeTimers()
+    vi.mocked(readRuntimeHealth).mockRejectedValueOnce(new Error('Invalid health response'))
+    runtimeManager.startHealthChecks()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledWith('runtime:unhealthy', {
+      id: runtime.id,
+      consecutiveFailures: 1
+    }))
+    expect(runtime.healthy).toBe(false)
+    vi.mocked(readRuntimeHealth).mockResolvedValue('2.0-recovered')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(runtime.healthy).toBe(true)
+    expect(runtime.version).toBe('2.0-recovered')
+    expect(broadcast).toHaveBeenCalledWith('runtime:healthy', { id: runtime.id })
   })
 })
