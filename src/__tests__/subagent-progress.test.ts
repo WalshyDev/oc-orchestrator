@@ -394,7 +394,7 @@ describe('subagent progress', () => {
       .toEqual(['tasks-older', 'user', 'tasks-newer'])
   })
 
-  it('expands running tasks immediately and keeps completed transcripts collapsible', () => {
+  it('keeps running and completed task details collapsed at None', () => {
     const running = renderToStaticMarkup(createElement(ToolsUsage, {
       tools: [{
         id: 'running',
@@ -414,8 +414,8 @@ describe('subagent progress', () => {
       }]
     }))
 
-    expect(running).toContain('sub-agent starting')
-    expect(running).toContain('Creating child session...')
+    expect(running).toContain('Running')
+    expect(running).not.toContain('Creating child session...')
     expect(completed).not.toContain('final child output')
     expect(completed).toContain('Completed')
     expect(shouldAutoExpandTool({
@@ -489,7 +489,7 @@ describe('subagent progress', () => {
     expect(transcript).not.toContain('full child draft')
   })
 
-  it('expands running commands in Tools and summarizes collapsed transcript groups', () => {
+  it('expands commands at Some and summarizes collapsed transcript groups at None', () => {
     const tools: ToolCall[] = [{
       id: 'todo',
       name: 'todowrite',
@@ -519,7 +519,7 @@ describe('subagent progress', () => {
       input: JSON.stringify({ command: 'pnpm -w type-check:go' })
     }]
 
-    const toolsTab = renderToStaticMarkup(createElement(ToolsUsage, { tools }))
+    const toolsTab = renderToStaticMarkup(createElement(ToolsUsage, { tools, verbosity: 'some' }))
     const transcript = renderToStaticMarkup(createElement(ToolGroupBubble, {
       message: {
         id: 'tools',
@@ -534,7 +534,8 @@ describe('subagent progress', () => {
     }))
 
     expect(shouldAutoExpandTool(tools[0], 'none', false)).toBe(false)
-    expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(true)
+    expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(false)
+    expect(shouldAutoExpandTool(tools[1], 'some', false)).toBe(true)
     expect(toolsTab).toContain('openai · gpt-5.6-terra · Effort: High')
     expect(transcript).toContain('openai · gpt-5.6-terra · Effort: High')
     for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {

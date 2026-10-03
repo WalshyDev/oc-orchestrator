@@ -55,11 +55,8 @@ function formatRelativeTime(timestamp: number): string {
 }
 
 export function shouldAutoExpandTool(tool: ToolCall, verbosity: OutputVerbosity, manuallyCollapsed: boolean): boolean {
-  if (verbosity === 'recent') return false
   return !manuallyCollapsed && (
-    (verbosity !== 'none' && tool.name !== 'task')
-    || verbosity === 'all'
-    || tool.state === 'running'
+    verbosity === 'all' || (verbosity === 'some' && tool.name !== 'task')
   )
 }
 
@@ -78,7 +75,7 @@ export function CollapsibleSubagentProgress({
   verbosity: OutputVerbosity
 }) {
   const [expanded, setExpanded] = useState(
-    verbosity === 'all' || verbosity === 'recent' || (verbosity === 'none' && tool.state === 'running')
+    verbosity === 'all' || verbosity === 'recent'
   )
   const previousVerbosityRef = useRef(verbosity)
 
@@ -86,15 +83,14 @@ export function CollapsibleSubagentProgress({
     if (previousVerbosityRef.current !== verbosity) {
       setExpanded(verbosity === 'all' || verbosity === 'recent')
       previousVerbosityRef.current = verbosity
-    } else if (verbosity === 'none' && tool.state === 'running') {
-      setExpanded(true)
     }
-  }, [tool.state, verbosity])
+  }, [verbosity])
 
   return (
     <div className="rounded-md border border-kumo-line bg-kumo-overlay">
       <button
         type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded((previous) => !previous)}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[10px] text-kumo-subtle hover:text-kumo-default"
       >
@@ -127,10 +123,11 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
   const previousVerbosityRef = useRef(verbosity)
 
-  // Expand verbose entries and running tools unless the user collapsed them;
+  // Expand verbose entries unless the user collapsed them;
   // reset manual collapses when verbosity changes.
   useEffect(() => {
     const verbosityChanged = previousVerbosityRef.current !== verbosity
+    if (verbosityChanged) manuallyCollapsedRef.current.clear()
     setExpandedIds((prev) => {
       const next = verbosityChanged ? new Set<string>() : new Set(prev)
       for (const tool of tools) {

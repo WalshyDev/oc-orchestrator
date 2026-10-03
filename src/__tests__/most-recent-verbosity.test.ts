@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DetailDrawer, ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
-import { ToolsUsage, type ToolCall } from '../renderer/src/components/ToolsUsage'
+import { CollapsibleSubagentProgress, ToolsUsage, type ToolCall } from '../renderer/src/components/ToolsUsage'
 import { EventLog, type EventEntry } from '../renderer/src/components/EventLog'
 import { saveAgentOutputVerbosity } from '../renderer/src/data/agentSettings'
 import { createDemoApi } from '../renderer/src/demoApi'
@@ -44,6 +44,37 @@ afterEach(async () => {
 })
 
 describe('Most recent output visibility', () => {
+  it.each(['tools', 'subagent'] as const)('keeps running %s details collapsed at None across state and visibility changes', async (kind) => {
+    let tool: ToolCall = {
+      id: 'task', name: 'task', state: 'running', timestamp: 1,
+      input: 'task input', childTranscript: [{ id: 'child', kind: 'tool', label: 'bash', toolState: 'running', toolOutput: 'live child output' }]
+    }
+    const render = async (verbosity: 'none' | 'all' = 'none') => {
+      await act(async () => root.render(kind === 'tools'
+        ? createElement(ToolsUsage, { tools: [tool], verbosity })
+        : createElement(CollapsibleSubagentProgress, { tool, verbosity })))
+    }
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+    await render('all')
+    expect(container.textContent).toContain('live child output')
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+    tool = { ...tool, state: 'completed' }
+    await render()
+    tool = { ...tool, state: 'running' }
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+
+    await act(async () => container.querySelector('button[aria-expanded]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    if (kind === 'tools') {
+      expect(container.textContent).toContain('task input')
+      expect(container.textContent).not.toContain('live child output')
+    } else {
+      expect(container.textContent).toContain('live child output')
+    }
+  })
+
   it('follows agent output, ignores user messages and compaction, and permits one manual expansion', async () => {
     const messages: Message[] = [
       { id: 'old', role: 'assistant', content: '**Older response**', timestamp: 'now' },
