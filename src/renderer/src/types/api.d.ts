@@ -1,4 +1,5 @@
 import type { ProjectSettings, WorktreeStrategy } from '../../../shared/project'
+import type { AgentFolder, FolderSnapshot } from '../../../shared/folders'
 
 export type { ProjectSettings, WorktreeStrategy }
 
@@ -100,6 +101,14 @@ export interface OrchestratorApi {
   updateProjectSettings: (options: { repoRoot: string; settings: ProjectSettings }) => Promise<IpcResult<Project>>
 
   // ── Database: Custom Labels ──
+  listFolders: () => Promise<IpcResult<FolderSnapshot>>
+  migrateFolders: (legacy: FolderSnapshot) => Promise<IpcResult<FolderSnapshot>>
+  createFolder: (name: string) => Promise<IpcResult<AgentFolder>>
+  renameFolder: (id: string, name: string) => Promise<IpcResult<AgentFolder>>
+  deleteFolder: (id: string) => Promise<IpcResult>
+  setAgentFolder: (agentId: string, folderId: string | null) => Promise<IpcResult>
+  onFoldersChanged: (callback: (data: FolderSnapshot) => void) => () => void
+
   listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
   createCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
   updateCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>

@@ -1706,6 +1706,29 @@ class AgentController {
     const directoryContext = workspaceManager.getDirectoryContext(directory)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
+    const existing = this.getAllAgents().find((agent) => agent.sessionId === sessionId && agent.directory === directory)
+    if (existing) {
+      existing.runtimeId = runtime.id
+      existing.bridge = this.bridges.get(runtime.id)!
+      if (title !== undefined) existing.title = title
+      this.persistAgents()
+      this.broadcastToRenderer('agent:launched', {
+        id: existing.id,
+        runtimeId: existing.runtimeId,
+        sessionId,
+        directory,
+        projectName: existing.projectName,
+        branchName: existing.branchName,
+        isWorktree: existing.isWorktree,
+        workspaceName: existing.workspaceName,
+        prompt: existing.prompt,
+        title: existing.title,
+        modelOverride: existing.modelOverride,
+        variantOverride: existing.variantOverride
+      })
+      return existing
+    }
+
     const sessionTitle = title ?? `resumed-${this.nextId}`
 
     const agentId = `agent-${this.nextId++}`

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ProjectSettings } from '../shared/project'
+import type { FolderSnapshot } from '../shared/folders'
 
 export interface IpcResult<T = unknown> {
   ok: boolean
@@ -253,7 +254,19 @@ const api = {
   setPreference: (key: string, value: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:preferences:set', key, value),
 
-  // ── Database: Custom Labels ──
+  // ── Folders ──
+  listFolders: (): Promise<IpcResult<FolderSnapshot>> => ipcRenderer.invoke('folders:list'),
+  migrateFolders: (legacy: FolderSnapshot): Promise<IpcResult<FolderSnapshot>> => ipcRenderer.invoke('folders:migrate', legacy),
+  createFolder: (name: string): Promise<IpcResult> => ipcRenderer.invoke('folders:create', name),
+  renameFolder: (id: string, name: string): Promise<IpcResult> => ipcRenderer.invoke('folders:rename', id, name),
+  deleteFolder: (id: string): Promise<IpcResult> => ipcRenderer.invoke('folders:delete', id),
+  setAgentFolder: (agentId: string, folderId: string | null): Promise<IpcResult> => ipcRenderer.invoke('folders:assign', agentId, folderId),
+  onFoldersChanged: (callback: (data: FolderSnapshot) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: FolderSnapshot) => callback(data)
+    ipcRenderer.on('folders:changed', handler)
+    return () => ipcRenderer.removeListener('folders:changed', handler)
+  },
+
   listCustomLabels: (): Promise<IpcResult> =>
     ipcRenderer.invoke('db:labels:list'),
 

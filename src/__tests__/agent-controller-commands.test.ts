@@ -181,6 +181,7 @@ vi.mock('../main/services/lease-registry', () => ({
 }))
 
 const { agentController } = await import('../main/services/agent-controller')
+const { runtimeManager } = await import('../main/services/runtime-manager')
 
 describe('AgentController.executeCommand', () => {
   beforeAll(async () => {
@@ -924,5 +925,16 @@ describe('AgentController.executeCommand', () => {
     expect(result).toBe(expectedResult)
     expect(mocks.sessionAbort).not.toHaveBeenCalled()
     expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
+  it('reconnects a resumed session without replacing its fleet row', async () => {
+    const existing = agentController.getAgent('agent-1')!
+    const count = agentController.getAllAgents().length
+    vi.mocked(runtimeManager.ensureRuntime).mockResolvedValueOnce({ ...runtime, id: 'restarted-runtime' } as never)
+    const resumed = await agentController.resumeAgent({ directory: existing.directory, sessionId: existing.sessionId })
+    expect(resumed).toBe(existing)
+    expect(resumed.runtimeId).toBe('restarted-runtime')
+    expect(agentController.getAllAgents()).toHaveLength(count)
+    expect(mocks.setPreference).toHaveBeenCalledWith('active_agents', expect.stringContaining('agent-1'))
   })
 })

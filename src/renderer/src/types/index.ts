@@ -109,8 +109,6 @@ export interface AgentRuntime {
   contextTokens?: number
   /** Provider-reported context window size for the active model. */
   contextLimit?: number
-  /** Spike: folder this agent belongs to. Undefined or empty = top level. */
-  folderId?: string
   /** Placeholder row for a launch that main hasn't acknowledged yet. It has no
    *  session, so row actions other than dismissal are unavailable. */
   pending?: boolean
@@ -120,17 +118,7 @@ export type AgentTaskProgress =
   | { status: 'in_progress'; current: number; total: number; content: string }
   | { status: 'completed'; total: number }
 
-/**
- * Spike: client-side folder/directory definition for grouping agents in the
- * FleetTable. Persistence is not yet wired — folders live in component state
- * via localStorage during the prototype. Folder membership is stored on
- * AgentRuntime.folderId.
- */
-export interface AgentFolder {
-  id: string
-  name: string
-  sortOrder: number
-}
+export type { AgentFolder } from '../../../shared/folders'
 
 export interface AgentRuntimeError {
   name: string

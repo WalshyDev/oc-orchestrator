@@ -10,6 +10,8 @@ import { notificationService, type NotifiableEventType } from './services/notifi
 import { subscribeFileChanges, unsubscribeFileChanges } from './services/file-watcher'
 import { getAppVersion } from './version'
 import { buildTerminalTabScript } from './terminal'
+import { folderManager } from './services/folder-manager'
+import type { FolderSnapshot } from '../shared/folders'
 
 interface Attachment {
   id?: string
@@ -85,6 +87,27 @@ function logIpcError(channel: string, error: unknown, context?: Record<string, u
  * Register all IPC handlers for renderer <-> main communication.
  */
 export function registerIpcHandlers(): void {
+  ipcMain.handle('folders:list', () => ({ ok: true, data: folderManager.getSnapshot() }))
+  ipcMain.handle('folders:migrate', (_event, legacy: FolderSnapshot) => (
+    { ok: true, data: folderManager.migrateLegacy(legacy) }
+  ))
+  for (const action of ['create', 'rename', 'delete', 'assign'] as const) {
+    ipcMain.handle(`folders:${action}`, (_event, id: string, value?: string | null) => {
+      try {
+        if (action === 'create') return { ok: true, data: folderManager.create(id) }
+        if (action === 'rename') return { ok: true, data: folderManager.rename(id, value) }
+        if (action === 'delete') folderManager.delete(id)
+        if (action === 'assign') {
+          if (!agentController.getAgent(id)) throw new Error(`Unknown agent: ${id}`)
+          folderManager.setAgentFolder(id, value)
+        }
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: String(error) }
+      }
+    })
+  }
+
   // ── Agent Lifecycle ──
 
   ipcMain.handle('agent:launch', async (_event, options: {
