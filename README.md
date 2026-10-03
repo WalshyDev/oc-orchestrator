@@ -145,7 +145,15 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | `GET` | `/health` | — | `{ ok, version, pid }` |
-| `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume? }` | `{ agentId, sessionId, runtimeUrl, directory, leaseId, leaseExpiresAt }` |
+| `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume?, folderId? }` | `{ agentId, sessionId, runtimeUrl, directory, folderId, leaseId, leaseExpiresAt }` |
+| `GET` | `/sessions` | — | `{ sessions: [{ agentId, sessionId, directory, title, folderId }] }` |
+| `GET` | `/folders` | — | `{ folders: [{ id, name, sortOrder }] }` |
+| `POST` | `/folders` | `{ name }` | `{ id, name, sortOrder }` (201) |
+| `PATCH` | `/folders/:folderId` | `{ name }` | `{ id, name, sortOrder }` |
+| `DELETE` | `/folders/:folderId` | — | `{ ok }` |
+| `GET` | `/sessions/:sessionId/folder` | — | `{ sessionId, directory, folderId, folder }` |
+| `PUT` | `/sessions/:sessionId/folder` | `{ folderId: string \| null }` | `{ sessionId, directory, folderId, folder }` |
+| `DELETE` | `/sessions/:sessionId/folder` | — | `{ sessionId, directory, folderId: null, folder: null }` |
 | `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
 | `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
 | `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
@@ -154,6 +162,22 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 `POST /sessions` requires `dir` to be a git repository — non-git paths are rejected with `400 not_a_git_repo`. The directory is normalized to its canonical repo root before any agent or project work happens, and that canonical root is what gets returned in the response (and is what you should pass to `opencode attach --dir`).
 
 `resume` is mutually exclusive with `prompt` and `model`; combining them returns `400 bad_request`. To resume and then send a message, call `POST /sessions { dir, resume }` followed by `POST /sessions/:sessionId/prompt { text }`.
+
+### Folder assignment for handoffs
+
+Folders group fleet rows. Each agent belongs to one folder or the top level. Folder changes persist
+across app restarts and appear in the Fleet table immediately. Existing folders migrate from local
+storage when the Fleet table first loads.
+
+Read `GET /sessions/:parentSessionId/folder` and verify that its `directory` matches the parent
+session's directory. Pass the returned `folderId` to `POST /sessions` when launching the child.
+`null` places the child at the top level. Omitting `folderId` preserves an existing assignment when
+resuming. You can also move an existing child with `PUT /sessions/:childSessionId/folder`.
+
+Deleting a folder moves its agents to the top level. Deleting a session's folder assignment removes
+only its membership. Unknown sessions or folders return 404, and invalid names or folder IDs return
+400. A folder deleted while a launch is in progress leaves the new agent at the top level; the
+launch response reports its final `folderId`.
 
 ### Source attribution
 

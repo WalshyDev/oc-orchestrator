@@ -33,6 +33,7 @@ import { TextInputModal } from './TextInputModal'
 import { Tooltip } from './Tooltip'
 import { PrTooltipContent } from './PrTooltip'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
+import type { FolderSnapshot } from '../../../shared/folders'
 
 /**
  * Return the agent's context-window fill fraction (0–1) or -1 when we don't
@@ -113,7 +114,6 @@ interface FleetTableProps {
 
 const SCROLL_STEP = 200
 
-// ── Folder spike: localStorage helpers ──────────────────────────────────────
 const SPIKE_FOLDERS_KEY = 'oco.spike.folders'
 const SPIKE_MEMBERSHIP_KEY = 'oco.spike.folderMembership'
 const SPIKE_EXPANDED_KEY = 'oco.spike.foldersExpanded'
@@ -144,19 +144,11 @@ function loadSpikeFolders(): AgentFolder[] {
   })
 }
 
-function saveSpikeFolders(folders: AgentFolder[]) {
-  writeJson(SPIKE_FOLDERS_KEY, folders)
-}
-
 function loadSpikeMembership(): Record<string, string> {
   return readJson(SPIKE_MEMBERSHIP_KEY, {} as Record<string, string>, (value) => {
     if (!value || typeof value !== 'object') return {}
     return value as Record<string, string>
   })
-}
-
-function saveSpikeMembership(map: Record<string, string>) {
-  writeJson(SPIKE_MEMBERSHIP_KEY, map)
 }
 
 function loadSpikeExpanded(): Set<string> {
@@ -298,11 +290,10 @@ export function FleetTable({
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
-  // ── Folder spike (client-side only, localStorage persistence) ─────────────
-  // Folder definitions and agent→folder membership live here for the
-  // prototype. Real persistence will move to the preferences table later.
-  const [folders, setFolders] = useState<AgentFolder[]>(() => loadSpikeFolders())
-  const [agentFolderMap, setAgentFolderMap] = useState<Record<string, string>>(() => loadSpikeMembership())
+  const [folderSnapshot, setFolderSnapshot] = useState<FolderSnapshot>({ folders: [], membership: {} })
+  const { folders, membership: agentFolderMap } = folderSnapshot
+  const [folderError, setFolderError] = useState<string | null>(null)
+  const [foldersReady, setFoldersReady] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => loadSpikeExpanded())
   const [rootOrder, setRootOrder] = useState<RootItemId[]>(() => loadSpikeRootOrder())
   const [folderRenameId, setFolderRenameId] = useState<string | null>(null)
@@ -312,55 +303,69 @@ export function FleetTable({
   const [dragItem, setDragItem] = useState<{ kind: RootItemKind; id: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
 
-  useEffect(() => { saveSpikeFolders(folders) }, [folders])
-  useEffect(() => { saveSpikeMembership(agentFolderMap) }, [agentFolderMap])
+  useEffect(() => {
+    let active = true
+    let changed = false
+    const unsubscribe = window.api.onFoldersChanged((snapshot) => {
+      changed = true
+      if (active) setFolderSnapshot(snapshot)
+    })
+    window.api.migrateFolders({ folders: loadSpikeFolders(), membership: loadSpikeMembership() })
+      .then((result) => {
+        if (!active) return
+        if (!result.ok || !result.data) throw new Error(result.error ?? 'Failed to load folders')
+        if (!changed) setFolderSnapshot(result.data)
+        setFoldersReady(true)
+      })
+      .catch((error) => { if (active) setFolderError(String(error)) })
+    return () => { active = false; unsubscribe() }
+  }, [])
   useEffect(() => { saveSpikeExpanded(expandedFolders) }, [expandedFolders])
   useEffect(() => { saveSpikeRootOrder(rootOrder) }, [rootOrder])
 
-  const createFolder = useCallback(() => {
-    const id = `folder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
-    const sortOrder = folders.length
-    setFolders((prev) => [...prev, { id, name: 'New Folder', sortOrder }])
-    setExpandedFolders((prev) => new Set(prev).add(id))
-    setFolderRenameId(id)
-    // Insert the new folder at the top of rootOrder so it's immediately visible
-    // (otherwise it appends to the bottom, possibly off-screen behind many agents).
-    setRootOrder((prev) => [folderItemId(id), ...prev.filter((existingId) => existingId !== folderItemId(id))])
-    // Scroll to the top so the user sees the new folder's rename input.
-    requestAnimationFrame(() => {
-      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-    })
-  }, [folders.length])
+  const createFolder = useCallback(async () => {
+    if (!foldersReady) return
+    try {
+      const result = await window.api.createFolder('New Folder')
+      if (!result.ok || !result.data) throw new Error(result.error ?? 'Failed to create folder')
+      const { id } = result.data
+      setExpandedFolders((prev) => new Set(prev).add(id))
+      setFolderRenameId(id)
+      // Insert the new folder at the top of rootOrder so it's immediately visible
+      // (otherwise it appends to the bottom, possibly off-screen behind many agents).
+      setRootOrder((prev) => [folderItemId(id), ...prev.filter((existingId) => existingId !== folderItemId(id))])
+      // Scroll to the top so the user sees the new folder's rename input.
+      requestAnimationFrame(() => {
+        scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+    } catch (error) { setFolderError(String(error)) }
+  }, [foldersReady])
 
-  const renameFolder = useCallback((id: string, name: string) => {
+  const renameFolder = useCallback(async (id: string, name: string) => {
     const trimmed = name.trim()
     if (!trimmed) return
-    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)))
+    try {
+      const result = await window.api.renameFolder(id, trimmed)
+      if (!result.ok) throw new Error(result.error)
+    } catch (error) { setFolderError(String(error)) }
   }, [])
 
-  const deleteFolder = useCallback((id: string) => {
-    setFolders((prev) => prev.filter((f) => f.id !== id))
-    setAgentFolderMap((prev) => {
-      const next = { ...prev }
-      for (const [agentId, folderId] of Object.entries(next)) {
-        if (folderId === id) delete next[agentId]
-      }
-      return next
-    })
-    setExpandedFolders((prev) => {
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
+  const deleteFolder = useCallback(async (id: string) => {
+    try {
+      const result = await window.api.deleteFolder(id)
+      if (!result.ok) throw new Error(result.error)
+      setExpandedFolders((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    } catch (error) { setFolderError(String(error)) }
   }, [])
 
   const moveAgentToFolder = useCallback((agentId: string, folderId: string | null) => {
-    setAgentFolderMap((prev) => {
-      const next = { ...prev }
-      if (folderId == null) delete next[agentId]
-      else next[agentId] = folderId
-      return next
-    })
+    window.api.setAgentFolder(agentId, folderId).then((result) => {
+      if (!result.ok) setFolderError(result.error ?? 'Failed to move agent')
+    }).catch((error) => setFolderError(String(error)))
     // When an agent is pulled out to the root, ensure it has a position in
     // rootOrder. When moved into a folder, drop it from rootOrder.
     setRootOrder((prev) => {
@@ -842,7 +847,7 @@ export function FleetTable({
     )
   }
 
-  if (agents.length === 0 && folders.length === 0) {
+  if (agents.length === 0 && folders.length === 0 && !folderError) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-kumo-subtle py-16">
         <Robot size={48} weight="thin" className="mb-3 text-kumo-muted" />
@@ -854,6 +859,12 @@ export function FleetTable({
 
   return (
     <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
+      {folderError && (
+        <div role="alert" className="px-3 py-2 text-xs text-red-500 flex items-center justify-between">
+          <span>{folderError}</span>
+          <button type="button" onClick={() => setFolderError(null)}>Dismiss</button>
+        </div>
+      )}
       {/* Floating drag ghost: follows the cursor while a drag is active. */}
       {dragItem && ghostPos && (
         <div
