@@ -18,6 +18,7 @@ import {
   DotsSixVertical,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { PortaledMenu } from './PortaledMenu'
 import {
   DEFAULT_CREATE_PR_PROMPT,
@@ -186,7 +187,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   Default Model
                 </label>
                 <div className="relative">
-                  <SelectField
+                  <ModelSelectField
                     value={settings.model}
                     onChange={(value) => updateSettings({ model: value, modelVariant: 'auto' })}
                     options={modelOptions}

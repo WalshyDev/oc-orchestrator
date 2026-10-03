@@ -62,6 +62,7 @@ import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
 import { AgentDiagnostics } from './AgentDiagnostics'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
 import { formatResponseMetadata } from '../lib/transcript-metadata'
 
@@ -1901,7 +1902,7 @@ function AgentConfigPanel({
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-[11px] font-medium text-kumo-default">Next prompt model</label>
-          <SelectField
+          <ModelSelectField
             value={selectedModel}
             options={modelOptions}
             disabled={saving || !onChangeModel}
