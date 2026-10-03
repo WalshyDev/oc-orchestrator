@@ -394,7 +394,7 @@ describe('subagent progress', () => {
     expect(transcript).not.toContain('full child draft')
   })
 
-  it('expands running commands after a completed todo update', () => {
+  it('expands running commands in Tools and summarizes collapsed transcript groups', () => {
     const tools: ToolCall[] = [{
       id: 'todo',
       name: 'todowrite',
@@ -436,7 +436,32 @@ describe('subagent progress', () => {
     expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(true)
     for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {
       expect(toolsTab).toContain(command)
-      expect(transcript).toContain(command)
     }
+    expect(transcript).toContain('aria-expanded="false"')
+    expect(transcript).toContain('Running (3)')
+    expect(transcript).toContain('bash · $ pnpm -w type-check:go')
+    expect(transcript).not.toContain('<pre')
+  })
+
+  it('follows subagent activity in collapsed summaries and shows the final tool state', () => {
+    const tool: ToolCall = {
+      id: 'task', name: 'task', state: 'running', timestamp: 1,
+      input: JSON.stringify({ description: 'Check the build' }),
+      childTranscript: [{ id: 'read', kind: 'tool', label: 'read', toolState: 'completed' }, {
+        id: 'build', kind: 'tool', label: 'bash', toolState: 'running', toolSummary: '$ npm run build'
+      }]
+    }
+    const render = (tools: ToolCall[]) => renderToStaticMarkup(createElement(ToolGroupBubble, {
+      message: { id: 'tools', role: 'tool-group', content: '1 tool call', timestamp: 'now', toolCalls: tools }
+    }))
+
+    expect(render([tool])).toContain('task · bash · $ npm run build')
+    expect(render([{ ...tool, childTranscript: [{ id: 'lint', kind: 'tool', label: 'bash', toolState: 'running', toolSummary: '$ npm run lint' }] }]))
+      .toContain('task · bash · $ npm run lint')
+    const completed = render([{ ...tool, state: 'completed' }])
+    expect(completed).toContain('Completed')
+    expect(completed).toContain('task · Check the build')
+    expect(completed).not.toContain('animate-spin')
+    expect(render([{ ...tool, state: 'failed' }])).toContain('Failed')
   })
 })

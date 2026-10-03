@@ -62,6 +62,7 @@ import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
 import { SelectField } from './SelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
+import type { ChildTranscriptEntry } from '../lib/subagent-progress'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
@@ -2067,6 +2068,12 @@ const toolStateStyles: Record<string, string> = {
   running: 'text-kumo-link'
 }
 
+const toolActivityIndicators = {
+  running: { Icon: CircleNotch, label: 'Running' },
+  completed: { Icon: Check, label: 'Completed' },
+  failed: { Icon: Warning, label: 'Failed' }
+}
+
 function toolIconStyle(toolState: string | undefined): string {
   if (toolState === 'failed') return 'text-kumo-danger'
   if (toolState === 'completed') return 'text-kumo-success'
@@ -2130,6 +2137,16 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
   }
 }
 
+function getLatestChildToolActivity(entries: ChildTranscriptEntry[]): ChildTranscriptEntry | undefined {
+  const tools = entries.filter((entry) => entry.kind === 'tool')
+  const runningTools = tools.filter((entry) => entry.toolState === 'running')
+  const activity = runningTools[runningTools.length - 1] ?? tools[tools.length - 1]
+  if (activity?.toolState === 'running' && activity.childTranscript?.length) {
+    return getLatestChildToolActivity(activity.childTranscript) ?? activity
+  }
+  return activity
+}
+
 export const ToolGroupBubble = memo(function ToolGroupBubble({
   message,
   verbosity = 'none',
@@ -2141,40 +2158,56 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 }) {
   const toolCalls = message.toolCalls ?? []
 
-  // Auto-expand the bubble when any tool in the group is still running so
-  // the user can see progress without having to click. Otherwise the bubble
-  // looks frozen ("tool completed" only appears at the very end) and the user
-  // has no feedback until the tool finishes — which for CI-watching tasks
-  // can be many minutes.
-  const hasRunningTool = toolCalls.some((tool) => tool.state === 'running')
-  const [expanded, setExpanded] = useState(verbosity !== 'none' || hasRunningTool)
+  const runningTools = toolCalls.filter((tool) => tool.state === 'running')
+  const activityTool = runningTools[runningTools.length - 1] ?? toolCalls[toolCalls.length - 1]
+  const childActivity = activityTool?.state === 'running'
+    ? getLatestChildToolActivity(activityTool.childTranscript ?? [])
+    : undefined
+  const activityDetail = childActivity
+    ? [childActivity.label, childActivity.toolSummary].filter(Boolean).join(' · ')
+    : activityTool && summarizeToolInput(activityTool.name, activityTool.input)
+  const activitySummary = activityTool
+    ? `${activityTool.name}${activityDetail ? ` · ${activityDetail}` : ''}`.replace(/\s+/g, ' ').trim()
+    : undefined
+  const activityIndicator = activityTool && toolActivityIndicators[activityTool.state]
+  const [expanded, setExpanded] = useState(verbosity !== 'none')
   const previousVerbosityRef = useRef(verbosity)
 
   useEffect(() => {
     if (previousVerbosityRef.current === verbosity) return
-    setExpanded(verbosity !== 'none' || hasRunningTool)
+    setExpanded(verbosity !== 'none')
     previousVerbosityRef.current = verbosity
-  }, [verbosity, hasRunningTool])
-
-  // Once a tool starts running inside this group, force the bubble open.
-  // We don't collapse it again when the tool finishes — the user may want to
-  // scroll back through the progress.
-  useEffect(() => {
-    if (hasRunningTool) setExpanded(true)
-  }, [hasRunningTool])
+  }, [verbosity])
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
-      <button
-        onClick={() => setExpanded((prev) => !prev)}
-        className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
-      >
-        <span className="text-kumo-subtle">
-          {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
-        </span>
-        <Wrench size={13} className="text-kumo-subtle" />
-        <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
-      </button>
+      <div className="inline-flex max-w-full flex-col rounded-lg border border-kumo-line bg-kumo-overlay">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((prev) => !prev)}
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
+        >
+          <span className="text-kumo-subtle">
+            {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+          </span>
+          <Wrench size={13} className="shrink-0 text-kumo-subtle" />
+          <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
+        </button>
+        {!expanded && activityTool && activityIndicator && (
+          <div role="status" aria-atomic="true" className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-[10px] text-kumo-subtle" title={activitySummary}>
+            <activityIndicator.Icon
+              size={11}
+              className={`shrink-0 ${toolStateStyles[activityTool.state]} ${activityTool.state === 'running' ? 'animate-spin' : ''}`}
+            />
+            <span className={`shrink-0 ${toolStateStyles[activityTool.state]}`}>
+              {activityIndicator.label}
+              {runningTools.length > 1 ? ` (${runningTools.length})` : ''}
+            </span>
+            <span className="min-w-0 truncate font-mono">{activitySummary}</span>
+          </div>
+        )}
+      </div>
 
       {expanded && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
