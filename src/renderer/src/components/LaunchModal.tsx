@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
@@ -774,7 +775,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
                 <div className="relative">
-                  <SelectField
+                  <ModelSelectField
                     value={model}
                     onChange={(value) => { setModel(value); setModelVariant('auto') }}
                     options={modelOptions}
@@ -1118,7 +1119,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                           Model
                         </label>
                         <div className="relative">
-                          <SelectField
+                          <ModelSelectField
                             value={model}
                             onChange={(value) => { setModel(value); setModelVariant('auto') }}
                             options={modelOptions}
