@@ -44,6 +44,19 @@ Set `OPENCODE_PATH` to the executable for either official OpenCode v1 or the `2.
 oc-orchestrator
 ```
 
+## Current session identity
+
+OCO loads a session identity plugin into each managed OpenCode runtime. Shell
+tools receive `OPENCODE_SESSION_ID` and `OCO_SESSION_ID` from the executing
+session, even when several sessions share a directory and server. Model context
+also includes the current ID on each turn, including slash commands and turns
+after compaction. Restart existing OCO runtimes to load the plugin.
+
+Before changing your own fleet row, match the exact session ID and session
+directory against the live registry. Stop if the row is missing, stale, or
+ambiguous. A child session has its own ID and may have no fleet row. Don't use a
+workspace name, title, or another session's ID from an imported transcript.
+
 ## Development
 
 ```bash

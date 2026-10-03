@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client'
 
 vi.mock('electron', () => ({
-  app: { getPath: () => tmpdir(), setBadgeCount: () => {} },
+  app: { getAppPath: () => process.cwd(), getPath: () => tmpdir(), setBadgeCount: () => {} },
   BrowserWindow: { getAllWindows: () => [] },
   Notification: class {
     show(): void {}
