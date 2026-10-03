@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, Warning, Trash, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
+import { ImageAttachmentInput } from './ImageAttachmentInput'
 import { SelectField } from './SelectField'
 import { ModelSelectField } from './ModelSelectField'
 import { LabelDropdown } from './LabelDropdown'
@@ -134,11 +135,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [projectsReady, setProjectsReady] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
-  const {
-    attachments, isDragOver, fileInputRef,
-    removeAttachment, clearAttachments,
-    handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
-  } = useImageAttachments()
+  const newImages = useImageAttachments()
+  const importImages = useImageAttachments()
   const dropdownButtonRef = useRef<HTMLButtonElement>(null)
   const sessionDropdownButtonRef = useRef<HTMLButtonElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
@@ -430,9 +428,16 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   }, [activeTab, directory, dirError, validating])
 
   // Reset import state when switching tabs
+  const clearImportAttachments = importImages.clearAttachments
   useEffect(() => {
-    if (activeTab !== 'import') { setSelectedSession(null); setImportSearch(''); setImportName(''); setImportPrompt('') }
-  }, [activeTab])
+    if (activeTab !== 'import') {
+      setSelectedSession(null)
+      setImportSearch('')
+      setImportName('')
+      setImportPrompt('')
+      clearImportAttachments()
+    }
+  }, [activeTab, clearImportAttachments])
 
   // Session dropdown outside-click handling is delegated to PortaledMenu.
 
@@ -516,8 +521,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         ? (importPrompt.trim() || undefined)
         : buildLaunchPrompt(prompt, prUrl)
 
-      const effectiveAttachments = activeTab === 'new' && attachments.length > 0
-        ? attachments
+      const images = activeTab === 'import' ? importImages : newImages
+      const effectiveAttachments = images.attachments.length > 0
+        ? images.attachments
         : undefined
 
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
@@ -526,7 +532,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
       void persistProjectSettings(directory.trim(), false)
 
-      clearAttachments()
+      newImages.clearAttachments()
+      importImages.clearAttachments()
       onClose()
     } catch (error) {
       console.error('Launch failed:', error)
@@ -862,40 +869,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                   Initial Prompt <span className="text-kumo-subtle/60">(optional — you can prompt from the session)</span>
                 </label>
-                <div
-                  className={`relative flex flex-col gap-0 rounded-md border transition-colors ${
-                    isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line focus-within:border-kumo-ring'
-                  }`}
-                  onDragOver={handleDragOver}
-                  onDragEnter={handleDragEnter}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  {attachments.length > 0 && (
-                    <div className="flex gap-2 px-3 py-2 overflow-x-auto">
-                      {attachments.map((att) => (
-                        <div key={att.id} className="relative group shrink-0">
-                          <img
-                            src={att.dataUrl}
-                            alt={att.filename ?? 'attachment'}
-                            className="h-16 w-16 rounded-md border border-kumo-line object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(att.id!)}
-                            className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <X size={8} weight="bold" />
-                          </button>
-                          {att.filename && (
-                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
-                              {att.filename}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <ImageAttachmentInput images={newImages}>
 
                   {/* Popup visibility is driven by prompt content. onDismiss is
                       a no-op so clicks outside the textarea don't permanently
@@ -962,32 +936,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     onKeyDown={handlePromptKeyDown}
                     onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
                     onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
-                    onPaste={handlePaste}
-                    placeholder={isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session... Type / for commands, @ for agents.'}
+                    placeholder={newImages.isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session... Type / for commands, @ for agents.'}
                     rows={3}
                     className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
                   />
-                  <div className="flex items-center gap-2 px-3 py-1.5 border-t border-kumo-line">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors"
-                      title="Attach image"
-                    >
-                      <Paperclip size={11} />
-                      <span>Attach image</span>
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/gif,image/webp"
-                      multiple
-                      className="hidden"
-                      onChange={handleFileInputChange}
-                    />
-                    <span className="text-[10px] text-kumo-subtle/60">Paste or drag images to attach.</span>
-                  </div>
-                </div>
+                </ImageAttachmentInput>
               </div>
             </>
           )}
@@ -1154,13 +1107,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                         <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                           Initial Prompt <span className="text-kumo-subtle/60">(optional)</span>
                         </label>
-                        <textarea
-                          value={importPrompt}
-                          onChange={(e) => setImportPrompt(e.target.value)}
-                          placeholder="Continue where you left off, or give new instructions..."
-                          rows={2}
-                          className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none focus:border-kumo-ring"
-                        />
+                        <ImageAttachmentInput images={importImages}>
+                          <textarea
+                            value={importPrompt}
+                            onChange={(e) => setImportPrompt(e.target.value)}
+                            placeholder={importImages.isDragOver ? 'Drop image here...' : 'Continue where you left off, or give new instructions...'}
+                            rows={2}
+                            className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
+                          />
+                        </ImageAttachmentInput>
                       </div>
                     </>
                   )}

@@ -104,25 +104,29 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
   }
 
   const query = search.trim().toLowerCase()
-  const recentProviderModels = query ? [] : recentModels.flatMap((value) => {
-    for (const provider of providers) {
+  const matchingProviders = providers
+    .map((provider) => ({
+      ...provider,
+      models: provider.models.filter((model) =>
+        model.name.toLowerCase().includes(query) ||
+        model.id.toLowerCase().includes(query) ||
+        provider.name.toLowerCase().includes(query)
+      )
+    }))
+    .filter((provider) => provider.models.length > 0)
+  const recentProviderModels = recentModels.flatMap((value) => {
+    for (const provider of matchingProviders) {
       const model = provider.models.find((model) => `${provider.id}/${model.id}` === value)
       if (model) return [model]
     }
     return []
   })
-  const filteredProviders = providers
-    .map((provider) => ({
-      ...provider,
-      models: provider.models.filter((model) =>
-        !recentProviderModels.some((recent) => recent.providerID === provider.id && recent.id === model.id) && (
-          model.name.toLowerCase().includes(query) ||
-          model.id.toLowerCase().includes(query) ||
-          provider.name.toLowerCase().includes(query)
-        )
-      )
-    }))
-    .filter((provider) => provider.models.length > 0)
+  const filteredProviders = matchingProviders.map((provider) => ({
+    ...provider,
+    models: provider.models.filter((model) =>
+      !recentProviderModels.some((recent) => recent.providerID === provider.id && recent.id === model.id)
+    )
+  })).filter((provider) => provider.models.length > 0)
   const displayedProviders: ProviderGroup[] = recentProviderModels.length > 0
     ? [{ id: 'recent', name: 'Recently used', models: recentProviderModels, recent: true }, ...filteredProviders]
     : filteredProviders

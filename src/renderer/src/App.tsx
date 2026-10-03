@@ -1252,8 +1252,8 @@ Then give me a brief summary of what the previous session was working on and whe
         store.setAgentModel(agentId, model, modelVariant)
       }
 
-      if (prompt?.trim()) {
-        try { await store.sendMessage(agentId, prompt.trim(), undefined, attachments) }
+      if (prompt?.trim() || attachments?.length) {
+        try { await store.sendMessage(agentId, prompt?.trim() ?? '', undefined, attachments) }
         catch (error) { console.error('[App] Post-import prompt failed:', error) }
       }
 

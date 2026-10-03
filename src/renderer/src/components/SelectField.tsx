@@ -46,12 +46,12 @@ export function SelectField({
   }, [options, value])
 
   const filteredOptions = useMemo(() => {
-    if (!searchable || !search.trim()) return prioritizeRecentOptions(options, recentValues, '')
-    const query = search.toLowerCase()
-    return options.filter((option) =>
+    const query = searchable ? search.trim().toLowerCase() : ''
+    const matches = options.filter((option) =>
       option.label.toLowerCase().includes(query) ||
       option.value.toLowerCase().includes(query)
     )
+    return prioritizeRecentOptions(matches, recentValues)
   }, [options, recentValues, searchable, search])
 
   // Reset search and auto-focus when dropdown opens
@@ -125,7 +125,7 @@ export function SelectField({
                 >
                   <span className="truncate">{option.label}</span>
                   <span className="flex shrink-0 items-center gap-2">
-                    {(!searchable || !search.trim()) && recentValues.includes(option.value) && (
+                    {recentValues.includes(option.value) && (
                       <span className="text-[10px] text-kumo-subtle">Recently used</span>
                     )}
                     <Check size={14} className={isSelected ? 'text-kumo-brand' : 'invisible'} />

@@ -11,6 +11,10 @@ import { ModelSelectField } from '../renderer/src/components/ModelSelectField'
 let storage: Map<string, string>
 let events: EventTarget
 
+function storedModels(): string[] {
+  return JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!).map((entry: { model: string }) => entry.model)
+}
+
 beforeEach(() => {
   storage = new Map()
   events = new EventTarget()
@@ -28,7 +32,7 @@ describe('recent model selections', () => {
     for (const model of ['openai/a', 'anthropic/a', 'openai/b', 'openai/c', 'anthropic/a']) {
       recordRecentModel(model)
     }
-    expect(JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!)).toEqual([
+    expect(storedModels()).toEqual([
       'anthropic/a', 'openai/c', 'openai/b',
     ])
   })
@@ -37,16 +41,16 @@ describe('recent model selections', () => {
     recordRecentModel('openai/a')
     recordRecentModel('auto')
     recordRecentModel(' ')
-    expect(JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!)).toEqual(['openai/a'])
+    expect(storedModels()).toEqual(['openai/a'])
   })
 
   it('recovers from corrupt or invalid stored history', () => {
     storage.set(RECENT_MODELS_STORAGE_KEY, 'not json')
     recordRecentModel('openai/a')
-    expect(JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!)).toEqual(['openai/a'])
+    expect(storedModels()).toEqual(['openai/a'])
     storage.set(RECENT_MODELS_STORAGE_KEY, '[null,"auto",3,"openai/b","openai/b"]')
     recordRecentModel('openai/c')
-    expect(JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!)).toEqual(['openai/c', 'openai/b'])
+    expect(storedModels()).toEqual(['openai/c', 'openai/b'])
   })
 
   it('notifies open selectors even if storage is unavailable', () => {
@@ -79,9 +83,27 @@ describe('recent model selections', () => {
     recordRecentModel('openai/b')
     writesFail = false
     recordRecentModel('openai/c')
-    expect(JSON.parse(storage.get(RECENT_MODELS_STORAGE_KEY)!)).toEqual([
+    expect(storedModels()).toEqual([
       'openai/c', 'openai/b', 'openai/a',
     ])
+  })
+
+  it('seeds actual use by message time regardless of hydration order and ignores replayed events', () => {
+    for (const [model, usedAt] of [
+      ['openai/a', 300], ['openai/b', 100], ['anthropic/a', 200],
+      ['openai/c', 400], ['openai/a', 50], ['openai/c', 400], ['openai/b', 500],
+    ] as const) recordRecentModel(model, usedAt)
+    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'openai/a'])
+    recordRecentModel('openai/a', 300)
+    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'openai/a'])
+  })
+
+  it('migrates selection history without letting old runs displace new selections', () => {
+    storage.set(RECENT_MODELS_STORAGE_KEY, '["openai/a","openai/b"]')
+    recordRecentModel('anthropic/a', 100)
+    recordRecentModel('openai/b')
+    recordRecentModel('openai/c', 200)
+    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'anthropic/a'])
   })
 })
 
@@ -94,16 +116,18 @@ describe('recent model priority', () => {
   ]
 
   it('promotes available models in recency order without duplicates or unavailable entries', () => {
-    const prioritized = prioritizeRecentOptions(options, ['missing/model', 'openai/b', 'anthropic/a'], '')
+    const prioritized = prioritizeRecentOptions(options, ['missing/model', 'openai/b', 'anthropic/a'])
     expect(prioritized.map((option) => option.value)).toEqual([
       'openai/b', 'anthropic/a', 'auto', 'openai/a',
     ])
     expect(options[0].value).toBe('auto')
   })
 
-  it('keeps normal search ordering and restores priority when the filter is cleared', () => {
-    expect(prioritizeRecentOptions(options, ['openai/b'], 'A')).toBe(options)
-    expect(prioritizeRecentOptions(options, ['openai/b'], '  ')[0].value).toBe('openai/b')
+  it('promotes only recent options that survived the normal search filter', () => {
+    const matches = options.filter((option) => option.label.includes('A'))
+    expect(prioritizeRecentOptions(matches, ['openai/b', 'anthropic/a']).map((option) => option.value))
+      .toEqual(['anthropic/a', 'openai/a'])
+    expect(prioritizeRecentOptions(options, ['openai/b'])[0].value).toBe('openai/b')
   })
 
   it('preserves the selected model label for the closed dropdown', () => {
