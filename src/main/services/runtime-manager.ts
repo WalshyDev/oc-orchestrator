@@ -1,10 +1,11 @@
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2/client'
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createServer, createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   createCompatTransport,
   hasMessagePersistence,
@@ -83,6 +84,8 @@ function getOpencodeSpawnOptions(config: unknown): { command: string; env: NodeJ
     env: {
       ...process.env,
       PATH: Array.from(new Set(pathEntries)).join(delimiter),
+      OPENCODE_SESSION_ID: '',
+      OCO_SESSION_ID: '',
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config ?? {})
     }
   }
@@ -207,10 +210,15 @@ class RuntimeManager {
   private async spawnRuntime(directory: string): Promise<RuntimeInfo> {
     console.log(`[RuntimeManager] Starting server for ${directory}`)
 
+    const pluginPath = app.isPackaged
+      ? join(process.resourcesPath, 'session-identity.mjs')
+      : join(app.getAppPath(), 'scripts/session-identity.mjs')
+    const config = { plugin: [pathToFileURL(pluginPath).href] }
     let port = await this.getAvailablePort()
     let server = await createManagedOpencodeServer({
       port,
-      timeout: 15000
+      timeout: 15000,
+      config
     })
     let client = createOpencodeClient({
       baseUrl: server.url,
@@ -223,13 +231,14 @@ class RuntimeManager {
       version = await readRuntimeHealth(server.url)
       if (!(await hasMessagePersistence(client))) {
         console.warn(`[RuntimeManager] Enabling message persistence compatibility for OpenCode ${version}`)
-        const { command, env } = getOpencodeSpawnOptions(undefined)
+        const { command, env } = getOpencodeSpawnOptions(config)
         const databasePath = await installMessagePersistenceCompat(command, env)
         server.close()
         port = await this.getAvailablePort()
         server = await createManagedOpencodeServer({
           port,
           timeout: 15000,
+          config,
           env: { OPENCODE_DB: databasePath, OPENCODE_EXPERIMENTAL_WORKSPACES: '1' }
         })
         const transport = createCompatTransport((sessionID, error) => {

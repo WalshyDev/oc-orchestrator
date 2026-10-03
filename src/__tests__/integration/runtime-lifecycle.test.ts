@@ -21,6 +21,7 @@ import { vi } from 'vitest'
 
 vi.mock('electron', () => ({
   app: {
+    getAppPath: () => process.cwd(),
     getPath: () => tmpdir(),
     setBadgeCount: () => {}
   },

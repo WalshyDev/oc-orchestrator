@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
+import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
+import { app } from 'electron'
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client'
 import {
   createCompatTransport,
@@ -19,6 +22,7 @@ const children: Array<{
 const broadcast = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => ({
+  app: { get isPackaged() { return false }, getAppPath: () => '/test/oco' },
   BrowserWindow: {
     getAllWindows: () => [{
       isDestroyed: () => false,
@@ -60,14 +64,24 @@ beforeEach(() => {
 afterEach(() => {
   runtimeManager.stopAll()
   vi.useRealTimers()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 describe('runtime compatibility startup', () => {
   it('reuses a native runtime without installing compatibility', async () => {
+    vi.stubEnv('OPENCODE_SESSION_ID', 'parent-session')
+    vi.stubEnv('OCO_SESSION_ID', 'parent-session')
     vi.mocked(hasMessagePersistence).mockResolvedValue(true)
     const runtime = await runtimeManager.ensureRuntime('/native-project')
     expect(await runtimeManager.ensureRuntime('/native-project')).toBe(runtime)
     expect(children).toHaveLength(1)
+    expect(children[0].env).toMatchObject({ OPENCODE_SESSION_ID: '', OCO_SESSION_ID: '' })
+    expect(process.env.OPENCODE_SESSION_ID).toBe('parent-session')
+    expect(JSON.parse(children[0].env.OPENCODE_CONFIG_CONTENT!)).toEqual({
+      plugin: [pathToFileURL('/test/oco/scripts/session-identity.mjs').href]
+    })
     expect(runtime.messagePersistenceCompat).toBe(false)
     expect(installMessagePersistenceCompat).not.toHaveBeenCalled()
     expect(createCompatTransport).not.toHaveBeenCalled()
@@ -85,6 +99,7 @@ describe('runtime compatibility startup', () => {
       expect(runtimeManager.getAllRuntimes()).toEqual([])
     }
     expect(children).toHaveLength(2)
+    expect(children[1].env.OPENCODE_CONFIG_CONTENT).toBe(children[0].env.OPENCODE_CONFIG_CONTENT)
     expect(children[0].kill).toHaveBeenCalledOnce()
     expect(vi.mocked(installMessagePersistenceCompat).mock.invocationCallOrder[0])
       .toBeLessThan(children[0].kill.mock.invocationCallOrder[0])
@@ -109,6 +124,16 @@ describe('runtime compatibility startup', () => {
     vi.mocked(hasMessagePersistence).mockResolvedValue(true)
     await runtimeManager.ensureRuntime('/failed-project')
     expect(children).toHaveLength(2)
+  })
+
+  it('loads the packaged plugin from outside the application archive', async () => {
+    vi.spyOn(app, 'isPackaged', 'get').mockReturnValue(true)
+    vi.stubGlobal('process', { ...process, resourcesPath: '/test/resources' })
+    vi.mocked(hasMessagePersistence).mockResolvedValue(true)
+    await runtimeManager.ensureRuntime('/packaged-project')
+    expect(JSON.parse(children[0].env.OPENCODE_CONFIG_CONTENT!).plugin).toEqual([
+      pathToFileURL(join(process.resourcesPath, 'session-identity.mjs')).href
+    ])
   })
 
   it('marks periodic health failures and restores health and version on recovery', async () => {
