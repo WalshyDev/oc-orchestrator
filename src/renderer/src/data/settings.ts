@@ -27,10 +27,11 @@ export const MAX_QUICK_ACTIONS = 7
 
 export type QuickActionSlots = (QuickAction | null)[]
 
-export type OutputVerbosity = 'none' | 'some' | 'all'
+export type OutputVerbosity = 'none' | 'recent' | 'some' | 'all'
 
 export const OUTPUT_VERBOSITY_OPTIONS: ReadonlyArray<{ value: OutputVerbosity; label: string }> = [
   { value: 'none', label: 'None' },
+  { value: 'recent', label: 'Most recent' },
   { value: 'some', label: 'Some' },
   { value: 'all', label: 'All' },
 ]
@@ -174,7 +175,7 @@ async function persistSettings(settings: AppSettings): Promise<void> {
 }
 
 export function isOutputVerbosity(value: unknown): value is OutputVerbosity {
-  return value === 'none' || value === 'some' || value === 'all'
+  return value === 'none' || value === 'recent' || value === 'some' || value === 'all'
 }
 
 export function isQuickActionValid(qa: QuickAction): boolean {
