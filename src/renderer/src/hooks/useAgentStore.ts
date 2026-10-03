@@ -47,6 +47,7 @@ import {
 } from '../lib/optimistic-message'
 import { getPendingInterruptStatus } from '../lib/interrupt-status'
 import { loadSettings } from '../data/settings'
+import { recordRecentModel } from './useRecentModels'
 import { deleteAgentSettings, loadAgentAutoRecoverSetting, resolveAutoRecoverStalledResponses } from '../data/agentSettings'
 
 // Deduplication cache for provider error toasts per runtime to avoid flicker.
@@ -269,6 +270,7 @@ export interface LiveMessage {
   updatedAt?: number
   completedAt?: number
   errored?: boolean
+  invoked?: boolean
   modelId?: string
   providerID?: string
   variant?: string
@@ -1134,6 +1136,7 @@ function upsertMessage(message: LiveMessage): LiveMessage {
       existingMessage.completedAt = Math.max(existingMessage.completedAt ?? 0, message.completedAt)
     }
     existingMessage.errored = existingMessage.errored || message.errored || undefined
+    existingMessage.invoked = existingMessage.invoked || message.invoked || undefined
     existingMessage.modelId = message.modelId ?? existingMessage.modelId
     messages.sort((left, right) => left.createdAt - right.createdAt)
     return existingMessage
@@ -1290,6 +1293,7 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
       updatedAt: entry.info.time?.completed ?? createdAt,
       completedAt: entry.info.time?.completed,
       errored: !!entry.info.error?.name,
+      invoked: subAgentAssistantIds.has(entry.info.id),
       modelId,
       ...getAssistantResponseMetadata(entry.info),
       parts: []
@@ -1331,6 +1335,9 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
 
       // Skip model updates from sub-agent messages (see identifySubAgentMessages)
       if (entry.info.modelID && !subAgentAssistantIds.has(entry.info.id)) {
+        if (!message.invoked && entry.info.providerID && typeof entry.info.time?.created === 'number') {
+          recordRecentModel(`${entry.info.providerID}/${entry.info.modelID}`, entry.info.time.created)
+        }
         const modelUpdated = applyObservedResponse(
           agent,
           entry.info.modelID,
@@ -1828,6 +1835,9 @@ function processEvent(payload: OpenCodeEventPayload): void {
         modelID: info.modelID as string | undefined,
         model: info.model as { modelID?: string } | undefined
       })
+      const depth = sessionStepDepth.get(sessionId) ?? 0
+      const invoked = role === 'assistant' && (depth > 0 ||
+        state.messages.get(sessionId)?.some((message) => message.id === messageId && message.invoked) === true)
 
       let agentChanged = false
       const agent = findAgentBySession(sessionId)
@@ -1856,8 +1866,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
           }
 
           // Only update model from top-level (non-invoked) assistant messages
-          const depth = sessionStepDepth.get(sessionId) ?? 0
           if (modelId && depth === 0) {
+            const providerId = info.providerID as string | undefined
+            const messageTime = info.time as { created?: number } | undefined
+            if (!invoked && providerId && typeof messageTime?.created === 'number') {
+              recordRecentModel(`${providerId}/${modelId}`, messageTime.created)
+            }
             const modelUpdated = applyObservedResponse(
               agent,
               modelId,
@@ -1934,6 +1948,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           updatedAt: Date.now(),
           completedAt,
           errored: !!msgError?.name,
+          invoked,
           modelId,
           ...getAssistantResponseMetadata(info),
           parts: []
