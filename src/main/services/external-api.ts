@@ -393,21 +393,18 @@ async function handleLaunch(
   if (existing && existing.directory !== canonicalRoot) {
     return sendJson(res, 400, { error: 'session_directory_mismatch' })
   }
-  let handle = existing
-  if (!handle) {
-    handle = body.resume
-      ? await agentController.resumeAgent({
-          directory: canonicalRoot,
-          sessionId: body.resume,
-          title: body.title
-        })
-      : await agentController.launchAgent({
-          directory: canonicalRoot,
-          prompt: body.prompt,
-          title: body.title,
-          model: body.model
-        })
-  }
+  const handle = body.resume
+    ? await agentController.resumeAgent({
+        directory: canonicalRoot,
+        sessionId: body.resume,
+        title: body.title
+      })
+    : await agentController.launchAgent({
+        directory: canonicalRoot,
+        prompt: body.prompt,
+        title: body.title,
+        model: body.model
+      })
 
   const runtime = runtimeManager.getRuntime(handle.runtimeId)
   if (!runtime) {

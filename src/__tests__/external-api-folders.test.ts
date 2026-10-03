@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   broadcast: vi.fn(),
   launch: vi.fn(),
   resume: vi.fn(),
+  runtimeAvailable: true,
   agents: [
     { id: 'parent-agent', sessionId: 'ses_parent', directory: '/repo/parent', title: 'Parent' },
     { id: 'child-agent', sessionId: 'ses_child', directory: '/repo/child', title: 'Child' }
@@ -34,7 +35,7 @@ vi.mock('../main/services/agent-controller', () => ({
   parseModelString: vi.fn()
 }))
 vi.mock('../main/services/runtime-manager', () => ({ runtimeManager: {
-  getRuntime: () => ({ serverUrl: 'http://127.0.0.1:1234' })
+  getRuntime: () => mocks.runtimeAvailable ? { serverUrl: 'http://127.0.0.1:1234' } : undefined
 } }))
 vi.mock('../main/services/workspace-manager', () => ({ workspaceManager: {
   isGitRepo: () => true,
@@ -82,14 +83,16 @@ beforeEach(() => {
     { id: 'child-agent', sessionId: 'ses_child', directory: '/repo/child', title: 'Child' }
   ]
   mocks.preferences.clear()
+  mocks.runtimeAvailable = true
   mocks.broadcast.mockClear()
   mocks.launch.mockReset()
   mocks.launch.mockResolvedValue({ ...mocks.agents[1], runtimeId: 'runtime', projectName: 'repo' })
   mocks.resume.mockReset()
-  mocks.resume.mockImplementation(async (options) => ({
-    id: 'resumed-agent', sessionId: options.sessionId, directory: options.directory,
-    runtimeId: 'runtime', projectName: 'repo'
-  }))
+  mocks.resume.mockImplementation(async (options) => {
+    mocks.runtimeAvailable = true
+    return mocks.agents.find((agent) => agent.sessionId === options.sessionId && agent.directory === options.directory)
+      ?? { id: 'resumed-agent', sessionId: options.sessionId, directory: options.directory, runtimeId: 'runtime', projectName: 'repo' }
+  })
 })
 
 describe('external folder API', () => {
@@ -174,7 +177,11 @@ describe('external folder API', () => {
     expect(moved.body).toMatchObject({ agentId: 'parent-agent', folderId: second.id })
     expect((await request('/sessions/ses_parent/folder')).body.folderId).toBe(second.id)
     expect(mocks.launch).not.toHaveBeenCalled()
-    expect(mocks.resume).not.toHaveBeenCalled()
+    mocks.runtimeAvailable = false
+    const reconnected = await request('/sessions', 'POST', { dir: '/repo/parent', resume: 'ses_parent' })
+    expect(reconnected.status).toBe(200)
+    expect(reconnected.body).toMatchObject({ agentId: 'parent-agent', folderId: second.id })
+    expect(mocks.resume).toHaveBeenCalled()
     expect((await request('/sessions', 'POST', { dir: '/wrong', resume: 'ses_parent' })).status).toBe(400)
     mocks.agents.push({ ...mocks.agents[0], id: 'duplicate' })
     expect((await request('/sessions', 'POST', { dir: '/repo/parent', resume: 'ses_parent' })).status).toBe(409)
