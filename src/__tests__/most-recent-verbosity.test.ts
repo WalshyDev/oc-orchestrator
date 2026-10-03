@@ -2,8 +2,8 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DetailDrawer } from '../renderer/src/components/DetailDrawer'
-import { ToolsUsage, type ToolCall } from '../renderer/src/components/ToolsUsage'
+import { DetailDrawer, ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
+import { CollapsibleSubagentProgress, ToolsUsage, type ToolCall } from '../renderer/src/components/ToolsUsage'
 import { EventLog, type EventEntry } from '../renderer/src/components/EventLog'
 import { saveAgentOutputVerbosity } from '../renderer/src/data/agentSettings'
 import { createDemoApi } from '../renderer/src/demoApi'
@@ -44,6 +44,37 @@ afterEach(async () => {
 })
 
 describe('Most recent output visibility', () => {
+  it.each(['tools', 'subagent'] as const)('keeps running %s details collapsed at None across state and visibility changes', async (kind) => {
+    let tool: ToolCall = {
+      id: 'task', name: 'task', state: 'running', timestamp: 1,
+      input: 'task input', childTranscript: [{ id: 'child', kind: 'tool', label: 'bash', toolState: 'running', toolOutput: 'live child output' }]
+    }
+    const render = async (verbosity: 'none' | 'all' = 'none') => {
+      await act(async () => root.render(kind === 'tools'
+        ? createElement(ToolsUsage, { tools: [tool], verbosity })
+        : createElement(CollapsibleSubagentProgress, { tool, verbosity })))
+    }
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+    await render('all')
+    expect(container.textContent).toContain('live child output')
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+    tool = { ...tool, state: 'completed' }
+    await render()
+    tool = { ...tool, state: 'running' }
+    await render()
+    expect(container.querySelector('pre')).toBeNull()
+
+    await act(async () => container.querySelector('button[aria-expanded]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    if (kind === 'tools') {
+      expect(container.textContent).toContain('task input')
+      expect(container.textContent).not.toContain('live child output')
+    } else {
+      expect(container.textContent).toContain('live child output')
+    }
+  })
+
   it('follows agent output, ignores user messages and compaction, and permits one manual expansion', async () => {
     const messages: Message[] = [
       { id: 'old', role: 'assistant', content: '**Older response**', timestamp: 'now' },
@@ -80,7 +111,59 @@ describe('Most recent output visibility', () => {
     messages.push({ id: 'final', role: 'assistant', content: 'Final response', timestamp: 'now' })
     await render()
     expect(expandedMessages()).toEqual(['false', 'false', 'true'])
-    expect(container.textContent).not.toContain('new-file')
+    expect(container.querySelector('pre')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('new-file')
+  })
+
+  it.each(['none', 'some', 'recent'] as const)('updates collapsed task activity in place at %s visibility', async (verbosity) => {
+    let tool: ToolCall = {
+      id: 'task', name: 'task', state: 'running', timestamp: 1,
+      input: JSON.stringify({ description: 'Check the build' })
+    }
+    const render = async () => {
+      await act(async () => root.render(createElement(ToolGroupBubble, {
+        message: { id: 'tools', role: 'tool-group', content: '1 tool call', timestamp: 'now', toolCalls: [tool] },
+        verbosity,
+        recentExpanded: false
+      })))
+    }
+    const updateNestedActivity = async (command: string) => {
+      tool = { ...tool, childTranscript: [{
+        id: 'nested', kind: 'tool', label: 'task', toolState: 'running', toolSummary: 'Run checks',
+        childTranscript: [{ id: 'command', kind: 'tool', label: 'bash', toolState: 'running', toolSummary: command }]
+      }] }
+      await render()
+    }
+
+    await render()
+    const button = container.querySelector('button')!
+    if (verbosity === 'none') await act(async () => button.click())
+    if (verbosity !== 'recent') await act(async () => button.click())
+    const status = container.querySelector('[role="status"]')!
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(button.contains(status)).toBe(false)
+    expect(status.getAttribute('aria-atomic')).toBe('true')
+    expect(status.textContent).toContain('Runningtask · Check the build')
+
+    await updateNestedActivity('$ npm run build')
+    expect(container.querySelector('[role="status"]')).toBe(status)
+    expect(status.textContent).toContain('task · bash · $ npm run build')
+    await updateNestedActivity('$ npm run lint')
+    expect(status.textContent).toContain('task · bash · $ npm run lint')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('pre')).toBeNull()
+
+    tool = { ...tool, state: 'completed' }
+    await render()
+    expect(status.textContent).toContain('Completedtask · Check the build')
+    expect(status.querySelector('.animate-spin')).toBeNull()
+    tool = { ...tool, state: 'running' }
+    await render()
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    tool = { ...tool, state: 'failed' }
+    await render()
+    expect(status.textContent).toContain('Failed')
+    expect(status.querySelector('.animate-spin')).toBeNull()
   })
 
   it.each(['tools', 'events'] as const)('opens only the newest %s entry, including after updates and mode changes', async (kind) => {
