@@ -5,6 +5,11 @@ const RECENT_MODELS_CHANGED_EVENT = 'oc-orchestrator:recent-models-changed'
 let fallbackSnapshot = '[]'
 let pendingSnapshot: string | null = null
 
+interface RecentModelUse {
+  model: string
+  usedAt: number
+}
+
 function getSnapshot(): string {
   if (pendingSnapshot !== null) return pendingSnapshot
   try {
@@ -14,22 +19,34 @@ function getSnapshot(): string {
   }
 }
 
-function parseModels(snapshot: string): string[] {
+function parseHistory(snapshot: string): RecentModelUse[] {
   try {
     const values: unknown = JSON.parse(snapshot)
     if (!Array.isArray(values)) return []
-    return [...new Set(values.filter((value): value is string =>
-      typeof value === 'string' && value.trim().length > 0 && value !== 'auto'
-    ))].slice(0, 3)
+    const entries = values.flatMap((value): RecentModelUse[] => {
+      const entry = typeof value === 'string' ? { model: value, usedAt: 0 } : value
+      if (!entry || typeof entry.model !== 'string' || !entry.model.trim() || entry.model === 'auto' ||
+        typeof entry.usedAt !== 'number' || !Number.isFinite(entry.usedAt) || entry.usedAt < 0) return []
+      return [{ model: entry.model, usedAt: entry.usedAt }]
+    }).sort((a, b) => b.usedAt - a.usedAt)
+    return entries.filter((entry, index) => entries.findIndex((other) => other.model === entry.model) === index).slice(0, 3)
   } catch {
     return []
   }
 }
 
-export function recordRecentModel(model: string): void {
-  if (!model.trim() || model === 'auto') return
-  const models = [model, ...parseModels(getSnapshot()).filter((value) => value !== model)].slice(0, 3)
-  fallbackSnapshot = JSON.stringify(models)
+export function recordRecentModel(model: string, usedAt?: number): void {
+  const timestamp = usedAt ?? Date.now()
+  if (!model.trim() || model === 'auto' || !Number.isFinite(timestamp) || timestamp < 0) return
+  const history = parseHistory(getSnapshot())
+  const previous = history.find((entry) => entry.model === model)
+  let updated = history
+  if (usedAt === undefined || !previous || previous.usedAt < timestamp) {
+    updated = [{ model, usedAt: timestamp }, ...history.filter((entry) => entry.model !== model)]
+      .sort((a, b) => b.usedAt - a.usedAt).slice(0, 3)
+  }
+  if (pendingSnapshot === null && JSON.stringify(updated) === JSON.stringify(history)) return
+  fallbackSnapshot = JSON.stringify(updated)
   try {
     localStorage.setItem(RECENT_MODELS_STORAGE_KEY, fallbackSnapshot)
     pendingSnapshot = null
@@ -53,15 +70,13 @@ function subscribe(listener: () => void): () => void {
 
 export function useRecentModels(): string[] {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-  return useMemo(() => parseModels(snapshot), [snapshot])
+  return useMemo(() => parseHistory(snapshot).map((entry) => entry.model), [snapshot])
 }
 
 export function prioritizeRecentOptions<T extends { value: string }>(
   options: readonly T[],
-  recentModels: readonly string[],
-  search: string
+  recentModels: readonly string[]
 ): readonly T[] {
-  if (search.trim()) return options
   const recentOptions = recentModels.flatMap((value) => {
     const option = options.find((option) => option.value === value)
     return option ? [option] : []
