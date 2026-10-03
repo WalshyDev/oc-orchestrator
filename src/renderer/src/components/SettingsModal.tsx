@@ -18,6 +18,7 @@ import {
   DotsSixVertical,
 } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { PortaledMenu } from './PortaledMenu'
 import {
   DEFAULT_CREATE_PR_PROMPT,
@@ -104,13 +105,11 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
   const { options: modelOptions, providerData, configModel } = useModelOptions()
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(settings.model, providerData, configModel),
-    [settings.model, providerData, configModel]
+    () => getVariantOptionsForModel(settings.model, providerData, configModel, settings.modelVariant),
+    [settings.model, settings.modelVariant, providerData, configModel]
   )
 
-  const selectedEffort = effortOptions.some((option) => option.value === settings.modelVariant)
-    ? settings.modelVariant
-    : 'auto'
+  const selectedEffort = settings.modelVariant
 
   useEffect(() => {
     window.api.getVersion().then((result) => {
@@ -188,7 +187,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   Default Model
                 </label>
                 <div className="relative">
-                  <SelectField
+                  <ModelSelectField
                     value={settings.model}
                     onChange={(value) => updateSettings({ model: value, modelVariant: 'auto' })}
                     options={modelOptions}
@@ -203,10 +202,10 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                 </p>
               </div>
 
-              {/* Default Effort */}
+              {/* Default Variant */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  Default Effort Level
+                  Default Variant
                 </label>
                 <div className="relative">
                   <SelectField
@@ -218,8 +217,8 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   />
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
-                  Provider Default means no effort override is sent; OpenCode uses the selected model&apos;s provider default.
-                  {effortOptions.length === 1 ? ' This model does not expose explicit effort levels.' : ''}
+                  Provider Default means no variant override is sent; OpenCode uses the selected model&apos;s provider default.
+                  {effortOptions.length === 1 ? ' This model does not expose explicit variants.' : ''}
                 </p>
               </div>
 
@@ -350,7 +349,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   menuClassName={selectMenuClasses}
                 />
                 <p className="text-[11px] text-kumo-subtle">
-                  None keeps details collapsed. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
+                  None keeps details collapsed. Most recent opens only the latest agent output. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
                 </p>
               </div>
 

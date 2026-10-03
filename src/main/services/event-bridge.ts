@@ -212,6 +212,16 @@ export class EventBridge {
       runtimeManager.touchRuntimeActivity(this.runtimeId)
     }
 
+    if (event.type === 'session.status') {
+      const props = (event.properties ?? {}) as { sessionID?: string; status?: { type: string; attempt?: number; message?: string; next?: number } }
+      if (props.status?.type === 'retry') {
+        console.warn(`[EventBridge:${this.runtimeId}] Provider retry:`, {
+          sessionID: props.sessionID,
+          ...props.status
+        })
+      }
+    }
+
     // Surface error-shaped events in main-process logs so issues like
     // ProviderAuthError ("Unauthorized: ... opencode auth login ...") are
     // visible without digging through the renderer's DevTools console.

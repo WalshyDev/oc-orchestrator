@@ -2,13 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildOptionsFromProviders,
   ensureProvidersLoaded,
+  getVariantOptionsForModel,
   invalidateProviderCache,
+  resolveEffectiveVariant,
   resolveSystemDefaultLabel,
+  subscribeToConfigChanges,
   type ProviderData,
 } from '../renderer/src/hooks/useModelOptions'
 
 afterEach(() => {
   invalidateProviderCache()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -81,6 +85,53 @@ describe('buildOptionsFromProviders', () => {
   })
 })
 
+describe('getVariantOptionsForModel', () => {
+  it('keeps the selected effort when provider metadata is unavailable', () => {
+    expect(getVariantOptionsForModel('opencode/luna', null, undefined, 'max')).toEqual([
+      { value: 'auto', label: 'Provider Default' },
+      { value: 'max', label: 'Max' },
+    ])
+  })
+})
+
+describe('resolveEffectiveVariant', () => {
+  const model = {
+    id: 'gpt-6-luna',
+    name: 'GPT-6 Luna',
+    options: { reasoningEffort: 'max' },
+    variants: {
+      high: { reasoningEffort: 'high' },
+      max: { reasoningEffort: 'max' },
+    },
+  }
+
+  it('prefers the variant recorded on the message', () => {
+    expect(resolveEffectiveVariant('low', 'high', model)).toBe('low')
+  })
+
+  it('uses the configured variant when the message omits one', () => {
+    expect(resolveEffectiveVariant(undefined, 'high', model)).toBe('high')
+  })
+
+  it('matches merged model reasoning effort when no explicit variant applies', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, model)).toBe('max')
+  })
+
+  it('returns none when merged model options do not match a variant', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, {
+      ...model,
+      options: { reasoningEffort: 'custom' },
+    })).toBe('none')
+  })
+
+  it('returns none when the model has no reasoning effort', () => {
+    expect(resolveEffectiveVariant(undefined, undefined, {
+      ...model,
+      options: {},
+    })).toBe('none')
+  })
+})
+
 describe('resolveSystemDefaultLabel', () => {
   const providers: ProviderData = {
     providers: [
@@ -141,7 +192,108 @@ describe('resolveSystemDefaultLabel', () => {
   })
 })
 
+describe('getVariantOptionsForModel', () => {
+  const providers: ProviderData = {
+    providers: [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        models: {
+          'shared-model': {
+            id: 'shared-model',
+            name: 'Shared Model',
+            variants: { low: {}, high: {}, fast: {}, 'custom-speed': {} },
+          },
+          'vendor/nested-model': {
+            id: 'vendor/nested-model',
+            name: 'Nested Model',
+            variants: { turbo: {} },
+          },
+          'no-variants': { id: 'no-variants', name: 'No Variants' },
+        },
+      },
+      {
+        id: 'other',
+        name: 'Other',
+        models: {
+          'shared-model': {
+            id: 'shared-model',
+            name: 'Other Shared Model',
+            variants: { balanced: {} },
+          },
+        },
+      },
+    ],
+  }
+
+  it.each([
+    ['openai/shared-model', undefined, ['auto', 'low', 'high', 'fast', 'custom-speed']],
+    ['other/shared-model', undefined, ['auto', 'balanced']],
+    ['openai/vendor/nested-model', undefined, ['auto', 'turbo']],
+    ['auto', 'openai/shared-model', ['auto', 'low', 'high', 'fast', 'custom-speed']],
+    ['openai/no-variants', undefined, ['auto']],
+    ['unknown/model', undefined, ['auto']],
+    ['auto', undefined, ['auto']],
+  ])('lists only variants of %s (default %s)', (model, configModel, expected) => {
+    expect(getVariantOptionsForModel(model, providers, configModel).map(({ value }) => value)).toEqual(expected)
+  })
+})
+
 describe('ensureProvidersLoaded', () => {
+  it('uses fresh project metadata instead of the global cache when a directory is selected', async () => {
+    const globalProviders: ProviderData = { providers: [] }
+    const projectProviders: ProviderData = {
+      providers: [{
+        id: 'custom',
+        name: 'Custom',
+        models: { model: { id: 'model', name: 'Model', variants: { fast: {} } } },
+      }],
+    }
+    const listAllProviders = vi.fn().mockImplementation(async (directory?: string) => ({
+      ok: true,
+      data: directory ? projectProviders : globalProviders,
+    }))
+    const getSystemConfig = vi.fn().mockResolvedValue({ ok: true, data: { model: 'custom/model' } })
+    vi.stubGlobal('window', { api: { listAllProviders, getSystemConfig } })
+
+    await ensureProvidersLoaded()
+    const project = await ensureProvidersLoaded('/tmp/selected-project')
+    expect(listAllProviders).toHaveBeenLastCalledWith('/tmp/selected-project')
+    expect(getSystemConfig).toHaveBeenLastCalledWith('/tmp/selected-project')
+    expect(getVariantOptionsForModel('auto', project.providerData, project.configModel)).toEqual([
+      { value: 'auto', label: 'Provider Default' },
+      { value: 'fast', label: 'Fast' },
+    ])
+
+    await ensureProvidersLoaded('/tmp/selected-project')
+    expect(listAllProviders).toHaveBeenCalledTimes(3)
+    expect((await ensureProvidersLoaded()).providerData).toBe(globalProviders)
+    expect(listAllProviders).toHaveBeenCalledTimes(3)
+  })
+
+  it('notifies open model selectors when metadata becomes available after a cold-start retry', async () => {
+    vi.useFakeTimers()
+    const listAllProviders = vi.fn()
+      .mockResolvedValueOnce({ ok: true, data: null })
+      .mockResolvedValue({ ok: true, data: { providers: [] } })
+    vi.stubGlobal('window', {
+      api: {
+        listAllProviders,
+        getSystemConfig: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+      },
+    })
+    const listener = vi.fn()
+    const unsubscribe = subscribeToConfigChanges(listener)
+    try {
+      expect((await ensureProvidersLoaded()).providerData).toBeNull()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(listener).toHaveBeenCalledOnce()
+      expect(listAllProviders).toHaveBeenCalledTimes(2)
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('fetches system config fresh while reusing cached provider data', async () => {
     const listAllProviders = vi.fn().mockResolvedValue({
       ok: true,

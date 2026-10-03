@@ -1,10 +1,17 @@
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2/client'
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createServer, createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  createCompatTransport,
+  hasMessagePersistence,
+  installMessagePersistenceCompat,
+  readRuntimeHealth
+} from './opencode-compat'
 
 export interface RuntimeInfo {
   id: string
@@ -17,12 +24,20 @@ export interface RuntimeInfo {
   lastActivityAt: number
   activeSessions: number
   healthy: boolean
+  version?: string
+  messagePersistenceCompat?: boolean
 }
 
 const HEALTH_CHECK_INTERVAL_MS = 30_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000
 const AUTO_RESTART_COOLDOWN_MS = 10_000
+const CONFIG_RELOAD_TIMEOUT_MS = 5_000
+
+interface AiConfigReloadResult {
+  skippedBusy: string[]
+  failed: string[]
+}
 
 interface OpencodeServer {
   url: string
@@ -35,6 +50,7 @@ interface OpencodeServerOptions {
   timeout: number
   signal?: AbortSignal
   config?: unknown
+  env?: NodeJS.ProcessEnv
 }
 
 function getOpencodePathEntries(): string[] {
@@ -68,6 +84,8 @@ function getOpencodeSpawnOptions(config: unknown): { command: string; env: NodeJ
     env: {
       ...process.env,
       PATH: Array.from(new Set(pathEntries)).join(delimiter),
+      OPENCODE_SESSION_ID: '',
+      OCO_SESSION_ID: '',
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config ?? {})
     }
   }
@@ -86,7 +104,8 @@ function formatOpencodeSpawnError(error: Error, command: string, env: NodeJS.Pro
 async function createManagedOpencodeServer(options: OpencodeServerOptions): Promise<OpencodeServer> {
   const hostname = options.hostname ?? '127.0.0.1'
   const args = ['serve', `--hostname=${hostname}`, `--port=${options.port}`]
-  const { command, env } = getOpencodeSpawnOptions(options.config)
+  const { command, env: spawnEnv } = getOpencodeSpawnOptions(options.config)
+  const env = { ...spawnEnv, ...options.env }
   const proc = spawn(command, args, {
     signal: options.signal,
     env
@@ -141,6 +160,9 @@ async function createManagedOpencodeServer(options: OpencodeServerOptions): Prom
     options.signal?.addEventListener('abort', () => {
       done(() => reject(new Error('Aborted')))
     })
+  }).catch((error) => {
+    proc.kill()
+    throw error
   })
 
   return {
@@ -188,19 +210,72 @@ class RuntimeManager {
   private async spawnRuntime(directory: string): Promise<RuntimeInfo> {
     console.log(`[RuntimeManager] Starting server for ${directory}`)
 
-    const port = await this.getAvailablePort()
-
-    const server = await createManagedOpencodeServer({
+    const pluginPath = app.isPackaged
+      ? join(process.resourcesPath, 'session-identity.mjs')
+      : join(app.getAppPath(), 'scripts/session-identity.mjs')
+    const config = { plugin: [pathToFileURL(pluginPath).href] }
+    let port = await this.getAvailablePort()
+    let server = await createManagedOpencodeServer({
       port,
-      timeout: 15000
+      timeout: 15000,
+      config
     })
-
-    const client = createOpencodeClient({
+    let client = createOpencodeClient({
       baseUrl: server.url,
       directory
     })
-
+    let version: string
+    let messagePersistenceCompat = false
     const runtimeId = `runtime-${this.nextId++}`
+    try {
+      version = await readRuntimeHealth(server.url)
+      if (!(await hasMessagePersistence(client))) {
+        console.warn(`[RuntimeManager] Enabling message persistence compatibility for OpenCode ${version}`)
+        const { command, env } = getOpencodeSpawnOptions(config)
+        const databasePath = await installMessagePersistenceCompat(command, env)
+        server.close()
+        port = await this.getAvailablePort()
+        server = await createManagedOpencodeServer({
+          port,
+          timeout: 15000,
+          config,
+          env: { OPENCODE_DB: databasePath, OPENCODE_EXPERIMENTAL_WORKSPACES: '1' }
+        })
+        const transport = createCompatTransport((sessionID, error) => {
+          console.error(`[RuntimeManager] Compatibility prompt failed for ${sessionID}`, error)
+          this.broadcastToRenderer('opencode:event', {
+            runtimeId,
+            directory,
+            event: {
+              type: 'session.error',
+              properties: {
+                sessionID,
+                error: { name: 'UnknownError', data: { message: String(error) } }
+              }
+            }
+          })
+        })
+        const close = server.close
+        server.close = () => {
+          transport.close()
+          close()
+        }
+        client = createOpencodeClient({
+          baseUrl: server.url,
+          directory,
+          fetch: transport.fetch
+        })
+        version = await readRuntimeHealth(server.url)
+        if (!(await hasMessagePersistence(client))) {
+          throw new Error(`OpenCode ${version} still drops message parts with compatibility enabled`)
+        }
+        messagePersistenceCompat = true
+      }
+    } catch (error) {
+      server.close()
+      throw error
+    }
+
     const runtime: RuntimeInfo = {
       id: runtimeId,
       directory,
@@ -211,7 +286,9 @@ class RuntimeManager {
       startedAt: Date.now(),
       lastActivityAt: Date.now(),
       activeSessions: 0,
-      healthy: true
+      healthy: true,
+      version,
+      messagePersistenceCompat
     }
 
     this.runtimes.set(runtimeId, runtime)
@@ -221,7 +298,9 @@ class RuntimeManager {
     this.broadcastToRenderer('runtime:started', {
       id: runtimeId,
       directory,
-      serverUrl: server.url
+      serverUrl: server.url,
+      version,
+      messagePersistenceCompat
     })
 
     return runtime
@@ -485,13 +564,7 @@ class RuntimeManager {
    * Throws if the server is unreachable or returns a non-OK status.
    */
   private async checkHealth(runtime: RuntimeInfo): Promise<void> {
-    const response = await fetch(`${runtime.serverUrl}/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5_000)
-    })
-    if (!response.ok) {
-      throw new Error(`Health check returned status ${response.status}`)
-    }
+    runtime.version = await readRuntimeHealth(runtime.serverUrl)
   }
 
   /**
@@ -521,6 +594,36 @@ class RuntimeManager {
 
   getAllRuntimes(): RuntimeInfo[] {
     return Array.from(this.runtimes.values())
+  }
+
+  async reloadAiConfig(): Promise<AiConfigReloadResult> {
+    const result: AiConfigReloadResult = { skippedBusy: [], failed: [] }
+
+    await Promise.all(this.getAllRuntimes().map(async (runtime) => {
+      try {
+        const { data: statuses } = await runtime.client.session.status({}, {
+          throwOnError: true,
+          signal: AbortSignal.timeout(CONFIG_RELOAD_TIMEOUT_MS)
+        })
+        // Only dispose runtimes that were idle at the status snapshot.
+        const busy = Object.values(statuses ?? {}).some((status) => status.type !== 'idle')
+        if (busy) {
+          result.skippedBusy.push(runtime.directory)
+          return
+        }
+
+        await runtime.client.instance.dispose({}, {
+          throwOnError: true,
+          signal: AbortSignal.timeout(CONFIG_RELOAD_TIMEOUT_MS)
+        })
+      } catch (error) {
+        console.warn(`[RuntimeManager] AI config reload failed for ${runtime.id}:`, error)
+        result.failed.push(runtime.directory)
+      }
+    }))
+
+    console.log('[RuntimeManager] AI config reload', result)
+    return result
   }
 
   private async getAvailablePort(): Promise<number> {

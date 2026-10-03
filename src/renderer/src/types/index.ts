@@ -67,6 +67,12 @@ export interface Project {
   color: string
 }
 
+export interface AgentRetry {
+  attempt: number
+  message: string
+  next: number
+}
+
 export interface AgentRuntime {
   id: string
   sessionId?: string
@@ -80,11 +86,15 @@ export interface AgentRuntime {
   status: AgentStatus
   labelIds: string[]
   model: string
+  configuredModel?: string
   configuredModelPath?: string
   variant?: string
+  configuredVariant?: string
+  configuredEffectiveVariant?: string
   prUrl: string | null
   lastActivityAt: string
   lastActivityAtMs: number
+  retry?: AgentRetry
   blockedSince?: string
   blockedSinceMs?: number
   lastMessage?: string
@@ -99,8 +109,6 @@ export interface AgentRuntime {
   contextTokens?: number
   /** Provider-reported context window size for the active model. */
   contextLimit?: number
-  /** Spike: folder this agent belongs to. Undefined or empty = top level. */
-  folderId?: string
   /** Placeholder row for a launch that main hasn't acknowledged yet. It has no
    *  session, so row actions other than dismissal are unavailable. */
   pending?: boolean
@@ -110,17 +118,7 @@ export type AgentTaskProgress =
   | { status: 'in_progress'; current: number; total: number; content: string }
   | { status: 'completed'; total: number }
 
-/**
- * Spike: client-side folder/directory definition for grouping agents in the
- * FleetTable. Persistence is not yet wired — folders live in component state
- * via localStorage during the prototype. Folder membership is stored on
- * AgentRuntime.folderId.
- */
-export interface AgentFolder {
-  id: string
-  name: string
-  sortOrder: number
-}
+export type { AgentFolder } from '../../../shared/folders'
 
 export interface AgentRuntimeError {
   name: string
@@ -236,10 +234,13 @@ export interface Message {
   content: string
   timestamp: string
   activityAt?: number
+  providerID?: string
+  variant?: string
   toolName?: string
   toolState?: 'running' | 'completed' | 'failed'
   toolCalls?: ToolCall[]
   images?: MessageImage[]
+  model?: string
   /** For compaction rows: whether compaction is still running. */
   compactionActive?: boolean
   /** For compaction rows: whether the compaction was automatic (true) or user-initiated (false). */
@@ -256,6 +257,21 @@ export function isUrgent(agent: { status: AgentStatus; labelIds: string[] }): bo
 
 export function formatBranchLabel(agent: Pick<AgentRuntime, 'branchName'>): string {
   return agent.branchName ?? ''
+}
+
+export function getDisplayedModel(agent: Pick<AgentRuntime, 'model' | 'configuredModel'>): string {
+  return agent.configuredModel ?? agent.model
+}
+
+export function getDisplayedVariant(
+  agent: Pick<AgentRuntime, 'variant' | 'configuredModel' | 'configuredVariant' | 'configuredEffectiveVariant'>
+): string {
+  const effort = agent.configuredModel !== undefined
+    ? agent.configuredEffectiveVariant ?? agent.configuredVariant
+    : agent.variant
+  const variant = effort?.trim()
+  if (!variant || variant === 'auto' || variant === 'none') return 'Provider default'
+  return variant.charAt(0).toUpperCase() + variant.slice(1)
 }
 
 export function statusLabel(status: AgentStatus): string {

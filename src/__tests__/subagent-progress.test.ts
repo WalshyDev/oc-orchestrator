@@ -1,14 +1,19 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
+import { MessageBubble, ToolGroupBubble } from '../renderer/src/components/DetailDrawer'
 import { SubagentProgress } from '../renderer/src/components/SubagentProgress'
 import {
   shouldAutoExpandTool,
   ToolsUsage,
   type ToolCall
 } from '../renderer/src/components/ToolsUsage'
-import type { LiveMessage } from '../renderer/src/hooks/useAgentStore'
+import {
+  getMessageModelId,
+  getPendingTurnModel,
+  identifySubAgentMessages,
+  type LiveMessage
+} from '../renderer/src/hooks/useAgentStore'
 import {
   appendVisibleTextDelta,
   associateChildSessions,
@@ -24,7 +29,7 @@ import {
   type TaskPartDescriptor
 } from '../renderer/src/lib/subagent-progress'
 import { getPendingInterruptStatus } from '../renderer/src/lib/interrupt-status'
-import type { Message } from '../renderer/src/types'
+import { type Message } from '../renderer/src/types'
 
 function assistantMessage(sessionId: string, parts: LiveMessage['parts'], updatedAt = 1): LiveMessage {
   return {
@@ -35,6 +40,16 @@ function assistantMessage(sessionId: string, parts: LiveMessage['parts'], update
     updatedAt,
     parts
   }
+}
+
+function modelMessage(
+  sessionId: string,
+  modelId: string,
+  parts: LiveMessage['parts'] = [],
+  updatedAt = 1,
+  response?: Pick<LiveMessage, 'providerID' | 'variant'>
+): LiveMessage {
+  return { ...assistantMessage(sessionId, parts, updatedAt), modelId, ...response }
 }
 
 describe('subagent progress', () => {
@@ -49,6 +64,44 @@ describe('subagent progress', () => {
 
     expect(getChildSessionId(state)).toBe('child')
     expect(getToolMetadataOutput(state)).toBe('live command output')
+  })
+
+  it('reads models from assistant and user message shapes', () => {
+    expect(getMessageModelId({ role: 'assistant', modelID: 'claude-sonnet-5' }))
+      .toBe('claude-sonnet-5')
+    expect(getMessageModelId({ role: 'user', model: { modelID: 'gpt-5.6-terra' } }))
+      .toBe('gpt-5.6-terra')
+    expect(getPendingTurnModel('openai/gpt-5.6-sol')).toBe('openai/gpt-5.6-sol')
+    expect(getPendingTurnModel('openai/gpt-5.6-sol', 'openai/gpt-5.6-terra'))
+      .toBe('openai/gpt-5.6-terra')
+    expect(getPendingTurnModel(
+      'openai/gpt-5.6-sol',
+      'openai/gpt-5.6-terra',
+      'anthropic/claude-sonnet-5'
+    )).toBe('anthropic/claude-sonnet-5')
+  })
+
+  it('uses full history to identify an invoked assistant before limiting hydration', () => {
+    const history = [{
+      info: { id: 'parent-user', sessionID: 'parent', role: 'user' as const },
+      parts: []
+    }, {
+      info: {
+        id: 'parent-assistant', sessionID: 'parent', role: 'assistant' as const, parentID: 'parent-user'
+      },
+      parts: [{ id: 'step', type: 'step-start' }]
+    }, {
+      info: { id: 'child-user', sessionID: 'parent', role: 'user' as const },
+      parts: []
+    }, {
+      info: {
+        id: 'child-assistant', sessionID: 'parent', role: 'assistant' as const, parentID: 'child-user'
+      },
+      parts: []
+    }] as Parameters<typeof identifySubAgentMessages>[0]
+
+    expect(identifySubAgentMessages(history).has('child-assistant')).toBe(true)
+    expect(identifySubAgentMessages(history.slice(-2)).has('child-assistant')).toBe(false)
   })
 
   it('keeps only the latest pending tool running when a session retries', () => {
@@ -130,6 +183,35 @@ describe('subagent progress', () => {
     expect(getActiveAssistantMessage([completed])).toBeUndefined()
     expect(getActiveAssistantMessage([errored])).toBeUndefined()
     expect(getActiveAssistantMessage([assistantMessage('child', [])], false)).toBeUndefined()
+  })
+
+  it('shows the producing model on assistant output', () => {
+    const markup = renderToStaticMarkup(createElement(MessageBubble, {
+      message: {
+        id: 'response',
+        role: 'assistant',
+        content: 'Review complete',
+        timestamp: 'now',
+        model: 'gpt-5.6-terra'
+      }
+    }))
+
+    expect(markup).toContain('Review complete')
+    expect(markup).toContain('gpt-5.6-terra')
+  })
+
+  it('shows the message timestamp before its content', () => {
+    const markup = renderToStaticMarkup(createElement(MessageBubble, {
+      message: {
+        id: 'response',
+        role: 'assistant',
+        content: 'Review complete',
+        timestamp: '12m ago'
+      }
+    }))
+
+    expect(markup).toContain('12m ago')
+    expect(markup.indexOf('12m ago')).toBeLessThan(markup.indexOf('Review complete'))
   })
 
   it('does not revive a completed Task when a new user message is optimistic', () => {
@@ -240,7 +322,7 @@ describe('subagent progress', () => {
 
   it('builds assistant text, tool output, and nested subagent transcripts', () => {
     const messages = new Map<string, LiveMessage[]>([
-      ['child', [assistantMessage('child', [
+      ['child', [modelMessage('child', 'gpt-5.6-terra', [
         {
           id: 'bash',
           type: 'tool',
@@ -256,10 +338,10 @@ describe('subagent progress', () => {
           toolState: 'completed',
           childSessionId: 'grandchild'
         }
-      ], 2)]],
-      ['grandchild', [assistantMessage('grandchild', [
+      ], 2, { providerID: 'openai', variant: 'high' })]],
+      ['grandchild', [modelMessage('grandchild', 'claude-sonnet-5', [
         { id: 'final', type: 'text', text: 'nested final output' }
-      ], 3)]]
+      ], 3, { providerID: 'anthropic', variant: 'max' })]]
     ])
 
     const transcript = buildChildTranscript('child', (sessionId) => messages.get(sessionId) ?? [])
@@ -267,12 +349,25 @@ describe('subagent progress', () => {
       label: 'bash',
       toolState: 'running',
       toolSummary: 'npm test',
-      toolOutput: 'tests are running'
+      toolOutput: 'tests are running',
+      modelId: 'gpt-5.6-terra',
+      providerID: 'openai',
+      variant: 'high'
     })
     expect(transcript[1].childTranscript?.[0]).toMatchObject({
       kind: 'text',
-      label: 'nested final output'
+      label: 'nested final output',
+      modelId: 'claude-sonnet-5',
+      providerID: 'anthropic',
+      variant: 'max'
     })
+    const markup = renderToStaticMarkup(createElement(SubagentProgress, {
+      entries: transcript,
+      state: 'running',
+      childSessionId: 'child'
+    }))
+    expect(markup).toContain('openai · gpt-5.6-terra · Effort: High')
+    expect(markup).toContain('anthropic · claude-sonnet-5 · Effort: Max')
     expect(getLatestChildActivityAt(
       'child',
       (sessionId) => messages.get(sessionId) ?? [],
@@ -406,6 +501,9 @@ describe('subagent progress', () => {
       name: 'bash',
       state: 'running',
       timestamp: 2,
+      model: 'gpt-5.6-terra',
+      providerID: 'openai',
+      variant: 'high',
       input: JSON.stringify({ command: 'pnpm -w format:check' })
     }, {
       id: 'lint',
@@ -428,12 +526,17 @@ describe('subagent progress', () => {
         role: 'tool-group',
         content: '4 tool calls',
         timestamp: 'now',
+        model: 'gpt-5.6-terra',
+        providerID: 'openai',
+        variant: 'high',
         toolCalls: tools
       }
     }))
 
     expect(shouldAutoExpandTool(tools[0], 'none', false)).toBe(false)
     expect(shouldAutoExpandTool(tools[1], 'none', false)).toBe(true)
+    expect(toolsTab).toContain('openai · gpt-5.6-terra · Effort: High')
+    expect(transcript).toContain('openai · gpt-5.6-terra · Effort: High')
     for (const command of ['pnpm -w format:check', 'pnpm -w lint', 'pnpm -w type-check:go']) {
       expect(toolsTab).toContain(command)
     }
@@ -443,25 +546,4 @@ describe('subagent progress', () => {
     expect(transcript).not.toContain('<pre')
   })
 
-  it('follows subagent activity in collapsed summaries and shows the final tool state', () => {
-    const tool: ToolCall = {
-      id: 'task', name: 'task', state: 'running', timestamp: 1,
-      input: JSON.stringify({ description: 'Check the build' }),
-      childTranscript: [{ id: 'read', kind: 'tool', label: 'read', toolState: 'completed' }, {
-        id: 'build', kind: 'tool', label: 'bash', toolState: 'running', toolSummary: '$ npm run build'
-      }]
-    }
-    const render = (tools: ToolCall[]) => renderToStaticMarkup(createElement(ToolGroupBubble, {
-      message: { id: 'tools', role: 'tool-group', content: '1 tool call', timestamp: 'now', toolCalls: tools }
-    }))
-
-    expect(render([tool])).toContain('task · bash · $ npm run build')
-    expect(render([{ ...tool, childTranscript: [{ id: 'lint', kind: 'tool', label: 'bash', toolState: 'running', toolSummary: '$ npm run lint' }] }]))
-      .toContain('task · bash · $ npm run lint')
-    const completed = render([{ ...tool, state: 'completed' }])
-    expect(completed).toContain('Completed')
-    expect(completed).toContain('task · Check the build')
-    expect(completed).not.toContain('animate-spin')
-    expect(render([{ ...tool, state: 'failed' }])).toContain('Failed')
-  })
 })

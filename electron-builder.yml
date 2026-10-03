@@ -10,6 +10,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 icon: resources/icon.icns
 extraResources:
+  - from: scripts/session-identity.mjs
+    to: session-identity.mjs
   - from: resources/icon.png
     to: icon.png
 mac:

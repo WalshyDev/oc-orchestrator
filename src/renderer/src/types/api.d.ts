@@ -1,4 +1,5 @@
 import type { ProjectSettings, WorktreeStrategy } from '../../../shared/project'
+import type { AgentFolder, FolderSnapshot } from '../../../shared/folders'
 
 export type { ProjectSettings, WorktreeStrategy }
 
@@ -67,8 +68,8 @@ export interface OrchestratorApi {
   listPermissions: () => Promise<IpcResult<PendingPermissionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
-  listAllProviders: () => Promise<IpcResult>
-  getSystemConfig: () => Promise<IpcResult>
+  listAllProviders: (directory?: string) => Promise<IpcResult>
+  getSystemConfig: (directory?: string) => Promise<IpcResult>
   listAllCommands: () => Promise<IpcResult>
   listAllAgentConfigs: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
@@ -100,6 +101,14 @@ export interface OrchestratorApi {
   updateProjectSettings: (options: { repoRoot: string; settings: ProjectSettings }) => Promise<IpcResult<Project>>
 
   // ── Database: Custom Labels ──
+  listFolders: () => Promise<IpcResult<FolderSnapshot>>
+  migrateFolders: (legacy: FolderSnapshot) => Promise<IpcResult<FolderSnapshot>>
+  createFolder: (name: string) => Promise<IpcResult<AgentFolder>>
+  renameFolder: (id: string, name: string) => Promise<IpcResult<AgentFolder>>
+  deleteFolder: (id: string) => Promise<IpcResult>
+  setAgentFolder: (agentId: string, folderId: string | null) => Promise<IpcResult>
+  onFoldersChanged: (callback: (data: FolderSnapshot) => void) => () => void
+
   listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
   createCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
   updateCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
@@ -130,6 +139,8 @@ export interface OrchestratorApi {
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
   onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
+  onAgentPrUrlUpdated: (callback: (data: AgentPrUrlUpdatedPayload) => void) => () => void
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
@@ -277,6 +288,11 @@ export interface AgentModelChangedPayload {
   variantOverride?: string
 }
 
+export interface AgentPrUrlUpdatedPayload {
+  id: string
+  prUrl: string
+}
+
 export interface SessionResetPayload {
   id: string
   sessionId: string
@@ -299,6 +315,9 @@ export type AgentStatusesPayload = Record<string, {
   agentId: string
   status: {
     type: string
+    attempt?: number
+    message?: string
+    next?: number
   }
 }>
 

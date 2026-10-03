@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { ListBullets, CaretDown, CaretRight, Funnel } from '@phosphor-icons/react'
 import { PortaledMenu } from './PortaledMenu'
 import type { OutputVerbosity } from '../data/settings'
+import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 
 export interface EventEntry {
   id: string
@@ -45,8 +46,12 @@ function formatJson(data: unknown): string {
 }
 
 export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: EventLogProps) {
+  const latestEventId = events.reduce<EventEntry | undefined>((latest, event) =>
+    !latest || event.timestamp >= latest.timestamp ? event : latest, undefined
+  )?.id
+  const recentExpansion = useMostRecentExpansion(verbosity === 'recent', latestEventId)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() =>
-    verbosity === 'none' ? new Set() : new Set(events.map((e) => e.id))
+    verbosity === 'none' || verbosity === 'recent' ? new Set() : new Set(events.map((e) => e.id))
   )
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
@@ -57,12 +62,12 @@ export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: E
   // Some and All both expand events because events never contain subagents.
   useEffect(() => {
     const verbosityChanged = previousVerbosityRef.current !== verbosity
-    if (verbosityChanged && verbosity === 'none') {
+    if (verbosityChanged && (verbosity === 'none' || verbosity === 'recent')) {
       setExpandedIds(new Set())
       previousVerbosityRef.current = verbosity
       return
     }
-    if (verbosity !== 'none') {
+    if (verbosity === 'some' || verbosity === 'all') {
       setExpandedIds((prev) => {
         const next = new Set(prev)
         for (const event of events) {
@@ -90,6 +95,10 @@ export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: E
   }, [events, typeFilter])
 
   const toggleExpanded = (eventId: string) => {
+    if (verbosity === 'recent') {
+      recentExpansion.toggle(eventId)
+      return
+    }
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(eventId)) {
@@ -175,7 +184,9 @@ export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: E
       {/* Event list */}
       <div className="flex flex-col gap-px">
         {sorted.map((event) => {
-          const isExpanded = expandedIds.has(event.id)
+          const isExpanded = verbosity === 'recent'
+            ? recentExpansion.expandedId === event.id
+            : expandedIds.has(event.id)
           const typeStyle = typeColorMap[event.type] || defaultTypeStyle
 
           return (
@@ -185,6 +196,7 @@ export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: E
             >
               <button
                 onClick={() => toggleExpanded(event.id)}
+                aria-expanded={isExpanded}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 cursor-pointer"
               >
                 <span className="shrink-0 text-kumo-subtle">

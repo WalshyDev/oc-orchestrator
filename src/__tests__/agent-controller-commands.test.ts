@@ -2,14 +2,21 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const mocks = vi.hoisted(() => ({
   sessionCreate: vi.fn(),
+  sessionGet: vi.fn(),
+  sessionMessages: vi.fn(),
   sessionCommand: vi.fn(),
+  sessionPrompt: vi.fn(),
   sessionPromptAsync: vi.fn(),
   sessionStatus: vi.fn(),
   sessionTodo: vi.fn(),
   sessionAbort: vi.fn(),
+  sessionSummarize: vi.fn(),
   configUpdate: vi.fn(),
+  configProviders: vi.fn(),
+  configGet: vi.fn(),
   touchRuntimeActivity: vi.fn(),
   sendToRenderer: vi.fn(),
+  setPreference: vi.fn(),
   bridgeEvent: undefined as ((event: { type: string; properties: unknown }) => void) | undefined,
 }))
 
@@ -38,6 +45,57 @@ const persistedAgents = [
     prompt: '',
     title: 'Default model session',
   },
+  {
+    id: 'agent-4',
+    sessionId: 'attached-client-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Attached client session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+    variantOverride: 'high',
+  },
+  {
+    id: 'agent-5',
+    sessionId: 'max-effort-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Max effort session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    variantOverride: 'max',
+  },
+  {
+    id: 'agent-6',
+    sessionId: 'command-model-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Command model session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    variantOverride: 'max',
+  },
+  {
+    id: 'agent-7',
+    sessionId: 'long-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Long command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
+  {
+    id: 'agent-8',
+    sessionId: 'polled-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Polled command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
+  {
+    id: 'agent-9',
+    sessionId: 'overlapping-command-session',
+    directory: '/tmp/project',
+    prompt: '',
+    title: 'Overlapping command session',
+    modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+  },
 ]
 
 const runtime = {
@@ -46,14 +104,20 @@ const runtime = {
   client: {
     session: {
       create: mocks.sessionCreate,
+      get: mocks.sessionGet,
+      messages: mocks.sessionMessages,
       command: mocks.sessionCommand,
+      prompt: mocks.sessionPrompt,
       promptAsync: mocks.sessionPromptAsync,
       status: mocks.sessionStatus,
       todo: mocks.sessionTodo,
       abort: mocks.sessionAbort,
+      summarize: mocks.sessionSummarize,
     },
     config: {
       update: mocks.configUpdate,
+      providers: mocks.configProviders,
+      get: mocks.configGet,
     },
   },
 }
@@ -97,7 +161,7 @@ vi.mock('../main/services/notification-service', () => ({
 vi.mock('../main/services/database', () => ({
   database: {
     getPreference: () => JSON.stringify(persistedAgents),
-    setPreference: vi.fn(),
+    setPreference: mocks.setPreference,
   },
 }))
 
@@ -117,6 +181,7 @@ vi.mock('../main/services/lease-registry', () => ({
 }))
 
 const { agentController } = await import('../main/services/agent-controller')
+const { runtimeManager } = await import('../main/services/runtime-manager')
 
 describe('AgentController.executeCommand', () => {
   beforeAll(async () => {
@@ -126,19 +191,34 @@ describe('AgentController.executeCommand', () => {
   beforeEach(() => {
     mocks.sessionCommand.mockReset()
     mocks.sessionCommand.mockResolvedValue({ data: undefined })
+    mocks.sessionGet.mockReset()
+    mocks.sessionGet.mockResolvedValue({ data: { title: 'Source session' } })
+    mocks.sessionMessages.mockReset()
+    mocks.sessionMessages.mockResolvedValue({ data: [] })
+    mocks.sessionPrompt.mockReset()
+    mocks.sessionPrompt.mockResolvedValue({ data: undefined })
     mocks.sessionPromptAsync.mockReset()
     mocks.sessionPromptAsync.mockResolvedValue({ data: undefined })
     mocks.sessionCreate.mockReset()
     mocks.sessionCreate.mockResolvedValue({ data: { id: 'new-session' } })
+    mocks.sessionGet.mockReset()
+    mocks.sessionGet.mockResolvedValue({ data: { title: 'Source session' } })
+    mocks.sessionMessages.mockReset()
+    mocks.sessionMessages.mockResolvedValue({ data: [] })
+    mocks.sessionPrompt.mockReset()
+    mocks.sessionPrompt.mockResolvedValue({ data: undefined })
     mocks.sessionStatus.mockReset()
     mocks.sessionStatus.mockResolvedValue({ data: {} })
     mocks.sessionTodo.mockReset()
     mocks.sessionTodo.mockResolvedValue({ data: [] })
     mocks.sessionAbort.mockReset()
     mocks.sessionAbort.mockResolvedValue({ data: undefined })
+    mocks.sessionSummarize.mockReset()
+    mocks.sessionSummarize.mockResolvedValue({ data: true })
     mocks.configUpdate.mockReset()
     mocks.configUpdate.mockResolvedValue({ data: undefined })
     mocks.sendToRenderer.mockReset()
+    mocks.setPreference.mockClear()
   })
 
   afterEach(() => {
@@ -166,12 +246,43 @@ describe('AgentController.executeCommand', () => {
     })
   })
 
+  it('loads providers and defaults from the selected launch project, including custom speed variants', async () => {
+    const directory = '/tmp/selected-project'
+    const providers = {
+      providers: [{
+        id: 'custom',
+        name: 'Custom',
+        models: { model: { id: 'model', name: 'Model', variants: { fast: {}, turbo: {} } } },
+      }],
+    }
+    const config = { model: 'custom/model' }
+    mocks.configProviders.mockResolvedValue({ data: providers })
+    mocks.configGet.mockResolvedValue({ data: config })
+
+    expect(await agentController.getProvidersFromAnyRuntime(directory)).toBe(providers)
+    expect(await agentController.getConfigFromAnyRuntime(directory)).toBe(config)
+    expect(mocks.configProviders).toHaveBeenLastCalledWith({ directory })
+    expect(mocks.configGet).toHaveBeenLastCalledWith({ directory })
+  })
+
   it('preserves a bare selected model ID', async () => {
     await agentController.executeCommand('agent-2', 'review', 'src/main.ts')
 
     expect(mocks.sessionCommand).toHaveBeenCalledWith(expect.objectContaining({
       model: 'local-model',
     }))
+  })
+
+  it('broadcasts external PR-link updates to the renderer', () => {
+    agentController.setAgentPrUrl('agent-1', 'https://github.com/example/repo/pull/1')
+
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:pr-url-updated', {
+      id: 'agent-1',
+      prUrl: 'https://github.com/example/repo/pull/1',
+    })
+    const persisted = JSON.parse(mocks.setPreference.mock.lastCall?.[1] as string) as Array<{ id: string; prUrl?: string }>
+    expect(persisted.find((agent) => agent.id === 'agent-1')?.prUrl)
+      .toBe('https://github.com/example/repo/pull/1')
   })
 
   it('changes one agent model without updating the shared directory config', async () => {
@@ -192,6 +303,21 @@ describe('AgentController.executeCommand', () => {
     }))
   })
 
+  it('sends the selected effort on the next prompt', async () => {
+    await agentController.updateConfig('agent-3', {
+      model: 'opencode/luna',
+      variant: 'max',
+    })
+
+    await agentController.sendMessage('agent-3', 'Use maximum effort')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'default-model-session',
+      model: { providerID: 'opencode', modelID: 'luna' },
+      variant: 'max',
+    }))
+  })
+
   it('launches a selected model without updating the shared directory config', async () => {
     const handle = await agentController.launchAgent({
       directory: '/tmp/project',
@@ -206,6 +332,21 @@ describe('AgentController.executeCommand', () => {
       variantOverride: 'high',
     }))
     expect(mocks.configUpdate).not.toHaveBeenCalled()
+  })
+
+  it('includes selected model and effort in an imported session launch event', async () => {
+    await agentController.importSession({
+      sourceSessionId: 'source-session',
+      sourceDirectory: '/tmp/project',
+      targetDirectory: '/tmp/project',
+      model: 'opencode/luna',
+      modelVariant: 'max',
+    })
+
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      modelOverride: { providerID: 'opencode', modelID: 'luna' },
+      variantOverride: 'max',
+    }))
   })
 
   it('keeps the previous override when another config update fails', async () => {
@@ -252,6 +393,290 @@ describe('AgentController.executeCommand', () => {
       modelOverride: { providerID: 'anthropic', modelID: 'claude-opus-5' },
       variantOverride: 'high',
     })
+  })
+
+  it('uses a model selected by an attached client without clearing pinned effort', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'selected-model-message',
+          sessionID: 'attached-client-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        },
+      },
+    })
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'delayed-terra-message',
+          sessionID: 'attached-client-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+          variant: 'high',
+          time: { created: 100 },
+        },
+      },
+    })
+
+    await agentController.sendMessage('agent-4', 'Continue from OCO')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'attached-client-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'high',
+    }))
+    expect(agentController.getAgent('agent-4')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    })
+    const persisted = JSON.parse(mocks.setPreference.mock.lastCall?.[1] as string)
+    const persistedAgent = persisted.find((agent: { id: string }) => agent.id === 'agent-4')
+    expect(persistedAgent).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    })
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:model-changed', {
+      id: 'agent-4',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    })
+  })
+
+  it('preserves the selected effort when a same-model user message omits the variant', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'max-effort-message',
+          sessionID: 'max-effort-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    await agentController.sendMessage('agent-5', 'Continue with max effort')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'max-effort-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'max',
+    }))
+    expect(agentController.getAgent('agent-5')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'max',
+    })
+  })
+
+  it('keeps the pinned model and effort after a command or compaction uses another model', async () => {
+    const commandMessage = {
+      id: 'command-model-message',
+      sessionID: 'command-model-session',
+      role: 'user',
+      model: { providerID: 'opencode', modelID: 'luna' },
+      time: { created: 200 },
+    }
+    mocks.sessionCommand.mockImplementationOnce(async () => {
+      mocks.bridgeEvent?.({ type: 'message.updated', properties: { info: commandMessage } })
+      return { data: undefined }
+    })
+    mocks.sessionSummarize.mockImplementationOnce(async () => {
+      mocks.bridgeEvent?.({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'compaction-message',
+            sessionID: 'command-model-session',
+            role: 'user',
+            model: { providerID: 'anthropic', modelID: 'claude-opus-5' },
+            time: { created: 300 },
+          },
+        },
+      })
+      return { data: true }
+    })
+
+    await agentController.executeCommand('agent-6', 'review', '')
+    // OpenCode emits message.updated again when it adds the turn summary.
+    mocks.bridgeEvent?.({ type: 'message.updated', properties: { info: commandMessage } })
+    await agentController.compactSession('agent-6')
+    await agentController.sendMessage('agent-6', 'Back to the pinned model')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'command-model-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'max',
+    }))
+    expect(agentController.getAgent('agent-6')).toMatchObject({
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'max',
+    })
+    expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
+  })
+
+  it.each([
+    ['an idle event', 'agent-7', 'long-command-session', async (sessionId: string) => {
+      mocks.bridgeEvent?.({
+        type: 'session.status',
+        properties: { sessionID: sessionId, status: { type: 'idle' } },
+      })
+    }],
+    ['status polling', 'agent-8', 'polled-command-session', async () => {
+      await agentController.getSessionStatuses()
+    }],
+  ])('keeps the pinned model after a failed command request until %s', async (_name, agentId, sessionId, release) => {
+    const lunaMessage = (id: string, created: number) => ({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id,
+          sessionID: sessionId,
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-6-luna' },
+          time: { created },
+        },
+      },
+    })
+    mocks.sessionCommand.mockResolvedValueOnce({ error: { name: 'HeadersTimeoutError' } })
+    mocks.sessionStatus.mockResolvedValueOnce({ error: { name: 'TypeError' } })
+
+    await agentController.executeCommand(agentId, 'pull-request', '')
+    await vi.waitFor(() => expect(mocks.sessionStatus).toHaveBeenCalledOnce())
+    // OpenCode auto compaction adds a user message with the command model.
+    mocks.bridgeEvent?.(lunaMessage('auto-compaction-message', 200))
+    await agentController.sendMessage(agentId, 'Back to the pinned model')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: sessionId,
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
+    expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
+
+    mocks.sessionStatus.mockResolvedValueOnce({ data: { [sessionId]: { type: 'busy' } } })
+    await agentController.getSessionStatuses()
+    mocks.bridgeEvent?.(lunaMessage('mid-turn-message', 300))
+    expect(agentController.getAgent(agentId)?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
+
+    await release(sessionId)
+    mocks.bridgeEvent?.(lunaMessage('attached-client-message', 400))
+
+    expect(agentController.getAgent(agentId)?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-6-luna' })
+  })
+
+  it('ignores an idle snapshot from before a newer command request failed', async () => {
+    let resolveStaleStatus: ((value: unknown) => void) | undefined
+    mocks.sessionCommand.mockResolvedValue({ error: { name: 'HeadersTimeoutError' } })
+    mocks.sessionStatus
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleStatus = resolve }))
+      .mockResolvedValueOnce({ data: { 'overlapping-command-session': { type: 'busy' } } })
+
+    await agentController.executeCommand('agent-9', 'review', '')
+    await agentController.executeCommand('agent-9', 'pull-request', '')
+    expect(mocks.sessionStatus).toHaveBeenCalledTimes(2)
+    resolveStaleStatus?.({ data: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'overlapping-compaction-message',
+          sessionID: 'overlapping-command-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-6-luna' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    expect(agentController.getAgent('agent-9')?.modelOverride)
+      .toEqual({ providerID: 'openai', modelID: 'gpt-5.6-sol' })
+  })
+
+  it('adopts the effort an attached client stores on the message model', async () => {
+    mocks.bridgeEvent?.({
+      type: 'message.updated',
+      properties: {
+        info: {
+          id: 'attached-luna-max-message',
+          sessionID: 'bare-model-session',
+          role: 'user',
+          model: { providerID: 'opencode', modelID: 'luna', variant: 'max' },
+          time: { created: 200 },
+        },
+      },
+    })
+
+    expect(agentController.getAgent('agent-2')).toMatchObject({
+      modelOverride: { providerID: 'opencode', modelID: 'luna' },
+      variantOverride: 'max',
+    })
+  })
+
+  it('keeps the selected model while seeding an imported session', async () => {
+    mocks.sessionCreate.mockResolvedValueOnce({ data: { id: 'imported-session' } })
+
+    await agentController.importSession({
+      sourceSessionId: 'source-session',
+      sourceDirectory: '/tmp/project',
+      targetDirectory: '/tmp/project',
+      model: 'openai/gpt-5.6-sol',
+      modelVariant: 'high',
+    })
+
+    expect(mocks.sessionPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'imported-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variant: 'high',
+      noReply: true,
+    }))
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      sessionId: 'imported-session',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+      variantOverride: 'high',
+    }))
+  })
+
+  it('restores the latest model used while OCO was stopped', async () => {
+    mocks.sessionMessages.mockResolvedValueOnce({
+      data: [
+        { info: {
+          id: 'historical-terra-message',
+          sessionID: 'historical-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-terra' },
+          time: { created: 100 },
+        } },
+        { info: {
+          id: 'historical-sol-message',
+          sessionID: 'historical-session',
+          role: 'user',
+          model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+          time: { created: 200 },
+        } },
+      ],
+    })
+
+    const handle = await agentController.resumeAgent({
+      directory: '/tmp/project',
+      sessionId: 'historical-session',
+    })
+    await agentController.sendMessage(handle.id, 'Continue after restart')
+
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      sessionID: 'historical-session',
+      model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      sessionId: 'historical-session',
+      modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
+    }))
   })
 
   it('fetches the persisted Todo list for an agent session', async () => {
@@ -500,5 +925,16 @@ describe('AgentController.executeCommand', () => {
     expect(result).toBe(expectedResult)
     expect(mocks.sessionAbort).not.toHaveBeenCalled()
     expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
+  })
+
+  it('reconnects a resumed session without replacing its fleet row', async () => {
+    const existing = agentController.getAgent('agent-1')!
+    const count = agentController.getAllAgents().length
+    vi.mocked(runtimeManager.ensureRuntime).mockResolvedValueOnce({ ...runtime, id: 'restarted-runtime' } as never)
+    const resumed = await agentController.resumeAgent({ directory: existing.directory, sessionId: existing.sessionId })
+    expect(resumed).toBe(existing)
+    expect(resumed.runtimeId).toBe('restarted-runtime')
+    expect(agentController.getAllAgents()).toHaveLength(count)
+    expect(mocks.setPreference).toHaveBeenCalledWith('active_agents', expect.stringContaining('agent-1'))
   })
 })

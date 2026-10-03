@@ -23,7 +23,7 @@ import {
   WarningCircle
 } from '@phosphor-icons/react'
 import type { AgentRuntime, AgentFolder, LabelDefinition, LabelColorKey, ColumnKey, ColumnWidths, SortDirection } from '../types'
-import { formatBranchLabel, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
+import { formatBranchLabel, getDisplayedModel, getDisplayedVariant, isUrgent, labelSortKey, compareStatusPriority, ALL_COLUMNS } from '../types'
 import { isRecentlyAttached } from '../hooks/useAgentStore'
 import { UNRESOLVED_MODEL_LABEL } from '../hooks/placeholderLaunch'
 import { StatusBadge } from './StatusBadge'
@@ -33,6 +33,7 @@ import { TextInputModal } from './TextInputModal'
 import { Tooltip } from './Tooltip'
 import { PrTooltipContent } from './PrTooltip'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
+import type { FolderSnapshot } from '../../../shared/folders'
 
 /**
  * Return the agent's context-window fill fraction (0–1) or -1 when we don't
@@ -113,7 +114,6 @@ interface FleetTableProps {
 
 const SCROLL_STEP = 200
 
-// ── Folder spike: localStorage helpers ──────────────────────────────────────
 const SPIKE_FOLDERS_KEY = 'oco.spike.folders'
 const SPIKE_MEMBERSHIP_KEY = 'oco.spike.folderMembership'
 const SPIKE_EXPANDED_KEY = 'oco.spike.foldersExpanded'
@@ -144,19 +144,11 @@ function loadSpikeFolders(): AgentFolder[] {
   })
 }
 
-function saveSpikeFolders(folders: AgentFolder[]) {
-  writeJson(SPIKE_FOLDERS_KEY, folders)
-}
-
 function loadSpikeMembership(): Record<string, string> {
   return readJson(SPIKE_MEMBERSHIP_KEY, {} as Record<string, string>, (value) => {
     if (!value || typeof value !== 'object') return {}
     return value as Record<string, string>
   })
-}
-
-function saveSpikeMembership(map: Record<string, string>) {
-  writeJson(SPIKE_MEMBERSHIP_KEY, map)
 }
 
 function loadSpikeExpanded(): Set<string> {
@@ -298,11 +290,10 @@ export function FleetTable({
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
-  // ── Folder spike (client-side only, localStorage persistence) ─────────────
-  // Folder definitions and agent→folder membership live here for the
-  // prototype. Real persistence will move to the preferences table later.
-  const [folders, setFolders] = useState<AgentFolder[]>(() => loadSpikeFolders())
-  const [agentFolderMap, setAgentFolderMap] = useState<Record<string, string>>(() => loadSpikeMembership())
+  const [folderSnapshot, setFolderSnapshot] = useState<FolderSnapshot>({ folders: [], membership: {} })
+  const { folders, membership: agentFolderMap } = folderSnapshot
+  const [folderError, setFolderError] = useState<string | null>(null)
+  const [foldersReady, setFoldersReady] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => loadSpikeExpanded())
   const [rootOrder, setRootOrder] = useState<RootItemId[]>(() => loadSpikeRootOrder())
   const [folderRenameId, setFolderRenameId] = useState<string | null>(null)
@@ -312,55 +303,69 @@ export function FleetTable({
   const [dragItem, setDragItem] = useState<{ kind: RootItemKind; id: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
 
-  useEffect(() => { saveSpikeFolders(folders) }, [folders])
-  useEffect(() => { saveSpikeMembership(agentFolderMap) }, [agentFolderMap])
+  useEffect(() => {
+    let active = true
+    let changed = false
+    const unsubscribe = window.api.onFoldersChanged((snapshot) => {
+      changed = true
+      if (active) setFolderSnapshot(snapshot)
+    })
+    window.api.migrateFolders({ folders: loadSpikeFolders(), membership: loadSpikeMembership() })
+      .then((result) => {
+        if (!active) return
+        if (!result.ok || !result.data) throw new Error(result.error ?? 'Failed to load folders')
+        if (!changed) setFolderSnapshot(result.data)
+        setFoldersReady(true)
+      })
+      .catch((error) => { if (active) setFolderError(String(error)) })
+    return () => { active = false; unsubscribe() }
+  }, [])
   useEffect(() => { saveSpikeExpanded(expandedFolders) }, [expandedFolders])
   useEffect(() => { saveSpikeRootOrder(rootOrder) }, [rootOrder])
 
-  const createFolder = useCallback(() => {
-    const id = `folder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
-    const sortOrder = folders.length
-    setFolders((prev) => [...prev, { id, name: 'New Folder', sortOrder }])
-    setExpandedFolders((prev) => new Set(prev).add(id))
-    setFolderRenameId(id)
-    // Insert the new folder at the top of rootOrder so it's immediately visible
-    // (otherwise it appends to the bottom, possibly off-screen behind many agents).
-    setRootOrder((prev) => [folderItemId(id), ...prev.filter((existingId) => existingId !== folderItemId(id))])
-    // Scroll to the top so the user sees the new folder's rename input.
-    requestAnimationFrame(() => {
-      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-    })
-  }, [folders.length])
+  const createFolder = useCallback(async () => {
+    if (!foldersReady) return
+    try {
+      const result = await window.api.createFolder('New Folder')
+      if (!result.ok || !result.data) throw new Error(result.error ?? 'Failed to create folder')
+      const { id } = result.data
+      setExpandedFolders((prev) => new Set(prev).add(id))
+      setFolderRenameId(id)
+      // Insert the new folder at the top of rootOrder so it's immediately visible
+      // (otherwise it appends to the bottom, possibly off-screen behind many agents).
+      setRootOrder((prev) => [folderItemId(id), ...prev.filter((existingId) => existingId !== folderItemId(id))])
+      // Scroll to the top so the user sees the new folder's rename input.
+      requestAnimationFrame(() => {
+        scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+    } catch (error) { setFolderError(String(error)) }
+  }, [foldersReady])
 
-  const renameFolder = useCallback((id: string, name: string) => {
+  const renameFolder = useCallback(async (id: string, name: string) => {
     const trimmed = name.trim()
     if (!trimmed) return
-    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)))
+    try {
+      const result = await window.api.renameFolder(id, trimmed)
+      if (!result.ok) throw new Error(result.error)
+    } catch (error) { setFolderError(String(error)) }
   }, [])
 
-  const deleteFolder = useCallback((id: string) => {
-    setFolders((prev) => prev.filter((f) => f.id !== id))
-    setAgentFolderMap((prev) => {
-      const next = { ...prev }
-      for (const [agentId, folderId] of Object.entries(next)) {
-        if (folderId === id) delete next[agentId]
-      }
-      return next
-    })
-    setExpandedFolders((prev) => {
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
+  const deleteFolder = useCallback(async (id: string) => {
+    try {
+      const result = await window.api.deleteFolder(id)
+      if (!result.ok) throw new Error(result.error)
+      setExpandedFolders((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    } catch (error) { setFolderError(String(error)) }
   }, [])
 
   const moveAgentToFolder = useCallback((agentId: string, folderId: string | null) => {
-    setAgentFolderMap((prev) => {
-      const next = { ...prev }
-      if (folderId == null) delete next[agentId]
-      else next[agentId] = folderId
-      return next
-    })
+    window.api.setAgentFolder(agentId, folderId).then((result) => {
+      if (!result.ok) setFolderError(result.error ?? 'Failed to move agent')
+    }).catch((error) => setFolderError(String(error)))
     // When an agent is pulled out to the root, ensure it has a position in
     // rootOrder. When moved into a folder, drop it from rootOrder.
     setRootOrder((prev) => {
@@ -637,8 +642,8 @@ export function FleetTable({
           rightVal = (right.branchName || '').toLowerCase()
           break
         case 'model':
-          leftVal = (left.model || '').toLowerCase()
-          rightVal = (right.model || '').toLowerCase()
+          leftVal = getDisplayedModel(left).toLowerCase()
+          rightVal = getDisplayedModel(right).toLowerCase()
           break
         case 'lastMessage':
           leftVal = (left.lastMessage || '').toLowerCase()
@@ -842,7 +847,7 @@ export function FleetTable({
     )
   }
 
-  if (agents.length === 0 && folders.length === 0) {
+  if (agents.length === 0 && folders.length === 0 && !folderError) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-kumo-subtle py-16">
         <Robot size={48} weight="thin" className="mb-3 text-kumo-muted" />
@@ -854,6 +859,12 @@ export function FleetTable({
 
   return (
     <div className="flex-1 relative overflow-hidden flex flex-col" onClick={closeContextMenu}>
+      {folderError && (
+        <div role="alert" className="px-3 py-2 text-xs text-red-500 flex items-center justify-between">
+          <span>{folderError}</span>
+          <button type="button" onClick={() => setFolderError(null)}>Dismiss</button>
+        </div>
+      )}
       {/* Floating drag ghost: follows the cursor while a drag is active. */}
       {dragItem && ghostPos && (
         <div
@@ -1358,6 +1369,8 @@ function AgentRow({
   const urgent = isUrgent(agent)
   const isStale = !!agent.blockedSince
   const flashing = isRecentlyAttached(agent.id)
+  const displayedModel = getDisplayedModel(agent)
+  const displayedVariant = getDisplayedVariant(agent)
   // A placeholder row has no session behind it yet. Its actions are withheld by
   // the caller (see renderAgentRowFn); this flag only drives presentation.
   const isPending = agent.pending === true
@@ -1573,22 +1586,29 @@ function AgentRow({
       )}
       {show('model') && (
         <td className="px-3 py-2 overflow-hidden">
-          {agent.model && (agent.model === UNRESOLVED_MODEL_LABEL ? (
-            // There's nothing to switch to until the model is known — on a
-            // placeholder because no session exists, on a real agent until the
-            // first getConfig lands.
-            <span className="font-mono text-[10px] px-1.5 py-0.5 text-kumo-muted max-w-full truncate block">
-              {agent.model}
-            </span>
-          ) : (
-            <button
-              onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
-              className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
-              title={agent.model}
-            >
-              {agent.model}
-            </button>
-          ))}
+          {displayedModel && (
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
+              {displayedModel === UNRESOLVED_MODEL_LABEL ? (
+                // There's nothing to switch to until the model is known — on a
+                // placeholder because no session exists, on a real agent until the
+                // first getConfig lands.
+                <span className="font-mono text-[10px] px-1.5 py-0.5 text-kumo-muted max-w-full truncate block">
+                  {displayedModel}
+                </span>
+              ) : (
+                <button
+                  onClick={(event) => { event.stopPropagation(); onChangeModel?.() }}
+                  className="font-mono text-[10px] px-1.5 py-0.5 bg-kumo-fill rounded text-kumo-subtle hover:bg-kumo-fill-hover hover:text-kumo-default transition-colors max-w-full truncate block cursor-pointer"
+                  title={displayedModel}
+                >
+                  {displayedModel}
+                </button>
+              )}
+              <span className="max-w-full truncate px-1.5 text-[11px] leading-4 text-kumo-subtle" title={displayedVariant}>
+                {displayedVariant}
+              </span>
+            </div>
+          )}
         </td>
       )}
       {show('context') && (
@@ -1627,6 +1647,7 @@ function AgentRow({
               <button
                 onClick={(event) => { event.stopPropagation(); window.api?.openExternal(agent.prUrl!) }}
                 className="w-6 h-6 flex items-center justify-center rounded text-kumo-brand hover:bg-kumo-brand/20 transition-colors cursor-pointer"
+                aria-label="Open PR link"
               >
                 <GitPullRequest size={13} weight="bold" />
               </button>

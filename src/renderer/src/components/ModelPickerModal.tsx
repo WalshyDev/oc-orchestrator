@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Check, CircleNotch, MagnifyingGlass, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { formatVariantLabel } from '../hooks/useModelOptions'
+import { recordRecentModel, useRecentModels } from '../hooks/useRecentModels'
 
 interface ProviderModel {
   id: string
@@ -12,6 +14,7 @@ interface ProviderGroup {
   id: string
   name: string
   models: ProviderModel[]
+  recent?: boolean
 }
 
 interface ModelPickerModalProps {
@@ -22,16 +25,13 @@ interface ModelPickerModalProps {
   onSelect: (modelPath: string, variant?: string) => void
 }
 
-function formatVariantLabel(key: string): string {
-  return key.charAt(0).toUpperCase() + key.slice(1)
-}
-
 export function ModelPickerModal({ agentId, currentModel, currentVariant, onClose, onSelect }: ModelPickerModalProps) {
   const [providers, setProviders] = useState<ProviderGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selecting, setSelecting] = useState<string | null>(null)
   const [expandedModel, setExpandedModel] = useState<string | null>(null)
+  const recentModels = useRecentModels()
 
   useEffect(() => {
     let cancelled = false
@@ -62,7 +62,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
               models: Object.values(provider.models).map((model) => ({
                 id: model.id,
                 name: model.name,
-                providerID: model.providerID,
+                providerID: provider.id,
                 variants: model.variants
               }))
             }))
@@ -86,6 +86,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
     const modelPath = `${providerID}/${modelID}`
     const selectKey = variant ? `${modelPath}:${variant}` : modelPath
     setSelecting(selectKey)
+    recordRecentModel(modelPath)
     onSelect(modelPath, variant)
   }
 
@@ -102,8 +103,8 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
     }
   }
 
-  const query = search.toLowerCase()
-  const filteredProviders = providers
+  const query = search.trim().toLowerCase()
+  const matchingProviders = providers
     .map((provider) => ({
       ...provider,
       models: provider.models.filter((model) =>
@@ -113,6 +114,22 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
       )
     }))
     .filter((provider) => provider.models.length > 0)
+  const recentProviderModels = recentModels.flatMap((value) => {
+    for (const provider of matchingProviders) {
+      const model = provider.models.find((model) => `${provider.id}/${model.id}` === value)
+      if (model) return [model]
+    }
+    return []
+  })
+  const filteredProviders = matchingProviders.map((provider) => ({
+    ...provider,
+    models: provider.models.filter((model) =>
+      !recentProviderModels.some((recent) => recent.providerID === provider.id && recent.id === model.id)
+    )
+  })).filter((provider) => provider.models.length > 0)
+  const displayedProviders: ProviderGroup[] = recentProviderModels.length > 0
+    ? [{ id: 'recent', name: 'Recently used', models: recentProviderModels, recent: true }, ...filteredProviders]
+    : filteredProviders
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -163,28 +180,29 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
               <CircleNotch size={16} className="animate-spin" />
               Loading providers...
             </div>
-          ) : filteredProviders.length === 0 ? (
+          ) : displayedProviders.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-kumo-subtle text-sm">
               {search ? 'No models match your search' : 'No providers available'}
             </div>
           ) : (
-            filteredProviders.map((provider) => (
-              <div key={provider.id} className="mb-3">
+            displayedProviders.map((provider) => (
+              <div key={`${provider.recent ? 'recent' : 'provider'}:${provider.id}`} className="mb-3">
                 <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-kumo-subtle">
                   {provider.name}
                 </div>
                 <div className="flex flex-col gap-0.5">
                   {provider.models.map((model) => {
-                    const modelPath = `${provider.id}/${model.id}`
+                    const providerID = model.providerID
+                    const modelPath = `${providerID}/${model.id}`
                     const isCurrent = currentModel === modelPath
                     const variantKeys = model.variants ? Object.keys(model.variants) : []
                     const hasVariants = variantKeys.length > 0
                     const isExpanded = expandedModel === modelPath
 
                     return (
-                      <div key={model.id}>
+                      <div key={modelPath}>
                         <button
-                          onClick={() => handleModelClick(provider.id, model.id, model.variants)}
+                          onClick={() => handleModelClick(providerID, model.id, model.variants)}
                           disabled={selecting === modelPath}
                           className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left text-sm transition-colors ${
                             isCurrent && !currentVariant
@@ -202,7 +220,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
                             )}
                             <div className="flex flex-col gap-0.5 min-w-0">
                               <span className="font-medium truncate">{model.name}</span>
-                              <span className="font-mono text-[10px] text-kumo-subtle truncate">{model.id}</span>
+                              <span className="font-mono text-[10px] text-kumo-subtle truncate">{modelPath}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 ml-2">
@@ -219,7 +237,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
                           <div className="ml-5 mt-0.5 flex flex-col gap-0.5">
                             {/* Default (no variant) option */}
                             <button
-                              onClick={() => void handleSelect(provider.id, model.id)}
+                              onClick={() => void handleSelect(providerID, model.id)}
                               disabled={selecting === modelPath}
                               className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-left text-sm transition-colors ${
                                 isCurrent && !currentVariant
@@ -239,7 +257,7 @@ export function ModelPickerModal({ agentId, currentModel, currentVariant, onClos
                               return (
                                 <button
                                   key={variantKey}
-                                  onClick={() => void handleSelect(provider.id, model.id, variantKey)}
+                                  onClick={() => void handleSelect(providerID, model.id, variantKey)}
                                   disabled={selecting === selectKey}
                                   className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-left text-sm transition-colors ${
                                     isCurrentVariant

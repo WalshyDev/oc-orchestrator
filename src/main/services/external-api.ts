@@ -10,6 +10,7 @@ import { database } from './database'
 import { leaseRegistry } from './lease-registry'
 import { notificationService } from './notification-service'
 import { getAppVersion } from '../version'
+import { folderManager, FolderError } from './folder-manager'
 
 /**
  * Localhost HTTP API for external tools (e.g. voice-prompt) to launch and
@@ -36,6 +37,7 @@ interface LaunchBody {
   model?: string
   title?: string
   resume?: string
+  folderId?: string | null
   [k: string]: unknown
 }
 
@@ -43,6 +45,12 @@ interface PromptBody {
   text?: string
   model?: string
   [k: string]: unknown
+}
+
+interface SessionUpdateBody {
+  prUrl?: unknown
+  addLabelId?: unknown
+  clearLabels?: unknown
 }
 
 const DISCOVERY_FILENAME = 'api.json'
@@ -215,6 +223,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   try {
     await routeRequest(req, res)
   } catch (error) {
+    if (error instanceof FolderError) {
+      return sendJson(res, error.status, { error: error.code, message: error.message })
+    }
+    if (error instanceof SyntaxError) {
+      return sendJson(res, 400, { error: 'bad_request', message: 'Invalid JSON body' })
+    }
     console.error('[ExternalAPI] Unhandled error:', error)
     if (!res.headersSent) sendJson(res, 500, { error: 'internal_error', message: String(error) })
   }
@@ -234,6 +248,53 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse): Promise<
   // the discovery-file token.
   if (!isAuthorized(req)) return sendJson(res, 401, { error: 'unauthorized' })
 
+  if (url === '/folders') {
+    if (method === 'GET') return sendJson(res, 200, { folders: folderManager.getSnapshot().folders })
+    if (method === 'POST') {
+      const body = await readJsonBody<{ name?: unknown }>(req)
+      return sendJson(res, 201, folderManager.create(body.name))
+    }
+  }
+  const folderMatch = url.match(/^\/folders\/([^/]+)$/)
+  if (folderMatch) {
+    const folderId = folderMatch[1]
+    if (method === 'PATCH') {
+      const body = await readJsonBody<{ name?: unknown }>(req)
+      return sendJson(res, 200, folderManager.rename(folderId, body.name))
+    }
+    if (method === 'DELETE') {
+      folderManager.delete(folderId)
+      return sendJson(res, 200, { ok: true })
+    }
+  }
+
+  if (method === 'GET' && url === '/sessions') {
+    return sendJson(res, 200, { sessions: agentController.getAllAgents().map((agent) => ({
+      agentId: agent.id,
+      sessionId: agent.sessionId,
+      directory: agent.directory,
+      title: agent.title,
+      folderId: folderManager.getAgentFolder(agent.id)?.id ?? null
+    })) })
+  }
+
+  const sessionFolderMatch = url.match(/^\/sessions\/([^/]+)\/folder$/)
+  if (sessionFolderMatch && ['GET', 'PUT', 'DELETE'].includes(method)) {
+    const sessionId = sessionFolderMatch[1]
+    const body = method === 'PUT' ? await readJsonBody<{ folderId?: unknown }>(req) : undefined
+    const agents = findAgentsBySession(sessionId)
+    if (agents.length === 0) return sendJson(res, 404, { error: 'session_not_found' })
+    if (agents.length !== 1) return sendJson(res, 409, { error: 'session_ambiguous' })
+    const [agent] = agents
+    if (method === 'PUT') {
+      folderManager.setAgentFolder(agent.id, body?.folderId)
+    } else if (method === 'DELETE') {
+      folderManager.setAgentFolder(agent.id, null)
+    }
+    const folder = folderManager.getAgentFolder(agent.id)
+    return sendJson(res, 200, { sessionId, directory: agent.directory, folderId: folder?.id ?? null, folder })
+  }
+
   if (method === 'POST' && url === '/sessions') {
     const body = await readJsonBody<LaunchBody>(req)
     return handleLaunch(req, res, body)
@@ -247,6 +308,18 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse): Promise<
       return handleSessionPrompt(res, sessionId, body)
     }
     return handleSessionAbort(res, sessionId)
+  }
+
+  const sessionUpdateMatch = url.match(/^\/sessions\/([^/]+)$/)
+  if (method === 'PATCH' && sessionUpdateMatch) {
+    let body: SessionUpdateBody | null
+    try {
+      body = await readJsonBody<SessionUpdateBody | null>(req)
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      return sendJson(res, 400, { error: 'bad_request', message: 'Invalid JSON' })
+    }
+    return handleSessionUpdate(res, sessionUpdateMatch[1], body)
   }
 
   const leaseMatch = url.match(/^\/leases\/([^/]+)(?:\/(refresh))?$/)
@@ -280,6 +353,7 @@ async function handleLaunch(
 ): Promise<void> {
   const dir = (body.dir ?? '').trim()
   if (!dir) return sendJson(res, 400, { error: 'bad_request', message: 'dir is required' })
+  if (body.folderId !== undefined && body.folderId !== null) folderManager.requireFolder(body.folderId)
 
   // resume + prompt would be ambiguous: do we resume the conversation or
   // send a fresh first message?  Reject explicitly so callers don't think
@@ -313,6 +387,12 @@ async function handleLaunch(
 
   const source = readSourceHeader(req)
 
+  const tracked = body.resume ? findAgentsBySession(body.resume) : []
+  if (tracked.length > 1) return sendJson(res, 409, { error: 'session_ambiguous' })
+  const [existing] = tracked
+  if (existing && existing.directory !== canonicalRoot) {
+    return sendJson(res, 400, { error: 'session_directory_mismatch' })
+  }
   const handle = body.resume
     ? await agentController.resumeAgent({
         directory: canonicalRoot,
@@ -332,6 +412,10 @@ async function handleLaunch(
   }
 
   const { id: agentId, sessionId, projectName } = handle
+  if (body.folderId !== undefined) {
+    const folderStillExists = folderManager.getSnapshot().folders.some((folder) => folder.id === body.folderId)
+    folderManager.setAgentFolder(agentId, folderStillExists ? body.folderId : null)
+  }
   const lease = leaseRegistry.acquire(canonicalRoot, sessionId, source)
   notificationService.notifyExternalAttached({ source, projectName, sessionId, agentId })
 
@@ -340,6 +424,7 @@ async function handleLaunch(
     sessionId,
     runtimeUrl: runtime.serverUrl,
     directory: canonicalRoot,
+    folderId: folderManager.getAgentFolder(agentId)?.id ?? null,
     leaseId: lease.id,
     leaseExpiresAt: lease.expiresAt
   })
@@ -372,6 +457,54 @@ async function handleSessionAbort(res: ServerResponse, sessionId: string): Promi
   sendJson(res, 200, { ok: true })
 }
 
+function handleSessionUpdate(res: ServerResponse, sessionId: string, body: SessionUpdateBody | null): void {
+  const agents = findAgentsBySession(sessionId)
+  if (agents.length === 0) return sendJson(res, 404, { error: 'session_not_found' })
+
+  const addLabelId = body?.addLabelId
+  if (addLabelId !== undefined && addLabelId !== 'done') {
+    return sendJson(res, 400, { error: 'bad_request', message: 'addLabelId must be done' })
+  }
+  const clearLabels = body?.clearLabels
+  if (clearLabels !== undefined && clearLabels !== true) {
+    return sendJson(res, 400, { error: 'bad_request', message: 'clearLabels must be true' })
+  }
+  const updatesLabels = addLabelId !== undefined || clearLabels === true
+  const prUrl = parseHttpUrl(body?.prUrl)
+  if ((body?.prUrl !== undefined || !updatesLabels) && !prUrl) {
+    return sendJson(res, 400, { error: 'bad_request', message: 'prUrl must be an HTTP or HTTPS URL' })
+  }
+
+  if (updatesLabels && agents.length !== 1) {
+    return sendJson(res, 409, { error: 'session_ambiguous' })
+  }
+
+  if (prUrl) {
+    for (const agent of agents) agentController.setAgentPrUrl(agent.id, prUrl)
+  }
+  if (!updatesLabels) return sendJson(res, 200, { ok: true, prUrl })
+
+  const agent = agents[0]
+  const labelIds = agent.labelIds ?? (agent.labelId ? [agent.labelId] : [])
+  const updatedLabelIds = clearLabels === true ? [] : [...labelIds]
+  if (addLabelId === 'done' && !updatedLabelIds.includes('done')) updatedLabelIds.push('done')
+  if (labelIds.length !== updatedLabelIds.length || labelIds.some((id, index) => id !== updatedLabelIds[index])) {
+    agentController.updateAgentMeta(agent.id, { labelIds: updatedLabelIds })
+  }
+  sendJson(res, 200, { ok: true, labelIds: updatedLabelIds })
+}
+
+function parseHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const candidate = value.trim()
+  try {
+    const url = new URL(candidate)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? candidate : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function handleLeaseRefresh(res: ServerResponse, leaseId: string): void {
   const lease = leaseRegistry.get(leaseId)
   if (!lease) return sendJson(res, 404, { error: 'lease_not_found_or_expired' })
@@ -397,8 +530,12 @@ function handleLeaseRelease(res: ServerResponse, leaseId: string): void {
   sendJson(res, 200, { ok: removed })
 }
 
-function findAgentBySession(sessionId: string): { id: string } | undefined {
+function findAgentBySession(sessionId: string): ReturnType<typeof agentController.getAgent> {
   return agentController.getAllAgents().find((handle) => handle.sessionId === sessionId)
+}
+
+function findAgentsBySession(sessionId: string) {
+  return agentController.getAllAgents().filter((handle) => handle.sessionId === sessionId)
 }
 
 function readSourceHeader(req: IncomingMessage): string {
@@ -418,7 +555,11 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
     chunks.push(buf)
   }
   if (total === 0) return {} as T
-  return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as T
+  const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new FolderError(400, 'bad_request', 'Request body must be a JSON object')
+  }
+  return body as T
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
