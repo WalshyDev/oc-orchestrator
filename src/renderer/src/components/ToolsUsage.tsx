@@ -4,6 +4,7 @@ import { SubagentProgress } from './SubagentProgress'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
 import { formatResponseMetadata } from '../lib/transcript-metadata'
 import type { OutputVerbosity } from '../data/settings'
+import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 
 export interface ToolCall {
   id: string
@@ -54,11 +55,19 @@ function formatRelativeTime(timestamp: number): string {
 }
 
 export function shouldAutoExpandTool(tool: ToolCall, verbosity: OutputVerbosity, manuallyCollapsed: boolean): boolean {
+  if (verbosity === 'recent') return false
   return !manuallyCollapsed && (
     (verbosity !== 'none' && tool.name !== 'task')
     || verbosity === 'all'
     || tool.state === 'running'
   )
+}
+
+function toolActivityAt(tool: ToolCall): number {
+  if (tool.name === 'task' && tool.state === 'running') {
+    return Math.max(tool.timestamp, tool.childActivityAt ?? tool.timestamp)
+  }
+  return tool.timestamp
 }
 
 export function CollapsibleSubagentProgress({
@@ -69,13 +78,13 @@ export function CollapsibleSubagentProgress({
   verbosity: OutputVerbosity
 }) {
   const [expanded, setExpanded] = useState(
-    verbosity === 'all' || (verbosity === 'none' && tool.state === 'running')
+    verbosity === 'all' || verbosity === 'recent' || (verbosity === 'none' && tool.state === 'running')
   )
   const previousVerbosityRef = useRef(verbosity)
 
   useEffect(() => {
     if (previousVerbosityRef.current !== verbosity) {
-      setExpanded(verbosity === 'all')
+      setExpanded(verbosity === 'all' || verbosity === 'recent')
       previousVerbosityRef.current = verbosity
     } else if (verbosity === 'none' && tool.state === 'running') {
       setExpanded(true)
@@ -107,6 +116,10 @@ export function CollapsibleSubagentProgress({
 }
 
 export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }: ToolsUsageProps) {
+  const latestToolId = tools.reduce<ToolCall | undefined>((latest, tool) =>
+    !latest || toolActivityAt(tool) >= toolActivityAt(latest) ? tool : latest, undefined
+  )?.id
+  const recentExpansion = useMostRecentExpansion(verbosity === 'recent', latestToolId)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(
     tools.filter((tool) => shouldAutoExpandTool(tool, verbosity, false)).map((tool) => tool.id)
   ))
@@ -145,6 +158,10 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
   }, [tools, filterQuery])
 
   const toggleExpanded = (toolId: string) => {
+    if (verbosity === 'recent') {
+      recentExpansion.toggle(toolId)
+      return
+    }
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(toolId)) {
@@ -206,7 +223,9 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
       {/* Tool call timeline */}
       <div className="flex flex-col gap-1">
         {sorted.map((tool) => {
-          const isExpanded = expandedIds.has(tool.id)
+          const isExpanded = verbosity === 'recent'
+            ? recentExpansion.expandedId === tool.id
+            : expandedIds.has(tool.id)
           const metadata = formatResponseMetadata(tool)
 
           return (
@@ -216,6 +235,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
             >
               <button
                 onClick={() => toggleExpanded(tool.id)}
+                aria-expanded={isExpanded}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 cursor-pointer"
               >
                 <span className="shrink-0 text-kumo-subtle">

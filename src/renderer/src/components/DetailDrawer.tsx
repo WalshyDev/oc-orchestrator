@@ -50,6 +50,7 @@ import {
 } from '../data/agentSettings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
+import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
@@ -318,6 +319,11 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [outputVerbosity, setOutputVerbosity] = useState<OutputVerbosity>(() =>
     loadAgentOutputVerbosity(agent.sessionId ?? agent.id) ?? loadSettings().outputVerbosity
   )
+  const latestAgentMessageId = messages.reduce<string | undefined>((latestId, message) => {
+    if (message.role === 'assistant' || message.role === 'tool-group' || message.role === 'tool') return message.id
+    return latestId
+  }, undefined)
+  const recentExpansion = useMostRecentExpansion(outputVerbosity === 'recent', latestAgentMessageId)
   const [autoRecoverSetting, setAutoRecoverSetting] = useState<AgentAutoRecoverSetting>(() =>
     loadAgentAutoRecoverSetting(agent.id)
   )
@@ -943,6 +949,8 @@ export const DetailDrawer = memo(function DetailDrawer({
                         key={message.id}
                         message={message}
                         verbosity={outputVerbosity}
+                        recentExpanded={recentExpansion.expandedId === message.id}
+                        onToggleRecent={recentExpansion.toggle}
                         registerRef={registerMessageRef}
                       />
                     ))}
@@ -1766,6 +1774,7 @@ function Tab({
 
 const outputVerbosityDescriptions: Record<OutputVerbosity, string> = {
   none: 'Keep tool and event details collapsed.',
+  recent: 'Expand only the latest agent message, tool group, or event. User messages do not change the selection.',
   some: 'Expand parent tools and events, but collapse subagent transcripts.',
   all: 'Expand parent tools, events, and subagent transcripts.'
 }
@@ -1940,10 +1949,14 @@ type MessageRefCallback = (id: string, node: HTMLElement | null) => void
 export const MessageBubble = memo(function MessageBubble({
   message,
   verbosity = 'none',
+  recentExpanded = false,
+  onToggleRecent,
   registerRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
+  recentExpanded?: boolean
+  onToggleRecent?: (id: string) => void
   registerRef?: MessageRefCallback
 }) {
   const rootRef = useCallback((node: HTMLElement | null) => {
@@ -1951,7 +1964,7 @@ export const MessageBubble = memo(function MessageBubble({
   }, [message.id, registerRef])
 
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbosity={verbosity} rootRef={rootRef} />
+    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} rootRef={rootRef} />
   }
 
   if (message.role === 'compaction') {
@@ -1975,11 +1988,21 @@ export const MessageBubble = memo(function MessageBubble({
     return (
       <div ref={rootRef} className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
         <div className="flex items-center gap-1.5 mb-0.5">
+          {verbosity === 'recent' && (
+            <button
+              type="button"
+              aria-label={recentExpanded ? 'Collapse tool output' : 'Expand tool output'}
+              aria-expanded={recentExpanded}
+              onClick={() => onToggleRecent?.(message.id)}
+            >
+              {recentExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+            </button>
+          )}
           <Wrench size={11} className="shrink-0" />
           <span className="font-semibold text-kumo-default">{toolName}</span>
           <CircleNotch size={11} className={toolIconStyle(message.toolState)} />
         </div>
-        {toolOutput && (
+        {toolOutput && (verbosity !== 'recent' || recentExpanded) && (
           <div className="whitespace-pre-wrap break-all mt-1">{toolOutput}</div>
         )}
       </div>
@@ -1987,6 +2010,7 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   const isUser = message.role === 'user'
+  const expanded = isUser || verbosity !== 'recent' || recentExpanded
   const [copied, setCopied] = useState(false)
 
   // Clear the "copied" indicator after a short delay, cancelling the
@@ -2020,6 +2044,17 @@ export const MessageBubble = memo(function MessageBubble({
     >
       <div className="mb-1 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle">
+          {!isUser && verbosity === 'recent' && (
+            <button
+              type="button"
+              aria-label={expanded ? 'Collapse agent message' : 'Expand agent message'}
+              aria-expanded={expanded}
+              onClick={() => onToggleRecent?.(message.id)}
+              className="text-kumo-subtle hover:text-kumo-default"
+            >
+              {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+            </button>
+          )}
           <span>{isUser ? 'You' : 'Agent'}</span>
           {!isUser && <ResponseMetadata response={message} />}
         </div>
@@ -2042,7 +2077,7 @@ export const MessageBubble = memo(function MessageBubble({
           </span>
         </div>
       </div>
-      {message.images && message.images.length > 0 && (
+      {expanded && message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {message.images.map((img, index) => (
             <div key={index} className="relative group">
@@ -2061,7 +2096,8 @@ export const MessageBubble = memo(function MessageBubble({
           ))}
         </div>
       )}
-      {message.content && (
+      {!expanded && <div className="truncate text-kumo-subtle">{message.content}</div>}
+      {expanded && message.content && (
         isUser
           ? <div className="whitespace-pre-wrap">{message.content}</div>
           : <Markdown>{message.content}</Markdown>
@@ -2078,6 +2114,8 @@ export const MessageBubble = memo(function MessageBubble({
   prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
+  prev.recentExpanded === next.recentExpanded &&
+  prev.onToggleRecent === next.onToggleRecent &&
   prev.registerRef === next.registerRef
 )
 
@@ -2153,10 +2191,14 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
 export const ToolGroupBubble = memo(function ToolGroupBubble({
   message,
   verbosity = 'none',
+  recentExpanded = false,
+  onToggleRecent,
   rootRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
+  recentExpanded?: boolean
+  onToggleRecent?: (id: string) => void
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
@@ -2181,8 +2223,10 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   // We don't collapse it again when the tool finishes — the user may want to
   // scroll back through the progress.
   useEffect(() => {
-    if (hasRunningTool) setExpanded(true)
-  }, [hasRunningTool])
+    if (hasRunningTool && verbosity !== 'recent') setExpanded(true)
+  }, [hasRunningTool, verbosity])
+
+  const isExpanded = verbosity === 'recent' ? recentExpanded : expanded
 
   return (
     <div ref={rootRef} className="max-w-[95%] self-start">
@@ -2192,18 +2236,22 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
         </div>
       )}
       <button
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={() => {
+          if (verbosity === 'recent') onToggleRecent?.(message.id)
+          else setExpanded((prev) => !prev)
+        }}
+        aria-expanded={isExpanded}
         className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
       >
         <span className="text-kumo-subtle">
-          {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+          {isExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
         </span>
         <Wrench size={13} className="text-kumo-subtle" />
         <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
         {toolModels && <span className="font-mono text-[10px] text-kumo-subtle">{toolModels}</span>}
       </button>
 
-      {expanded && (
+      {isExpanded && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
           {toolCalls.map((tool) => (
             <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
@@ -2250,7 +2298,9 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.providerID === next.message.providerID &&
   prev.message.variant === next.message.variant &&
   prev.message.toolCalls === next.message.toolCalls &&
-  prev.verbosity === next.verbosity
+  prev.verbosity === next.verbosity &&
+  prev.recentExpanded === next.recentExpanded &&
+  prev.onToggleRecent === next.onToggleRecent
 )
 
 /**

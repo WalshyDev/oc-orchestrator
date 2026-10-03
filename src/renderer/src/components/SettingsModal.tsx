@@ -349,7 +349,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   menuClassName={selectMenuClasses}
                 />
                 <p className="text-[11px] text-kumo-subtle">
-                  None keeps details collapsed. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
+                  None keeps details collapsed. Most recent opens only the latest agent output. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
                 </p>
               </div>
 
