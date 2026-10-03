@@ -19,9 +19,30 @@ export interface ProviderData {
       id: string
       name: string
       limit?: { context?: number; input?: number; output?: number }
+      options?: Record<string, unknown>
       variants?: Record<string, Record<string, unknown>>
     }>
   }>
+}
+
+type ProviderModel = ProviderData['providers'][number]['models'][string]
+
+export function resolveEffectiveVariant(
+  messageVariant: string | undefined,
+  configuredVariant: string | undefined,
+  model: ProviderModel | undefined
+): string {
+  if (messageVariant) return messageVariant
+  if (configuredVariant) return configuredVariant
+
+  const reasoningEffort = model?.options?.reasoningEffort
+  if (typeof reasoningEffort !== 'string') return 'none'
+
+  for (const [variant, options] of Object.entries(model?.variants ?? {})) {
+    if (options.reasoningEffort === reasoningEffort) return variant
+  }
+
+  return 'none'
 }
 
 export function formatVariantLabel(key: string): string {
@@ -31,13 +52,19 @@ export function formatVariantLabel(key: string): string {
 export function getVariantOptionsForModel(
   modelValue: string,
   providers: ProviderData | null,
-  configModel: string | undefined
+  configModel: string | undefined,
+  selectedVariant?: string
 ): ModelVariantOption[] {
   const options: ModelVariantOption[] = [{ value: 'auto', label: 'Provider Default' }]
-  if (!providers) return options
+  const includeSelectedVariant = (items: ModelVariantOption[]): ModelVariantOption[] => {
+    if (!selectedVariant || items.some((option) => option.value === selectedVariant)) return items
+    return [...items, { value: selectedVariant, label: formatVariantLabel(selectedVariant) }]
+  }
+
+  if (!providers) return includeSelectedVariant(options)
 
   const resolvedModel = modelValue === 'auto' ? configModel : modelValue
-  if (!resolvedModel) return options
+  if (!resolvedModel) return includeSelectedVariant(options)
 
   const slashIndex = resolvedModel.indexOf('/')
   const providerId = slashIndex > 0 ? resolvedModel.slice(0, slashIndex) : undefined
@@ -50,17 +77,17 @@ export function getVariantOptionsForModel(
       if (model.id !== modelId && model.id !== resolvedModel) continue
 
       const variantKeys = model.variants ? Object.keys(model.variants) : []
-      return [
+      return includeSelectedVariant([
         ...options,
         ...variantKeys.map((variantKey) => ({
           value: variantKey,
           label: formatVariantLabel(variantKey),
         })),
-      ]
+      ])
     }
   }
 
-  return options
+  return includeSelectedVariant(options)
 }
 
 /**
@@ -209,7 +236,11 @@ function scheduleProviderRetry(): void {
   retryTimer = setTimeout(() => {
     retryTimer = null
     retryDelayMs = Math.min(retryDelayMs * 2, 5000)
-    void ensureProvidersLoaded()
+    void ensureProvidersLoaded().then(({ providerData }) => {
+      if (providerData) {
+        for (const listener of configChangeObservers) listener()
+      }
+    })
   }, retryDelayMs)
 }
 
@@ -270,7 +301,22 @@ async function fetchConfigModel(): Promise<string | undefined> {
   }
 }
 
-export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
+export async function ensureProvidersLoaded(directory?: string): Promise<ProviderFetchResult> {
+  if (directory) {
+    const [providersResult, configResult] = await Promise.all([
+      window.api.listAllProviders(directory),
+      window.api.getSystemConfig(directory),
+    ])
+    return {
+      providerData: providersResult.ok && providersResult.data
+        ? providersResult.data as ProviderData
+        : null,
+      configModel: configResult.ok && configResult.data
+        ? (configResult.data as { model?: string }).model
+        : undefined,
+    }
+  }
+
   const [providerData, configModel] = await Promise.all([
     fetchProviderData(),
     fetchConfigModel(),
@@ -279,7 +325,7 @@ export async function ensureProvidersLoaded(): Promise<ProviderFetchResult> {
   return { providerData, configModel }
 }
 
-export function useModelOptions(agentId?: string): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
+export function useModelOptions(agentId?: string, directory?: string): { options: ModelOption[]; loading: boolean; providerData: ProviderData | null; configModel: string | undefined } {
   const [options, setOptions] = useState<ModelOption[]>(STATIC_MODEL_OPTIONS)
   const [providerData, setProviderData] = useState<ProviderData | null>(null)
   const [configModel, setConfigModel] = useState<string | undefined>(undefined)
@@ -291,6 +337,9 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
 
     const load = (): void => {
       const seq = ++requestSeq
+      setLoading(true)
+      setProviderData(null)
+      setConfigModel(undefined)
       const fetchResult = agentId
         ? Promise.all([window.api.getProviders(agentId), window.api.getConfig(agentId)]).then(([providersResult, configResult]) => ({
             providerData: providersResult.ok && providersResult.data
@@ -300,7 +349,7 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
               ? (configResult.data as { model?: string }).model
               : undefined
           }))
-        : ensureProvidersLoaded()
+        : ensureProvidersLoaded(directory)
 
       void fetchResult.then(({ providerData, configModel }) => {
         if (cancelled || seq !== requestSeq) return
@@ -319,17 +368,22 @@ export function useModelOptions(agentId?: string): { options: ModelOption[]; loa
         setProviderData(providerData)
         setConfigModel(configModel)
         setLoading(false)
+      }).catch((error) => {
+        if (cancelled || seq !== requestSeq) return
+        console.warn('[useModelOptions] fetch failed', error)
+        setOptions([...STATIC_MODEL_OPTIONS])
+        setLoading(false)
       })
     }
 
     load()
-    const unsubscribe = agentId ? () => {} : subscribeToConfigChanges(load)
+    const unsubscribe = subscribeToConfigChanges(load)
 
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [agentId])
+  }, [agentId, directory])
 
   return { options, loading, providerData, configModel }
 }

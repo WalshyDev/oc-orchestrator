@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
+import { buildLaunchPrompt, parseLaunchPrUrl } from '../lib/launch-pr-input'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { LabelDefinition, LabelColorKey } from '../types'
@@ -93,7 +95,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[], prUrl?: string) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -107,10 +109,12 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [activeTab, setActiveTab] = useState<ModalTab>('new')
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [prUrlInput, setPrUrlInput] = useState('')
+  const prUrl = parseLaunchPrUrl(prUrlInput)
+  const prUrlError = prUrlInput.trim() && !prUrl ? 'Enter an HTTP or HTTPS URL.' : null
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
-  const { options: modelOptions, providerData, configModel } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
@@ -122,6 +126,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
+  const [validatedDirectory, setValidatedDirectory] = useState('')
+  const modelDirectory = validatedDirectory === directory.trim() ? validatedDirectory : undefined
+  const { options: modelOptions, loading: modelsLoading, providerData, configModel } = useModelOptions(undefined, modelDirectory)
   const [worktreeRoot, setWorktreeRoot] = useState('')
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [projectsReady, setProjectsReady] = useState(false)
@@ -154,13 +161,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const trimmedPrompt = prompt.trim().toLowerCase()
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(model, providerData, configModel),
-    [model, providerData, configModel]
+    () => getVariantOptionsForModel(model, providerData, configModel, modelVariant),
+    [model, modelVariant, providerData, configModel]
   )
 
-  const selectedEffort = effortOptions.some((option) => option.value === modelVariant)
-    ? modelVariant
-    : 'auto'
+  const selectedEffort = modelVariant
 
   // Only suggest commands while the user is still typing a single-token command
   // (no space or newline yet). Once they add a space, they've committed to that
@@ -336,6 +341,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    setValidatedDirectory('')
     if (!directory.trim()) { setDirError(null); setValidating(false); return }
     const currentDir = directory.trim()
     setValidating(true)
@@ -343,21 +350,21 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       if (onValidateDirectory) {
         try {
           const isValid = await onValidateDirectory(currentDir)
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError(isValid ? null : 'This directory is not a valid git repository.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError(isValid ? null : 'This directory is not a valid git repository.')
+          setValidatedDirectory(isValid ? currentDir : '')
+          setValidating(false)
         } catch {
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError('Could not validate directory.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError('Could not validate directory.')
+          setValidating(false)
         }
       } else {
+        setValidatedDirectory(currentDir)
         setValidating(false)
       }
     }, 500)
-    return () => clearTimeout(timer)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [directory, onValidateDirectory])
 
   // Load per-project settings when directory changes
@@ -470,14 +477,17 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
   }
 
+  const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
+    || (activeTab === 'import' && !selectedSession)
+    || (activeTab === 'new' && !!prUrlError)
+
   /**
-   * Closes the modal as soon as the launch is handed off. The launch itself
+    * Closes the modal as soon as the launch is handed off. The launch itself
    * takes seconds on a cold runtime; the fleet table shows a placeholder row
    * for it in the meantime, and reports any failure there.
    */
   const handleLaunch = () => {
-    if (!directory.trim() || dirError || validating || launching) return
-    if (activeTab === 'import' && !selectedSession) return
+    if (isLaunchDisabled) return
     setLaunching(true)
     try {
       const effectiveStrategy = activeTab === 'import' ? 'new-worktree' : worktreeStrategy
@@ -504,7 +514,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const effectivePrompt = activeTab === 'import'
         ? (importPrompt.trim() || undefined)
-        : (prompt || undefined)
+        : buildLaunchPrompt(prompt, prUrl)
 
       const effectiveAttachments = activeTab === 'new' && attachments.length > 0
         ? attachments
@@ -513,7 +523,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
-      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
       void persistProjectSettings(directory.trim(), false)
 
       clearAttachments()
@@ -543,10 +553,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
-
-  const isLaunchDisabled = activeTab === 'new'
-    ? !directory.trim() || launching || validating || !!dirError
-    : !directory.trim() || launching || validating || !!dirError || !selectedSession
 
   const launchButtonLabel = launching
     ? 'Launching...'
@@ -769,7 +775,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
                 <div className="relative">
-                  <SelectField
+                  <ModelSelectField
                     value={model}
                     onChange={(value) => { setModel(value); setModelVariant('auto') }}
                     options={modelOptions}
@@ -781,20 +787,42 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 </div>
               </div>
 
-              {/* Effort */}
+              {/* Variant */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Effort Level</label>
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Variant</label>
                 <div className="relative">
                   <SelectField
                     value={selectedEffort}
                     onChange={(value) => setModelVariant(value)}
                     options={effortOptions}
+                    disabled={modelsLoading}
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
-                  Provider Default sends no override; OpenCode uses the selected model&apos;s default effort.
+                  {modelsLoading
+                    ? 'Loading model variants...'
+                    : "Provider Default uses the selected model's default variant."}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="launch-pr-url" className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Link <span className="text-kumo-subtle/60">(optional)</span>
+                </label>
+                <input
+                  id="launch-pr-url"
+                  type="url"
+                  value={prUrlInput}
+                  onChange={(event) => setPrUrlInput(event.target.value)}
+                  placeholder="https://example.com/review"
+                  aria-invalid={!!prUrlError}
+                  aria-describedby="launch-pr-url-help"
+                  className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
+                />
+                <p id="launch-pr-url-help" className={`text-[11px] ${prUrlError ? 'text-kumo-danger' : 'text-kumo-subtle'}`}>
+                  {prUrlError || "Included in the initial prompt and saved as this agent's PR link."}
                 </p>
               </div>
 
@@ -1091,9 +1119,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                           Model
                         </label>
                         <div className="relative">
-                          <SelectField
+                          <ModelSelectField
                             value={model}
-                            onChange={(value) => setModel(value)}
+                            onChange={(value) => { setModel(value); setModelVariant('auto') }}
                             options={modelOptions}
                             searchable
                             searchPlaceholder="Search models…"
@@ -1101,6 +1129,25 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                             menuClassName={selectMenuClasses}
                           />
                         </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                          Variant
+                        </label>
+                        <SelectField
+                          value={selectedEffort}
+                          onChange={setModelVariant}
+                          options={effortOptions}
+                          disabled={modelsLoading}
+                          buttonClassName={selectButtonClasses}
+                          menuClassName={selectMenuClasses}
+                        />
+                        <p className="text-[11px] text-kumo-subtle">
+                          {modelsLoading
+                            ? 'Loading model variants...'
+                            : "Provider Default uses the selected model's default variant."}
+                        </p>
                       </div>
 
                       <div className="flex flex-col gap-1.5">

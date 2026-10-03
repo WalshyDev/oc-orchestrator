@@ -71,7 +71,7 @@ export function TopBar({
               ? 'border-kumo-line text-kumo-subtle cursor-not-allowed'
               : 'border-kumo-brand text-kumo-brand hover:bg-kumo-brand/10'
           }`}
-          title="Quick launch — starts in home directory with system model (Q)"
+          title="Quick launch — starts in home directory with configured model (Q)"
         >
           {quickLaunching
             ? <CircleNotch size={14} className="animate-spin" />

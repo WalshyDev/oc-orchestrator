@@ -72,6 +72,7 @@ export function buildPlaceholderAgent(
     status: 'starting',
     labelIds: [],
     model: UNRESOLVED_MODEL_LABEL,
+    variant: 'none',
     prUrl: null,
     lastActivityAt: Date.now(),
     cost: 0,

@@ -174,6 +174,12 @@ describe('external folder API', () => {
     expect(moved.body).toMatchObject({ agentId: 'parent-agent', folderId: second.id })
     expect((await request('/sessions/ses_parent/folder')).body.folderId).toBe(second.id)
     expect(mocks.launch).not.toHaveBeenCalled()
+    expect(mocks.resume).not.toHaveBeenCalled()
+    expect((await request('/sessions', 'POST', { dir: '/wrong', resume: 'ses_parent' })).status).toBe(400)
+    mocks.agents.push({ ...mocks.agents[0], id: 'duplicate' })
+    expect((await request('/sessions', 'POST', { dir: '/repo/parent', resume: 'ses_parent' })).status).toBe(409)
+    expect((await request('/sessions/ses_parent/folder', 'PUT', { folderId: null })).status).toBe(409)
+    expect(folderManager.getAgentFolder('parent-agent')?.id).toBe(second.id)
   })
 
   it.each(['reset', 'remove'])('rejects a delayed assignment after a session %s', async (action) => {

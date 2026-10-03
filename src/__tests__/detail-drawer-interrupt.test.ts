@@ -157,4 +157,83 @@ describe('DetailDrawer pending interrupts', () => {
     expect(dismissedMarkup).not.toContain('Waiting for your response')
     expect(dismissedMarkup).not.toContain('data-pending-interrupt')
   })
+
+  it('shows retry reasons and tool waits in quiet diagnostics below the transcript', () => {
+    vi.stubGlobal('window', { innerHeight: 1000 })
+    vi.stubGlobal('localStorage', { getItem: () => null })
+    const agent = { ...createAgent('running'), variant: 'high', lastActivityAtMs: Date.now() - 120_000 }
+    const render = (overrides: Partial<Parameters<typeof DetailDrawer>[0]> = {}): string => renderToStaticMarkup(createElement(DetailDrawer, {
+      agent,
+      workspacePath: '/worktrees/project',
+      messages: [],
+      onClose: () => {},
+      ...overrides
+    }))
+    const retryMarkup = render({ agent: { ...agent, retry: { attempt: 3, message: '429 Too Many Requests', next: Date.now() + 30_000 } } })
+    const transcript = getElementContents(retryMarkup, 'data-transcript-scroll')
+    const diagnostics = getElementContents(retryMarkup, 'data-agent-diagnostics')
+    expect(transcript).not.toContain(diagnostics)
+    expect(retryMarkup.indexOf(diagnostics)).toBeGreaterThan(retryMarkup.indexOf(transcript) + transcript.length)
+    expect(diagnostics).toContain('text-kumo-subtle')
+    expect(diagnostics).not.toMatch(/border|animate-/)
+    expect(diagnostics).toContain('<details class="group">')
+    expect(diagnostics).not.toMatch(/<details[^>]*\bopen(?:[\s=>])/)
+    expect(diagnostics).toContain('Diagnostics <svg')
+    expect(diagnostics).toContain('Workspace: /worktrees/project')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Session"')).toContain('>Session: session-1</div>')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Model"')).toContain('>Model: model</div>')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Variant"')).toContain('>Variant: high</div>')
+    expect(diagnostics).toContain(`dateTime="${new Date(agent.lastActivityAtMs).toISOString()}"`)
+    expect(diagnostics).toContain('Last update:')
+    expect(diagnostics).toContain('Provider retry #3')
+    expect(retryMarkup).not.toContain('data-agent-activity')
+    expect(retryMarkup).toContain('429 Too Many Requests')
+    expect(retryMarkup).toContain('Next attempt in 30s')
+    const toolMarkup = render({ messages: [{
+      id: 'tools', role: 'tool-group', content: '', timestamp: 'now',
+      toolCalls: [
+        { id: 'bash', name: 'bash', state: 'running', timestamp: Date.now() - 120_000 },
+        { id: 'todo', name: 'todowrite', state: 'running', timestamp: Date.now() }
+      ]
+    }] })
+    expect(toolMarkup).toContain('Waiting for bash')
+    expect(toolMarkup).not.toContain('No tool is running')
+    const quietMarkup = render()
+    expect(quietMarkup).toContain('Waiting for model output')
+    expect(quietMarkup).toContain('OpenCode has not reported a cause')
+    expect(quietMarkup).not.toContain('Agent is thinking')
+    const fields = (markup: string): string[] => Array.from(markup.matchAll(/data-diagnostic-field="([^"]+)" class="truncate"/g), (match) => match[1])
+    const expectedFields = ['Activity', 'Workspace', 'Session', 'Model', 'Variant', 'Last update', 'Tools', 'Provider', 'Last event']
+    for (const markup of [retryMarkup, toolMarkup, quietMarkup, render({ agent: createAgent('idle') })]) {
+      expect(fields(markup)).toEqual(expectedFields)
+    }
+    const toolsRow = getElementContents(toolMarkup, 'data-diagnostic-field="Tools"')
+    expect(toolsRow).toContain('bash running for')
+    expect(toolsRow).toContain('todowrite running for')
+  })
+
+  it.each([
+    ['idle', 'Idle'],
+    ['completed', 'Completed'],
+    ['errored', 'Errored'],
+    ['disconnected', 'Disconnected']
+  ] as const)('keeps %s diagnostics visible without stale running activity', (status, label) => {
+    vi.stubGlobal('window', { innerHeight: 1000 })
+    vi.stubGlobal('localStorage', { getItem: () => null })
+    const markup = renderToStaticMarkup(createElement(DetailDrawer, {
+      agent: { ...createAgent(status), retry: { attempt: 1, message: 'Provider overloaded', next: Date.now() } },
+      workspacePath: '/worktrees/project',
+      messages: [{
+        id: 'tools', role: 'tool-group', content: '', timestamp: 'now',
+        toolCalls: [{ id: 'bash', name: 'bash', state: 'running', timestamp: 1 }]
+      }],
+      onClose: () => {}
+    }))
+    const diagnostics = getElementContents(markup, 'data-agent-diagnostics')
+    expect(getElementContents(diagnostics, 'data-diagnostic-field="Activity"')).toContain(`>Activity: ${label}</div>`)
+    expect(diagnostics).toContain('Workspace: /worktrees/project')
+    expect(diagnostics).toContain('Last update:')
+    expect(diagnostics).not.toMatch(/Provider retry|Provider overloaded|Waiting for|bash running/)
+    expect(diagnostics).toContain('Variant: Default')
+  })
 })

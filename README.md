@@ -19,9 +19,10 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 - **MCP management** — view, connect, and disconnect MCP servers per agent
 - **`/new`** — reset an agent's conversation and branch without leaving the fleet table
 - **`/model`** — switch models on the fly per agent
-- **Auto PR** — one-click PR creation with editable PR links
+- **Auto PR** supports one click PR creation and editable links. Agents can set the session's PR link by writing `Set OCO PR Link for this session to PR_URL`
 - **Image attachments** — attach images to agent messages
 - **Command palette** — quick access to all actions via `Cmd+K`
+- Reload OpenCode instructions and runtime config from **View > Force Reload**
 - **Desktop notifications** — configurable alerts for blocked, errored, and completed agents
 - **Auto-update** — notifies when a new version is available on npm
 
@@ -31,13 +32,30 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 npm install -g oc-orchestrator
 ```
 
-Requires [OpenCode](https://github.com/nichochar/opencode) to be installed and available in your PATH (or set `OPENCODE_PATH`).
+Requires [OpenCode](https://github.com/anomalyco/opencode) to be installed and available in your PATH (or set `OPENCODE_PATH`).
+
+### OpenCode versions
+
+Set `OPENCODE_PATH` to the executable for either official OpenCode v1 or the `2.0` branch. OCO checks message persistence at startup with a temporary session that it deletes without calling a model. If the runtime drops message parts, OCO installs the `oco_message_part_compat_v1` trigger in that runtime's SQLite database and restarts it with event journaling enabled. The trigger remains in the database and saves parts within OpenCode's own transactions. OCO also keeps prompt requests open in the background for these runtimes. Working runtimes use their native prompt API. This doesn't migrate sessions between v1 and v2 databases or recover parts that were already lost.
 
 ## Run
 
 ```bash
 oc-orchestrator
 ```
+
+## Current session identity
+
+OCO loads a session identity plugin into each managed OpenCode runtime. Shell
+tools receive `OPENCODE_SESSION_ID` and `OCO_SESSION_ID` from the executing
+session, even when several sessions share a directory and server. Model context
+also includes the current ID on each turn, including slash commands and turns
+after compaction. Restart existing OCO runtimes to load the plugin.
+
+Before changing your own fleet row, match the exact session ID and session
+directory against the live registry. Stop if the row is missing, stale, or
+ambiguous. A child session has its own ID and may have no fleet row. Don't use a
+workspace name, title, or another session's ID from an imported transcript.
 
 ## Development
 
@@ -156,6 +174,7 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | `DELETE` | `/sessions/:sessionId/folder` | — | `{ sessionId, directory, folderId: null, folder: null }` |
 | `POST` | `/sessions/:sessionId/prompt` | `{ text, model? }` | `{ ok }` |
 | `POST` | `/sessions/:sessionId/abort` | — | `{ ok }` |
+| `PATCH` | `/sessions/:sessionId` | `{ prUrl?, addLabelId?: "done", clearLabels?: true }` | `{ ok, labelIds }` when updating labels; `{ ok, prUrl }` for `prUrl` only |
 | `POST` | `/leases/:leaseId/refresh` | — | `{ ok, expiresAt }` |
 | `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
 
@@ -178,6 +197,17 @@ Deleting a folder moves its agents to the top level. Deleting a session's folder
 only its membership. Unknown sessions or folders return 404, and invalid names or folder IDs return
 400. A folder deleted while a launch is in progress leaves the new agent at the top level; the
 launch response reports its final `folderId`.
+
+Folder lookups and assignments return 409 if multiple fleet rows track the same session. Resuming
+an already tracked session reuses its row, and a mismatched directory returns 400.
+
+### Session labels and PR links
+
+`PATCH /sessions/:sessionId` with `{"addLabelId":"done"}` returns `200 {"ok":true,"labelIds":[...]}` with the full resulting label list. It appends Done only if absent, preserves every other label ID and its order, and persists the result. Repeated calls keep Done without adding a duplicate. Omitting `prUrl` preserves the existing PR link. You can supply both fields; the response then includes `labelIds`. PR updates retain their HTTP/HTTPS URL validation, trim surrounding whitespace, and return `{"ok":true,"prUrl":"..."}` when used alone.
+
+To remove every label, send `{"clearLabels":true}`. To replace every label with Done, send `{"clearLabels":true,"addLabelId":"done"}`. Clearing applies before adding Done, and OCO saves and broadcasts the final label set once. The response contains `labelIds: []` or `labelIds: ["done"]`. These requests also accept `prUrl`. OCO's closing label uses the ID `done`.
+
+The session must be tracked under that exact `sessionId`. An unknown session or an internal `agentId` returns `404 {"error":"session_not_found"}`. If multiple fleet rows track the same session, updating labels returns `409 {"error":"session_ambiguous"}` without writes. Missing or invalid authentication returns `401 {"error":"unauthorized"}`. Invalid JSON, a missing update field, any `addLabelId` other than `"done"`, any supplied `clearLabels` value other than `true`, or an invalid supplied PR URL returns `400 {"error":"bad_request","message":"..."}` without writes. Unknown fields are ignored, including `labelIds`.
 
 ### Source attribution
 

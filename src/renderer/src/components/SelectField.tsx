@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CaretDown, Check, MagnifyingGlass } from '@phosphor-icons/react'
 import { PortaledMenu } from './PortaledMenu'
+import { prioritizeRecentOptions } from '../hooks/useRecentModels'
 
 interface SelectOption {
   value: string
   label: string
 }
 
-interface SelectFieldProps {
+export interface SelectFieldProps {
   value: string
   options: readonly SelectOption[]
   onChange: (value: string) => void
@@ -21,6 +22,7 @@ interface SelectFieldProps {
    * `bottom-*`/`left-*`/`right-*`/`mt-*` classes from this string.
    */
   menuClassName?: string
+  recentValues?: readonly string[]
 }
 
 export function SelectField({
@@ -31,7 +33,8 @@ export function SelectField({
   searchable = false,
   searchPlaceholder = 'Search…',
   buttonClassName,
-  menuClassName
+  menuClassName,
+  recentValues = []
 }: SelectFieldProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -43,13 +46,13 @@ export function SelectField({
   }, [options, value])
 
   const filteredOptions = useMemo(() => {
-    if (!searchable || !search.trim()) return options
+    if (!searchable || !search.trim()) return prioritizeRecentOptions(options, recentValues, '')
     const query = search.toLowerCase()
     return options.filter((option) =>
       option.label.toLowerCase().includes(query) ||
       option.value.toLowerCase().includes(query)
     )
-  }, [options, searchable, search])
+  }, [options, recentValues, searchable, search])
 
   // Reset search and auto-focus when dropdown opens
   useEffect(() => {
@@ -121,7 +124,12 @@ export function SelectField({
                   }`}
                 >
                   <span className="truncate">{option.label}</span>
-                  <Check size={14} className={isSelected ? 'text-kumo-brand' : 'invisible'} />
+                  <span className="flex shrink-0 items-center gap-2">
+                    {(!searchable || !search.trim()) && recentValues.includes(option.value) && (
+                      <span className="text-[10px] text-kumo-subtle">Recently used</span>
+                    )}
+                    <Check size={14} className={isSelected ? 'text-kumo-brand' : 'invisible'} />
+                  </span>
                 </button>
               )
             })

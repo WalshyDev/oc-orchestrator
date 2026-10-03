@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { OpencodeClient, TextPartInput, FilePartInput } from '@opencode-ai/sdk/v2/client'
-import { buildSessionOwnerIndex, collectChildSessionTranscripts, groupRequestsByOwner } from './child-session-hydration'
+import { buildSessionOwnerIndex, collectChildSessionTranscripts, dropSettledToolRequests, groupRequestsByOwner } from './child-session-hydration'
 import { runtimeManager, type RuntimeInfo } from './runtime-manager'
 import { EventBridge } from './event-bridge'
 import { notificationService, type NotifiableEventType } from './notification-service'
@@ -60,6 +60,17 @@ export function parseModelString(model: string): { providerID: string; modelID: 
     return { providerID: model.slice(0, slashIdx), modelID: model.slice(slashIdx + 1) }
   }
   return { providerID: '', modelID: model }
+}
+
+// Older servers put the variant on the message instead of its model.
+function readMessageVariant(info: Record<string, unknown>, model: Record<string, unknown>): string | undefined {
+  const variant = model.variant ?? info.variant
+  return typeof variant === 'string' ? variant : undefined
+}
+
+// The SDK returns fetch failures and HTTP errors as `{ error }` instead of throwing.
+function hasRequestError(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && (result as { error?: unknown }).error !== undefined
 }
 
 function sanitizeSlug(value: string, fallback: string): string {
@@ -225,6 +236,7 @@ export interface AgentHandle {
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
   variantOverride?: string
+  modelUpdatedAt?: number
   bridge: EventBridge
 }
 
@@ -243,6 +255,7 @@ interface PersistedAgentHandle {
   prUrl?: string
   modelOverride?: { providerID: string; modelID: string }
   variantOverride?: string
+  modelUpdatedAt?: number
 }
 
 const ACTIVE_AGENTS_PREFERENCE_KEY = 'active_agents'
@@ -274,6 +287,9 @@ class AgentController {
   private lastUserActionAt = new Map<string, number>()
   private sessionActivity = new Map<string, { version: number; at: number }>()
   private sessionParents = new Map<string, string>()
+  private activeTransientModelTurns = new Map<string, number>()
+  private transientTurnsAwaitingIdle = new Map<string, number>()
+  private nextTransientTurnToken = 0
   private nextId = 1
   private idleRuntimeTimer: ReturnType<typeof setInterval> | null = null
   private stoppingIdleRuntimes = false
@@ -291,6 +307,7 @@ class AgentController {
       })
     )
 
+    const restoredHandles: Array<{ handle: AgentHandle; runtime: RuntimeInfo }> = []
     for (const result of results) {
       if (result.status === 'rejected') {
         console.error('[AgentController] Failed to restore agent:', result.reason)
@@ -316,13 +333,18 @@ class AgentController {
         prUrl: persistedAgent.prUrl,
         modelOverride: persistedAgent.modelOverride,
         variantOverride: persistedAgent.variantOverride,
+        modelUpdatedAt: persistedAgent.modelUpdatedAt,
         bridge: this.bridges.get(runtime.id)!
       }
 
       this.agents.set(handle.id, handle)
+      restoredHandles.push({ handle, runtime })
       this.bumpNextId(handle.id)
     }
 
+    await Promise.allSettled(
+      restoredHandles.map(({ handle, runtime }) => this.reconcileModelFromSession(handle, runtime.client))
+    )
     this.persistAgents()
     this.restored = true
   }
@@ -389,6 +411,7 @@ class AgentController {
       taskSummary: '',
       modelOverride,
       variantOverride,
+      modelUpdatedAt: modelOverride || variantOverride ? Date.now() : undefined,
       bridge: this.bridges.get(runtime.id)!
     }
 
@@ -509,6 +532,13 @@ class AgentController {
     if (meta.labelIds !== undefined) handle.labelIds = meta.labelIds
     if (meta.prUrl !== undefined) handle.prUrl = meta.prUrl
     this.persistAgents()
+    if (meta.labelIds !== undefined) {
+      this.broadcastToRenderer('agent:labels-updated', {
+        id: agentId,
+        sessionId: handle.sessionId,
+        labelIds: handle.labelIds
+      })
+    }
 
     // Sync display name to the OpenCode session title so it's findable
     // when browsing sessions later (e.g. for import/restore).
@@ -522,6 +552,11 @@ class AgentController {
         }).catch(() => { /* best-effort */ })
       }
     }
+  }
+
+  setAgentPrUrl(agentId: string, prUrl: string): void {
+    this.updateAgentMeta(agentId, { prUrl })
+    this.broadcastToRenderer('agent:pr-url-updated', { id: agentId, prUrl })
   }
 
   /**
@@ -835,14 +870,18 @@ class AgentController {
     const model = handle.modelOverride?.providerID
       ? `${handle.modelOverride.providerID}/${handle.modelOverride.modelID}`
       : handle.modelOverride?.modelID
-    const result = await runtime.client.session.command({
-      sessionID: handle.sessionId,
-      directory: handle.directory,
-      command,
-      arguments: args,
-      ...(model && { model }),
-      ...(handle.variantOverride && { variant: handle.variantOverride })
-    })
+    const result = await this.withTransientModelTurn(
+      handle,
+      runtime,
+      () => runtime.client.session.command({
+        sessionID: handle.sessionId,
+        directory: handle.directory,
+        command,
+        arguments: args,
+        ...(model && { model }),
+        ...(handle.variantOverride && { variant: handle.variantOverride })
+      })
+    )
 
     return result.data
   }
@@ -893,6 +932,9 @@ class AgentController {
 
     handle.modelOverride = nextModelOverride
     handle.variantOverride = nextVariantOverride
+    if ('model' in config || 'variant' in config) {
+      handle.modelUpdatedAt = Date.now()
+    }
     this.persistAgents()
     return result
   }
@@ -918,7 +960,14 @@ class AgentController {
    * List all providers using any available runtime.
    * Useful for settings/launch screens where no specific agent is selected.
    */
-  async getProvidersFromAnyRuntime(): Promise<unknown> {
+  async getProvidersFromAnyRuntime(directory?: string): Promise<unknown> {
+    if (directory) {
+      const runtime = await runtimeManager.ensureRuntime(directory)
+      runtimeManager.touchRuntimeActivity(runtime.id)
+      const result = await runtime.client.config.providers({ directory })
+      return result.data
+    }
+
     // Try to find any agent with a known runtime
     for (const handle of this.agents.values()) {
       try {
@@ -940,7 +989,14 @@ class AgentController {
    * Get config from any available runtime.
    * Useful for inferring the system default model on launch screens.
    */
-  async getConfigFromAnyRuntime(): Promise<unknown> {
+  async getConfigFromAnyRuntime(directory?: string): Promise<unknown> {
+    if (directory) {
+      const runtime = await runtimeManager.ensureRuntime(directory)
+      runtimeManager.touchRuntimeActivity(runtime.id)
+      const result = await runtime.client.config.get({ directory })
+      return result.data
+    }
+
     for (const handle of this.agents.values()) {
       try {
         const runtime = await this.ensureRuntimeForAgent(handle)
@@ -1073,11 +1129,15 @@ class AgentController {
       ...model
     })
 
-    const result = await runtime.client.session.summarize({
-      sessionID: handle.sessionId,
-      directory: handle.directory,
-      ...model
-    })
+    const result = await this.withTransientModelTurn(
+      handle,
+      runtime,
+      () => runtime.client.session.summarize({
+        sessionID: handle.sessionId,
+        directory: handle.directory,
+        ...model
+      })
+    )
 
     console.log('[AgentController.compactSession] summarize response', {
       agentId,
@@ -1179,12 +1239,15 @@ class AgentController {
     if (!handle) throw new Error(`Agent ${agentId} not found`)
     await this.beginUserAction(agentId)
 
-    handle.modelOverride = { providerID, modelID }
+    const modelOverride = { providerID, modelID }
+    const variantOverride = handle.variantOverride
+    handle.modelOverride = modelOverride
+    handle.modelUpdatedAt = Date.now()
     this.persistAgents()
     this.broadcastToRenderer('agent:model-changed', {
       id: handle.id,
-      modelOverride: handle.modelOverride,
-      variantOverride: handle.variantOverride
+      modelOverride,
+      variantOverride
     })
 
     const runtime = await this.ensureRuntimeForAgent(handle)
@@ -1195,8 +1258,8 @@ class AgentController {
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
-      model: handle.modelOverride,
-      ...(handle.variantOverride && { variant: handle.variantOverride })
+      model: modelOverride,
+      ...(variantOverride && { variant: variantOverride })
     })
   }
 
@@ -1263,6 +1326,7 @@ class AgentController {
 
       try {
         const directory = handles[0].directory
+        const awaitingIdleTokens = new Map(this.transientTurnsAwaitingIdle)
         const result = await runtime.client.session.status({
           directory
         })
@@ -1270,6 +1334,7 @@ class AgentController {
         if (result.data) {
           const sessionStatuses = result.data as Record<string, { type: string }>
           for (const handle of handles) {
+            this.releaseIdleTransientTurn(handle.sessionId, sessionStatuses, awaitingIdleTokens.get(handle.sessionId))
             statuses[handle.sessionId] = {
               agentId: handle.id,
               status: sessionStatuses[handle.sessionId] ?? { type: 'idle' }
@@ -1308,7 +1373,7 @@ class AgentController {
         })
 
         if (permissionsResult.data && Array.isArray(permissionsResult.data)) {
-          const permissions = permissionsResult.data as Array<{ id: string; sessionID: string }>
+          const permissions = await dropSettledToolRequests(runtime.client, permissionsResult.data, directory)
           const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
           const ownerResult = permissions.some((permission) => !directOwners.has(permission.sessionID))
             ? await buildSessionOwnerIndex(
@@ -1359,7 +1424,7 @@ class AgentController {
         })
 
         if (questionsResult.data && Array.isArray(questionsResult.data)) {
-          const questions = questionsResult.data as Array<{ id: string; sessionID: string }>
+          const questions = await dropSettledToolRequests(runtime.client, questionsResult.data, directory)
           const directOwners = new Map(handles.map((handle) => [handle.sessionId, handle.id]))
           const ownerResult = questions.some((question) => !directOwners.has(question.sessionID))
             ? await buildSessionOwnerIndex(
@@ -1568,6 +1633,7 @@ class AgentController {
       taskSummary: '',
       modelOverride,
       variantOverride,
+      modelUpdatedAt: modelOverride || variantOverride ? Date.now() : undefined,
       bridge: this.bridges.get(targetRuntime.id)!
     }
 
@@ -1587,6 +1653,8 @@ class AgentController {
       workspaceName: handle.workspaceName,
       prompt: '',
       title: sessionTitle,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride,
       launchId
     })
 
@@ -1607,7 +1675,9 @@ class AgentController {
           sessionID: newSession.id,
           directory: targetDirectory,
           noReply: true,
-          parts: [{ type: 'text', text: seedText, synthetic: true }]
+          parts: [{ type: 'text', text: seedText, synthetic: true }],
+          ...(handle.modelOverride && { model: handle.modelOverride }),
+          ...(handle.variantOverride && { variant: handle.variantOverride })
         })
       } catch (error) {
         // Seeding is best effort. A fresh session without context still works.
@@ -1656,6 +1726,7 @@ class AgentController {
     }
 
     this.agents.set(agentId, handle)
+    await this.reconcileModelFromSession(handle, runtime.client)
     this.persistAgents()
 
     this.broadcastToRenderer('agent:launched', {
@@ -1668,7 +1739,9 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: '',
-      title: sessionTitle
+      title: sessionTitle,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
     })
 
     console.log(`[AgentController] Resumed agent ${agentId} (session ${sessionId}) in ${directory}`)
@@ -1811,12 +1884,23 @@ class AgentController {
       if (childSessionId && parentSessionId) this.sessionParents.set(childSessionId, parentSessionId)
       return
     }
+    if (event.type === 'session.idle' || event.type === 'session.status') {
+      const status = properties.status as Record<string, unknown> | undefined
+      const sessionId = properties.sessionID as string | undefined
+      if (sessionId && (event.type === 'session.idle' || status?.type === 'idle')) {
+        this.transientTurnsAwaitingIdle.delete(sessionId)
+      }
+      return
+    }
     if (!event.type.startsWith('message.') && event.type !== 'question.asked' && event.type !== 'permission.asked') {
       return
     }
     const nested = (properties.part ?? properties.info) as Record<string, unknown> | undefined
     const sessionId = (properties.sessionID ?? nested?.sessionID) as string | undefined
     if (!sessionId) return
+    if (event.type === 'message.updated') {
+      this.syncModelFromUserMessage(sessionId, nested)
+    }
     if (event.type === 'message.part.updated') {
       const state = nested?.state as Record<string, unknown> | undefined
       const metadata = state?.metadata as Record<string, unknown> | undefined
@@ -1832,6 +1916,121 @@ class AgentController {
       const current = this.sessionActivity.get(currentSessionId)
       this.sessionActivity.set(currentSessionId, { version: (current?.version ?? 0) + 1, at })
       currentSessionId = this.sessionParents.get(currentSessionId)
+    }
+  }
+
+  private syncModelFromUserMessage(sessionId: string, info: Record<string, unknown> | undefined): void {
+    if (info?.role !== 'user') return
+    const model = info.model as Record<string, unknown> | undefined
+    if (typeof model?.providerID !== 'string' || typeof model.modelID !== 'string') return
+
+    const handle = Array.from(this.agents.values()).find((agent) => agent.sessionId === sessionId)
+    if (!handle) return
+
+    const createdAt = this.getModelMessageCreatedAt(info)
+    if (createdAt <= (handle.modelUpdatedAt ?? 0)) return
+    handle.modelUpdatedAt = createdAt
+
+    // Commands and compactions use a temporary model for one turn.
+    if (this.isTransientModelTurnActive(sessionId)) {
+      this.persistAgents()
+      return
+    }
+
+    const messageVariant = readMessageVariant(info, model)
+    const variantOverride = messageVariant ?? handle.variantOverride
+    if (
+      handle.modelOverride?.providerID === model.providerID &&
+      handle.modelOverride.modelID === model.modelID &&
+      handle.variantOverride === variantOverride
+    ) return
+
+    handle.modelOverride = { providerID: model.providerID, modelID: model.modelID }
+    handle.variantOverride = variantOverride
+    this.persistAgents()
+    this.broadcastToRenderer('agent:model-changed', {
+      id: handle.id,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
+    })
+  }
+
+  private async withTransientModelTurn<T>(
+    handle: AgentHandle,
+    runtime: RuntimeInfo,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const sessionId = handle.sessionId
+    const activeTurns = (this.activeTransientModelTurns.get(sessionId) ?? 0) + 1
+    this.activeTransientModelTurns.set(sessionId, activeTurns)
+    let requestCompleted = false
+    try {
+      const result = await run()
+      requestCompleted = !hasRequestError(result)
+      return result
+    } finally {
+      // A failed request, such as a client timeout on a long command, does not
+      // stop the server turn. Keep the guard until the session reports idle.
+      const awaitingIdleToken = requestCompleted ? undefined : ++this.nextTransientTurnToken
+      if (awaitingIdleToken) this.transientTurnsAwaitingIdle.set(sessionId, awaitingIdleToken)
+      const remainingTurns = (this.activeTransientModelTurns.get(sessionId) ?? 1) - 1
+      if (remainingTurns > 0) this.activeTransientModelTurns.set(sessionId, remainingTurns)
+      else this.activeTransientModelTurns.delete(sessionId)
+      if (awaitingIdleToken) void this.releaseTransientTurnIfIdle(handle.directory, runtime, sessionId, awaitingIdleToken)
+    }
+  }
+
+  private isTransientModelTurnActive(sessionId: string): boolean {
+    return this.activeTransientModelTurns.has(sessionId) || this.transientTurnsAwaitingIdle.has(sessionId)
+  }
+
+  private async releaseTransientTurnIfIdle(
+    directory: string,
+    runtime: RuntimeInfo,
+    sessionId: string,
+    token: number
+  ): Promise<void> {
+    try {
+      const result = await runtime.client.session.status({ directory })
+      const statuses = result.data as Record<string, { type: string }> | undefined
+      if (statuses) this.releaseIdleTransientTurn(sessionId, statuses, token)
+    } catch {
+      // Status polling or the next session idle event releases the guard.
+    }
+  }
+
+  // The token rejects a snapshot taken before a newer failed request replaced the guard.
+  private releaseIdleTransientTurn(
+    sessionId: string,
+    statuses: Record<string, { type: string }>,
+    token: number | undefined
+  ): void {
+    if (token === undefined || this.transientTurnsAwaitingIdle.get(sessionId) !== token) return
+    if ((statuses[sessionId]?.type ?? 'idle') === 'idle') this.transientTurnsAwaitingIdle.delete(sessionId)
+  }
+
+  private getModelMessageCreatedAt(info: Record<string, unknown>): number {
+    const time = info.time as Record<string, unknown> | undefined
+    return typeof time?.created === 'number' ? time.created : Date.now()
+  }
+
+  private async reconcileModelFromSession(handle: AgentHandle, client: OpencodeClient): Promise<void> {
+    try {
+      const result = await client.session.messages({
+        sessionID: handle.sessionId,
+        directory: handle.directory
+      })
+      let latest: Record<string, unknown> | undefined
+      for (const entry of (result.data ?? []) as Array<{ info?: Record<string, unknown> }>) {
+        const info = entry.info
+        if (info?.role !== 'user' || !info.model) continue
+        if (!latest || this.getModelMessageCreatedAt(info) >= this.getModelMessageCreatedAt(latest)) {
+          latest = info
+        }
+      }
+      if (latest) this.syncModelFromUserMessage(handle.sessionId, latest)
+    } catch {
+      // Model reconciliation is best effort; persisted state remains usable.
     }
   }
 
@@ -1856,7 +2055,9 @@ class AgentController {
       isWorktree: handle.isWorktree,
       workspaceName: handle.workspaceName,
       prompt: handle.prompt,
-      title: handle.title
+      title: handle.title,
+      modelOverride: handle.modelOverride,
+      variantOverride: handle.variantOverride
     })
 
     return runtime
@@ -1950,7 +2151,8 @@ class AgentController {
       labelIds: agent.labelIds,
       prUrl: agent.prUrl,
       modelOverride: agent.modelOverride,
-      variantOverride: agent.variantOverride
+      variantOverride: agent.variantOverride,
+      modelUpdatedAt: agent.modelUpdatedAt
     }))
 
     database.setPreference(ACTIVE_AGENTS_PREFERENCE_KEY, JSON.stringify(persistedAgents))
