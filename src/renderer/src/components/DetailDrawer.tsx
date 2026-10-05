@@ -67,6 +67,7 @@ import { ModelSelectField } from './ModelSelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
 import { formatResponseMetadata } from '../lib/transcript-metadata'
+import { ToolCallHeader } from './ToolCallHeader'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
@@ -2263,7 +2264,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   const isExpanded = verbosity === 'recent' ? recentExpanded : expanded
 
   return (
-    <div ref={rootRef} className="max-w-[95%] self-start">
+    <div ref={rootRef} className="w-full min-w-0 max-w-[95%] self-start">
       {message.providerID && message.model && (
         <div className="mb-1 text-[10px]">
           <ResponseMetadata response={message} />
@@ -2284,7 +2285,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
           </span>
           <Wrench size={13} className="shrink-0 text-kumo-subtle" />
           <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
-          {toolModels && <span className="font-mono text-[10px] text-kumo-subtle">{toolModels}</span>}
+          {toolModels && <span className="min-w-0 truncate font-mono text-[10px] text-kumo-subtle" title={toolModels}>{toolModels}</span>}
         </button>
         {!isExpanded && activityTool && activityIndicator && (
           <div role="status" aria-atomic="true" className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-[10px] text-kumo-subtle" title={activitySummary}>
@@ -2302,38 +2303,32 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
       </div>
 
       {isExpanded && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
+        <div className="mt-2 flex min-w-0 flex-col gap-1.5 rounded-lg border border-kumo-line bg-kumo-overlay p-2">
           {toolCalls.map((tool) => {
             const toolExpanded = verbosity !== 'recent' || recentToolExpansion.expandedId === tool.id
             const inputSummary = summarizeToolInput(tool.name, tool.input)
             const header = (
-              <>
-                <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
-                <ResponseMetadata response={tool} />
-                <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
-                  {tool.state}
-                </span>
-              </>
+              <ToolCallHeader
+                tool={tool}
+                expanded={verbosity === 'recent' ? toolExpanded : undefined}
+                summary={!toolExpanded ? inputSummary ?? '' : undefined}
+              />
             )
             return (
-              <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
+              <div key={tool.id} className="min-w-0 rounded-md bg-kumo-control border border-kumo-line">
                 {verbosity === 'recent' ? (
                   <button
                     type="button"
                     aria-expanded={toolExpanded}
                     onClick={() => recentToolExpansion.toggle(tool.id)}
-                    className="flex w-full items-center gap-2 text-left"
+                    className="w-full min-w-0 rounded-md px-3 py-2.5 text-left hover:bg-kumo-fill/40 transition-colors"
                     title={inputSummary}
                   >
-                    {toolExpanded ? <CaretDown size={10} className="text-kumo-subtle" /> : <CaretRight size={10} className="text-kumo-subtle" />}
                     {header}
-                    {!toolExpanded && inputSummary && (
-                      <span className="min-w-0 truncate font-mono text-[10px] text-kumo-subtle">{inputSummary}</span>
-                    )}
                   </button>
-                ) : <div className="flex items-center gap-2">{header}</div>}
+                ) : <div className="px-3 py-2.5">{header}</div>}
                 {toolExpanded && (
-                  <>
+                  <div className="border-t border-kumo-line px-3 pb-2.5 pt-1">
                     {inputSummary && (
                       <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
                         {inputSummary}
@@ -2350,7 +2345,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
                         {tool.output}
                       </pre>
                     )}
-                  </>
+                  </div>
                 )}
               </div>
             )
