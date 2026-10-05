@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 import { SubagentProgress } from './SubagentProgress'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
-import { formatResponseMetadata } from '../lib/transcript-metadata'
+import { ToolCallHeader } from './ToolCallHeader'
 import type { OutputVerbosity } from '../data/settings'
 import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 
@@ -29,18 +29,6 @@ export interface ToolCall {
 interface ToolsUsageProps {
   tools: ToolCall[]
   verbosity?: OutputVerbosity
-}
-
-const stateStyles: Record<ToolCall['state'], string> = {
-  running: 'bg-kumo-interact/12 text-kumo-link border-kumo-interact/25',
-  completed: 'bg-kumo-success/12 text-kumo-success border-kumo-success/25',
-  failed: 'bg-kumo-danger/10 text-kumo-danger border-kumo-danger/20'
-}
-
-const stateLabels: Record<ToolCall['state'], string> = {
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed'
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -223,7 +211,6 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
           const isExpanded = verbosity === 'recent'
             ? recentExpansion.expandedId === tool.id
             : expandedIds.has(tool.id)
-          const metadata = formatResponseMetadata(tool)
 
           return (
             <div
@@ -231,31 +218,12 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
               className="rounded-md bg-kumo-control border border-kumo-line hover:border-kumo-fill-hover transition-colors"
             >
               <button
+                type="button"
                 onClick={() => toggleExpanded(tool.id)}
                 aria-expanded={isExpanded}
-                className="w-full flex items-center gap-2.5 px-2.5 py-2 cursor-pointer"
+                className="w-full min-w-0 px-3 py-2.5 cursor-pointer rounded-md hover:bg-kumo-fill/40 transition-colors"
               >
-                <span className="shrink-0 text-kumo-subtle">
-                  {isExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
-                </span>
-
-                <span className="font-mono text-xs text-kumo-default">{tool.name}</span>
-                {metadata && <span className="font-mono text-[10px] text-kumo-subtle">{metadata}</span>}
-
-                <span
-                  className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${stateStyles[tool.state]}`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full bg-current ${tool.state === 'running' ? 'animate-pulse-dot' : ''}`}
-                  />
-                  {stateLabels[tool.state]}
-                </span>
-
-                <span className="flex-1" />
-
-                <span className="shrink-0 text-[10px] text-kumo-subtle font-mono">
-                  {formatRelativeTime(tool.timestamp)}
-                </span>
+                <ToolCallHeader tool={tool} expanded={isExpanded} timestamp={formatRelativeTime(tool.timestamp)} />
               </button>
 
               {isExpanded && (
