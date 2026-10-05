@@ -44,6 +44,75 @@ afterEach(async () => {
 })
 
 describe('Most recent output visibility', () => {
+  it('shows only the latest call in a group and lets earlier calls expand', async () => {
+    let message: Message = {
+      id: 'tools', role: 'tool-group', content: '2 tool calls', timestamp: 'now',
+      toolCalls: [
+        { id: 'lint', name: 'bash', state: 'completed', timestamp: 1, input: '{"command":"npm run lint"}', output: 'Lint passed' },
+        { id: 'test', name: 'bash', state: 'running', timestamp: 2, input: '{"command":"npm test"}', output: 'Tests running' }
+      ]
+    }
+    const render = async (verbosity: 'recent' | 'all' = 'recent') => {
+      saveAgentOutputVerbosity('session', verbosity)
+      await act(async () => root.render(createElement(DetailDrawer, {
+        key: verbosity, agent, messages: [message], onClose: () => {}
+      })))
+    }
+    const outputs = () => [...container.querySelectorAll('pre')].map((element) => element.textContent)
+    await render()
+    expect(outputs()).toEqual(['$ npm test', 'Tests running'])
+    const olderButton = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      .find((button) => button.textContent?.includes('npm run lint'))!
+    expect(olderButton.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => olderButton.click())
+    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed'])
+    message = { ...message, toolCalls: message.toolCalls!.map((tool) => ({ ...tool, output: `${tool.output} updated` })) }
+    await render()
+    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed updated'])
+    const groupButton = container.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+    await act(async () => groupButton.click())
+    expect(outputs()).toEqual([])
+    message = { ...message, toolCalls: [...message.toolCalls!, {
+      id: 'build', name: 'bash', state: 'completed', timestamp: 3, input: '{"command":"npm run build"}', output: 'Build passed'
+    }] }
+    await render()
+    expect(groupButton.getAttribute('aria-expanded')).toBe('true')
+    expect(outputs()).toEqual(['$ npm run build', 'Build passed'])
+    await render('all')
+    expect(outputs()).toHaveLength(6)
+  })
+
+  it('shows thinking after a tool completes until the agent settles', async () => {
+    let currentAgent = { ...agent, status: 'running' as AgentRuntime['status'] }
+    let messages: Message[] = [{
+      id: 'tools', role: 'tool-group', content: '1 tool call', timestamp: 'now',
+      toolCalls: [{ id: 'test', name: 'bash', state: 'running', timestamp: 1, output: 'Tests running' }]
+    }]
+    const render = async () => {
+      await act(async () => root.render(createElement(DetailDrawer, {
+        agent: currentAgent, messages, onClose: () => {}
+      })))
+    }
+    const activity = () => container.querySelector('[data-agent-activity]')
+    await render()
+    expect(activity()?.textContent).toBe('Agent is working…')
+    messages = [{ ...messages[0], toolCalls: [{ ...messages[0].toolCalls![0], state: 'completed', output: 'Tests passed' }] }]
+    await render()
+    expect(activity()?.textContent).toBe('Agent is thinking…')
+    expect(activity()?.classList.contains('text-kumo-subtle')).toBe(true)
+    const lastCard = container.querySelector('pre')!
+    expect(lastCard.compareDocumentPosition(activity()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    currentAgent = { ...currentAgent, status: 'completed' }
+    await render()
+    expect(activity()).toBeNull()
+    currentAgent = { ...currentAgent, status: 'running' }
+    messages = [{ ...messages[0], toolCalls: [{ ...messages[0].toolCalls![0], state: 'running' }] }, {
+      id: 'follow-up', role: 'user', content: 'Next task', timestamp: 'now'
+    }]
+    await render()
+    expect(activity()?.textContent).toBe('Agent is thinking…')
+  })
+
   it.each(['tools', 'subagent'] as const)('keeps running %s details collapsed at None across state and visibility changes', async (kind) => {
     let tool: ToolCall = {
       id: 'task', name: 'task', state: 'running', timestamp: 1,

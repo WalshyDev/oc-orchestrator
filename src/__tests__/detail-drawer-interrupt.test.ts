@@ -186,7 +186,7 @@ describe('DetailDrawer pending interrupts', () => {
     expect(diagnostics).toContain(`dateTime="${new Date(agent.lastActivityAtMs).toISOString()}"`)
     expect(diagnostics).toContain('Last update:')
     expect(diagnostics).toContain('Provider retry #3')
-    expect(retryMarkup).not.toContain('data-agent-activity')
+    expect(getElementContents(transcript, 'data-agent-activity')).toContain('Agent is retrying')
     expect(retryMarkup).toContain('429 Too Many Requests')
     expect(retryMarkup).toContain('Next attempt in 30s')
     const toolMarkup = render({ messages: [{
@@ -201,7 +201,7 @@ describe('DetailDrawer pending interrupts', () => {
     const quietMarkup = render()
     expect(quietMarkup).toContain('Waiting for model output')
     expect(quietMarkup).toContain('OpenCode has not reported a cause')
-    expect(quietMarkup).not.toContain('Agent is thinking')
+    expect(quietMarkup).toContain('Agent is thinking')
     const fields = (markup: string): string[] => Array.from(markup.matchAll(/data-diagnostic-field="([^"]+)" class="truncate"/g), (match) => match[1])
     const expectedFields = ['Activity', 'Workspace', 'Session', 'Model', 'Variant', 'Last update', 'Tools', 'Provider', 'Last event']
     for (const markup of [retryMarkup, toolMarkup, quietMarkup, render({ agent: createAgent('idle') })]) {

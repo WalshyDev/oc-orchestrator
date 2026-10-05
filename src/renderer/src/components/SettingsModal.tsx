@@ -349,7 +349,7 @@ export function SettingsModal({ onClose, initialTab = 'general', commands = [] }
                   menuClassName={selectMenuClasses}
                 />
                 <p className="text-[11px] text-kumo-subtle">
-                  Agent messages stay expanded. None keeps details collapsed. Most recent opens details for the latest output. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
+                  Agent messages stay expanded. None keeps details collapsed. Most recent opens the latest tool call or event. Some expands parent tools and events. All also expands subagent transcripts. Each agent can override this in its drawer.
                 </p>
               </div>
 
