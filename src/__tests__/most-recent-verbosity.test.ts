@@ -75,7 +75,7 @@ describe('Most recent output visibility', () => {
     }
   })
 
-  it('follows agent output, ignores user messages and compaction, and permits one manual expansion', async () => {
+  it('keeps agent messages expanded while following tool output', async () => {
     const messages: Message[] = [
       { id: 'old', role: 'assistant', content: '**Older response**', timestamp: 'now' },
       { id: 'latest', role: 'assistant', content: '**Latest response**', timestamp: 'now' }
@@ -83,34 +83,39 @@ describe('Most recent output visibility', () => {
     const render = async () => {
       await act(async () => root.render(createElement(DetailDrawer, { agent, messages: [...messages], onClose: () => {} })))
     }
-    const expandedMessages = () => [...container.querySelectorAll('button[aria-label$="agent message"]')]
-      .map((button) => button.getAttribute('aria-expanded'))
+    const agentMessages = () => [...container.querySelectorAll('.markdown-body')]
+      .map((element) => element.textContent)
 
     await render()
-    expect(expandedMessages()).toEqual(['false', 'true'])
+    expect(agentMessages()).toEqual(['Older response', 'Latest response'])
+    expect(container.querySelector('button[aria-label$="agent message"]')).toBeNull()
     messages.push({ id: 'user', role: 'user', content: 'Follow up', timestamp: 'now' })
     messages.push({ id: 'compact', role: 'compaction', content: 'Compacted', timestamp: 'now' })
     await render()
-    expect(expandedMessages()).toEqual(['false', 'true'])
+    expect(agentMessages()).toEqual(['Older response', 'Latest response'])
     expect(container.textContent).toContain('Follow up')
 
-    await act(async () => (container.querySelector('button[aria-label="Expand agent message"]') as HTMLButtonElement).click())
-    expect(expandedMessages()).toEqual(['true', 'false'])
     messages[1] = { ...messages[1], content: '**Latest response continues streaming**' }
     await render()
-    expect(expandedMessages()).toEqual(['true', 'false'])
+    expect(agentMessages()).toEqual(['Older response', 'Latest response continues streaming'])
 
     messages.push({
       id: 'tools', role: 'tool-group', content: 'Newest tools', timestamp: 'now',
       toolCalls: [{ id: 'read', name: 'read', state: 'running', input: '{"filePath":"new-file"}', timestamp: 1 }]
     })
     await render()
-    expect(expandedMessages()).toEqual(['false', 'false'])
+    expect(agentMessages()).toEqual(['Older response', 'Latest response continues streaming'])
     expect(container.textContent).toContain('new-file')
+
+    const toolButton = container.querySelector('button[aria-expanded]') as HTMLButtonElement
+    await act(async () => toolButton.click())
+    expect(container.querySelector('pre')).toBeNull()
+    await act(async () => toolButton.click())
+    expect(container.querySelector('pre')?.textContent).toContain('new-file')
 
     messages.push({ id: 'final', role: 'assistant', content: 'Final response', timestamp: 'now' })
     await render()
-    expect(expandedMessages()).toEqual(['false', 'false', 'true'])
+    expect(agentMessages()).toEqual(['Older response', 'Latest response continues streaming', 'Final response'])
     expect(container.querySelector('pre')).toBeNull()
     expect(container.querySelector('[role="status"]')?.textContent).toContain('new-file')
   })
