@@ -320,11 +320,13 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [outputVerbosity, setOutputVerbosity] = useState<OutputVerbosity>(() =>
     loadAgentOutputVerbosity(agent.sessionId ?? agent.id) ?? loadSettings().outputVerbosity
   )
-  const latestAgentMessageId = messages.reduce<string | undefined>((latestId, message) => {
-    if (message.role === 'assistant' || message.role === 'tool-group' || message.role === 'tool') return message.id
-    return latestId
+  const latestAgentMessage = messages.reduce<Message | undefined>((latest, message) => {
+    if (message.role === 'assistant' || message.role === 'tool-group' || message.role === 'tool') return message
+    return latest
   }, undefined)
-  const recentExpansion = useMostRecentExpansion(outputVerbosity === 'recent', latestAgentMessageId)
+  const latestTools = latestAgentMessage?.toolCalls
+  const latestToolId = latestTools?.[latestTools.length - 1]?.id
+  const recentExpansion = useMostRecentExpansion(outputVerbosity === 'recent', latestAgentMessage?.id, latestToolId)
   const [autoRecoverSetting, setAutoRecoverSetting] = useState<AgentAutoRecoverSetting>(() =>
     loadAgentAutoRecoverSetting(agent.id)
   )
@@ -957,6 +959,8 @@ export const DetailDrawer = memo(function DetailDrawer({
                     ))}
                   </>
                 )}
+
+                <AgentActivity agent={agent} messages={messages} />
 
                 {(permission || question || showQuestionFallback) && (
                   <div
@@ -1775,7 +1779,7 @@ function Tab({
 
 const outputVerbosityDescriptions: Record<OutputVerbosity, string> = {
   none: 'Keep tool and event details collapsed.',
-  recent: 'Expand details for the latest output. Agent messages stay expanded. User messages do not change the selection.',
+  recent: 'Open the latest tool call. Expand earlier calls when needed. Agent messages stay expanded.',
   some: 'Expand parent tools and events, but collapse subagent transcripts.',
   all: 'Expand parent tools, events, and subagent transcripts.'
 }
@@ -1946,6 +1950,31 @@ function AgentConfigPanel({
 }
 
 type MessageRefCallback = (id: string, node: HTMLElement | null) => void
+
+function AgentActivity({ agent, messages }: { agent: AgentRuntime; messages: Message[] }) {
+  if (agent.status !== 'running') return null
+
+  let hasRunningTool = false
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === 'user') break
+    if (message.toolState === 'running' || message.toolCalls?.some((tool) => tool.state === 'running')) {
+      hasRunningTool = true
+      break
+    }
+  }
+
+  let activity = 'Agent is thinking…'
+  if (agent.compacting) activity = 'Agent is compacting…'
+  else if (agent.retry) activity = 'Agent is retrying…'
+  else if (hasRunningTool) activity = 'Agent is working…'
+
+  return (
+    <div data-agent-activity role="status" className="px-3 py-2 text-[11px] text-kumo-subtle">
+      {activity}
+    </div>
+  )
+}
 
 export const MessageBubble = memo(function MessageBubble({
   message,
@@ -2206,6 +2235,8 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
+  const latestToolId = toolCalls[toolCalls.length - 1]?.id
+  const recentToolExpansion = useMostRecentExpansion(verbosity === 'recent', latestToolId)
   const toolModels = [...new Set(toolCalls.map((tool) => tool.model).filter(Boolean))].join(', ')
 
   const runningTools = toolCalls.filter((tool) => tool.state === 'running')
@@ -2272,40 +2303,58 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 
       {isExpanded && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
-          {toolCalls.map((tool) => (
-            <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
-              <div className="flex items-center gap-2">
+          {toolCalls.map((tool) => {
+            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.expandedId === tool.id
+            const inputSummary = summarizeToolInput(tool.name, tool.input)
+            const header = (
+              <>
                 <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
                 <ResponseMetadata response={tool} />
                 <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
                   {tool.state}
                 </span>
+              </>
+            )
+            return (
+              <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
+                {verbosity === 'recent' ? (
+                  <button
+                    type="button"
+                    aria-expanded={toolExpanded}
+                    onClick={() => recentToolExpansion.toggle(tool.id)}
+                    className="flex w-full items-center gap-2 text-left"
+                    title={inputSummary}
+                  >
+                    {toolExpanded ? <CaretDown size={10} className="text-kumo-subtle" /> : <CaretRight size={10} className="text-kumo-subtle" />}
+                    {header}
+                    {!toolExpanded && inputSummary && (
+                      <span className="min-w-0 truncate font-mono text-[10px] text-kumo-subtle">{inputSummary}</span>
+                    )}
+                  </button>
+                ) : <div className="flex items-center gap-2">{header}</div>}
+                {toolExpanded && (
+                  <>
+                    {inputSummary && (
+                      <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
+                        {inputSummary}
+                      </pre>
+                    )}
+                    {/* Show live subagent progress before its final output */}
+                    {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
+                      <div className="mt-2">
+                        <CollapsibleSubagentProgress tool={tool} verbosity={verbosity} />
+                      </div>
+                    )}
+                    {tool.output && (
+                      <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
+                        {tool.output}
+                      </pre>
+                    )}
+                  </>
+                )}
               </div>
-              {summarizeToolInput(tool.name, tool.input) && (
-                <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
-                  {summarizeToolInput(tool.name, tool.input)}
-                </pre>
-              )}
-              {/* Live sub-agent progress for the `task` tool. The child
-                  session's messages are already flowing through EventBridge →
-                  useAgentStore; we just mirror them inline so the user can
-                  watch what the sub-agent is doing. Rendered above the final
-                  output so the transcript reads top-to-bottom. */}
-              {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
-                <div className="mt-2">
-                  <CollapsibleSubagentProgress
-                    tool={tool}
-                    verbosity={verbosity}
-                  />
-                </div>
-              )}
-              {tool.output && (
-                <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
-                  {tool.output}
-                </pre>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

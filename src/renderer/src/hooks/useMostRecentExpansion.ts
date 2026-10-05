@@ -1,12 +1,15 @@
 import { useCallback, useState } from 'react'
 
-export function useMostRecentExpansion(enabled: boolean, latestId: string | undefined) {
-  if (!enabled) latestId = undefined
-  const [selection, setSelection] = useState({ enabled, latestId, expandedId: latestId })
-  const current = selection.enabled === enabled && selection.latestId === latestId
+export function useMostRecentExpansion(enabled: boolean, latestId: string | undefined, latestRevision = latestId) {
+  if (!enabled) {
+    latestId = undefined
+    latestRevision = undefined
+  }
+  const [selection, setSelection] = useState({ enabled, latestId, latestRevision, expandedId: latestId })
+  const current = selection.enabled === enabled && selection.latestId === latestId && selection.latestRevision === latestRevision
   const expandedId = current ? selection.expandedId : latestId
 
-  if (!current) setSelection({ enabled, latestId, expandedId: latestId })
+  if (!current) setSelection({ enabled, latestId, latestRevision, expandedId: latestId })
 
   const toggle = useCallback((id: string) => {
     setSelection((previous) => ({
