@@ -1775,7 +1775,7 @@ function Tab({
 
 const outputVerbosityDescriptions: Record<OutputVerbosity, string> = {
   none: 'Keep tool and event details collapsed.',
-  recent: 'Expand only the latest agent message, tool group, or event. User messages do not change the selection.',
+  recent: 'Expand details for the latest output. Agent messages stay expanded. User messages do not change the selection.',
   some: 'Expand parent tools and events, but collapse subagent transcripts.',
   all: 'Expand parent tools, events, and subagent transcripts.'
 }
@@ -2011,7 +2011,6 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   const isUser = message.role === 'user'
-  const expanded = isUser || verbosity !== 'recent' || recentExpanded
   const [copied, setCopied] = useState(false)
 
   // Clear the "copied" indicator after a short delay, cancelling the
@@ -2045,17 +2044,6 @@ export const MessageBubble = memo(function MessageBubble({
     >
       <div className="mb-1 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle">
-          {!isUser && verbosity === 'recent' && (
-            <button
-              type="button"
-              aria-label={expanded ? 'Collapse agent message' : 'Expand agent message'}
-              aria-expanded={expanded}
-              onClick={() => onToggleRecent?.(message.id)}
-              className="text-kumo-subtle hover:text-kumo-default"
-            >
-              {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
-            </button>
-          )}
           <span>{isUser ? 'You' : 'Agent'}</span>
           {!isUser && <ResponseMetadata response={message} />}
         </div>
@@ -2078,7 +2066,7 @@ export const MessageBubble = memo(function MessageBubble({
           </span>
         </div>
       </div>
-      {expanded && message.images && message.images.length > 0 && (
+      {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {message.images.map((img, index) => (
             <div key={index} className="relative group">
@@ -2097,8 +2085,7 @@ export const MessageBubble = memo(function MessageBubble({
           ))}
         </div>
       )}
-      {!expanded && <div className="truncate text-kumo-subtle">{message.content}</div>}
-      {expanded && message.content && (
+      {message.content && (
         isUser
           ? <div className="whitespace-pre-wrap">{message.content}</div>
           : <Markdown>{message.content}</Markdown>
