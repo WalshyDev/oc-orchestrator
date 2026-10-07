@@ -197,17 +197,18 @@ function buildImportContextBlob(input: {
   collected.reverse()
 
   const header = [
-    `# Imported session context`,
-    ``,
+    '# Imported session context',
+    '',
     `You are resuming work from a prior session titled **${sourceTitle}**.`,
     `The conversation below ran in **${sourceDirectory}**.`,
-    `This new session is in a different worktree: **${targetDirectory}**.`,
-    ``,
-    `File paths, tool outputs, and changes from the prior session do NOT carry`,
-    `over to this worktree. Use the prior conversation only as context for what`,
-    `the user was trying to accomplish; re-verify file paths and re-run any`,
-    `tools you need in this worktree.`,
-    ``
+    `This new session runs in **${targetDirectory}**.`,
+    '',
+    ...(sourceDirectory !== targetDirectory ? [
+      'File paths and changes from the prior directory may not exist here.'
+    ] : []),
+    'Use the prior conversation as context for what the user was trying to',
+    'accomplish. Check the current files and rerun any tools you need.',
+    ''
   ].join('\n')
 
   if (collected.length === 0) {

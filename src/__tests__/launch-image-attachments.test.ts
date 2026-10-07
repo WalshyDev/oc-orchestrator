@@ -25,6 +25,10 @@ const sessions = [
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  })
   localStorage.clear()
   window.api = {
     ...createDemoApi(),
@@ -157,5 +161,67 @@ describe('launch prompt screenshot attachments', () => {
     expect(document.querySelector('img[alt="Screenshot.png"]')).toBeNull()
     await clickButton('Fork & Launch')
     expect(onLaunch.mock.calls[0][6]).toBeUndefined()
+  })
+})
+
+describe('launch directory validation', () => {
+  it('respects the current directory strategy for Git imports', async () => {
+    const onLaunch = await renderModal()
+    await selectSession()
+    await clickButton('New Worktree (recommended)')
+    await clickButton('Use Current Directory')
+    await clickButton('Fork & Launch')
+    expect(onLaunch.mock.calls[0][5]).toBe('current-directory')
+  })
+
+  it('imports a home session without creating a Git worktree', async () => {
+    const home = '/Users/example'
+    window.api.getHomeDirectory = vi.fn().mockResolvedValue({ ok: true, data: home })
+    window.api.validateDirectory = vi.fn().mockResolvedValue({ ok: true, data: true })
+    window.api.validateGitRepo = vi.fn().mockResolvedValue({ ok: true, data: false })
+    window.api.getRepoRoot = vi.fn().mockResolvedValue({ ok: false, error: 'Not a Git repository' })
+    window.api.createWorktree = vi.fn()
+    window.api.importSession = vi.fn().mockResolvedValue({
+      ok: true, data: { id: 'home-import', sessionId: 'home-session', directory: home, status: 'idle' }
+    })
+    window.api.listSessionsByProject = vi.fn().mockResolvedValue({
+      ok: true, data: [{ ...sessions[0], directory: home }]
+    })
+    await act(async () => root.render(createElement(App)))
+    await clickButton('Launch Agent')
+    await clickButton('Import Session')
+    await settle()
+    const directoryButton = Array.from(document.querySelectorAll('button')).find((element) => element.textContent?.includes('/tmp/repo'))!
+    await act(async () => directoryButton.click())
+    const homeButton = Array.from(document.querySelectorAll('button')).find((element) => element.textContent === 'Home / QuickStart (~)')!
+    await act(async () => homeButton.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    await settle(550)
+    expect(window.api.validateDirectory).toHaveBeenCalledWith(home)
+    expect(window.api.validateGitRepo).not.toHaveBeenCalled()
+    expect(window.api.listSessionsByProject).toHaveBeenCalledWith(home)
+    expect(document.body.textContent).toContain('Use Current Directory')
+    await selectSession()
+    await clickButton('Fork & Launch')
+    await settle()
+    expect(window.api.importSession).toHaveBeenCalledWith(expect.objectContaining({
+      sourceSessionId: 'source-a', sourceDirectory: home, targetDirectory: home
+    }))
+    expect(window.api.createWorktree).not.toHaveBeenCalled()
+  })
+
+  it('blocks missing directories before listing sessions', async () => {
+    const onLaunch = vi.fn()
+    await act(async () => root.render(createElement(LaunchModal, {
+      onClose: vi.fn(), onLaunch, onSelectDirectory: vi.fn().mockResolvedValue(null),
+      onValidateDirectory: vi.fn().mockResolvedValue(false)
+    })))
+    await clickButton('Import Session')
+    await settle(550)
+    expect(document.body.textContent).toContain('This directory does not exist or is not a folder.')
+    expect(window.api.listSessionsByProject).not.toHaveBeenCalled()
+    const launchButton = Array.from(document.querySelectorAll('button')).find((element) => element.textContent === 'Launch Agent')!
+    expect(launchButton.disabled).toBe(true)
+    await act(async () => launchButton.click())
+    expect(onLaunch).not.toHaveBeenCalled()
   })
 })

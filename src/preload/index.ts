@@ -173,6 +173,9 @@ const api = {
     ipcRenderer.invoke('dialog:select-directory'),
 
   // ── Workspace Operations ──
+  validateDirectory: (directory: string): Promise<IpcResult<boolean>> =>
+    ipcRenderer.invoke('workspace:validate-directory', directory),
+
   validateGitRepo: (directory: string): Promise<IpcResult<boolean>> =>
     ipcRenderer.invoke('workspace:validate-git', directory),
 

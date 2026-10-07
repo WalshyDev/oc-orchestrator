@@ -78,6 +78,7 @@ export interface OrchestratorApi {
   selectDirectory: () => Promise<IpcResult<string>>
 
   // ── Workspace Operations ──
+  validateDirectory: (directory: string) => Promise<IpcResult<boolean>>
   validateGitRepo: (directory: string) => Promise<IpcResult<boolean>>
   getWorktreeRoot: () => Promise<IpcResult<string>>
   getRepoRoot: (directory: string) => Promise<IpcResult<string>>

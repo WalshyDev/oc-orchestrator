@@ -1430,13 +1430,12 @@ Then give me a brief summary of what the previous session was working on and whe
   }, [])
 
   const handleValidateDirectory = useCallback(async (dir: string): Promise<boolean> => {
-    if (!dir.trim() || dir.trim().length < 2) return false
+    if (!dir.trim()) return false
     try {
-      const result = await window.api.validateGitRepo(dir.trim())
+      const result = await window.api.validateDirectory(dir.trim())
       return result.ok && result.data === true
     } catch {
-      // Fallback: accept any non-empty path starting with /
-      return dir.startsWith('/')
+      return false
     }
   }, [])
 
