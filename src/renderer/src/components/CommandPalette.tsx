@@ -105,8 +105,8 @@ export function CommandPalette({
       },
       {
         id: 'action-resume',
-        label: 'Resume Session',
-        description: 'Import an existing session from a project',
+        label: 'Restore / Resume Session',
+        description: 'Find sessions removed from the fleet, including QuickStart',
         icon: <ClockCounterClockwise size={16} weight="bold" className="text-kumo-link" />,
         category: 'actions',
         shortcut: 'R',

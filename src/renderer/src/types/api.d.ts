@@ -1,6 +1,8 @@
 import type { ProjectSettings, WorktreeStrategy } from '../../../shared/project'
+import type { SessionListPage } from '../../../shared/session-browser'
 import type { AgentFolder, FolderSnapshot } from '../../../shared/folders'
 
+export type { SessionListEntry } from '../../../shared/session-browser'
 export type { ProjectSettings, WorktreeStrategy }
 
 export interface IpcResult<T = unknown> {
@@ -46,7 +48,8 @@ export interface OrchestratorApi {
   listAgentConfigs: (agentId: string) => Promise<IpcResult>
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
-  listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
+  listSessions: (directory: string, limit?: number) => Promise<IpcResult<SessionListPage>>
+  getSessionFirstPrompt: (directory: string, sessionId: string) => Promise<IpcResult<string>>
   listSessionsByProject: (projectDirectory: string) => Promise<IpcResult<ProjectSessionEntry[]>>
   importSession: (options: {
     sourceSessionId: string
@@ -158,13 +161,6 @@ export interface WorktreeListEntry {
   path: string
   head: string
   branch: string
-}
-
-export interface SessionListEntry {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
 }
 
 export interface ProjectSessionEntry {

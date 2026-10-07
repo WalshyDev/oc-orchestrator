@@ -1411,7 +1411,7 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleResumeSession = useCallback(async (directory: string, sessionId: string, title: string) => {
     const result = await window.api.resumeAgent({ directory, sessionId, title })
     if (!result?.ok) {
-      throw new Error('Failed to resume session')
+      throw new Error(result?.error ?? 'Failed to resume session')
     }
     if (result.data) {
       const data = result.data as { id: string }
@@ -1775,7 +1775,6 @@ Then give me a brief summary of what the previous session was working on and whe
           onClose={() => setShowSessionBrowser(false)}
           onResume={handleResumeSession}
           onSelectDirectory={store.selectDirectory}
-          onValidateDirectory={handleValidateDirectory}
           knownDirectories={store.agents.map((a) => ({
             name: a.projectName,
             directory: a.directory,

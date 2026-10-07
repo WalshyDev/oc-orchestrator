@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ProjectSettings } from '../shared/project'
 import type { FolderSnapshot } from '../shared/folders'
+import type { SessionListPage } from '../shared/session-browser'
 
 export interface IpcResult<T = unknown> {
   ok: boolean
@@ -109,8 +110,11 @@ const api = {
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
-  listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>
-    ipcRenderer.invoke('session:list', directory),
+  listSessions: (directory: string, limit?: number): Promise<IpcResult<SessionListPage>> =>
+    ipcRenderer.invoke('session:list', directory, limit),
+
+  getSessionFirstPrompt: (directory: string, sessionId: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('session:first-prompt', directory, sessionId),
 
   listSessionsByProject: (projectDirectory: string): Promise<IpcResult<Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }>>> =>
     ipcRenderer.invoke('session:list-by-project', projectDirectory),
