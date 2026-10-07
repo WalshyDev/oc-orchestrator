@@ -34,6 +34,18 @@ import { buildToolGroupMessage } from './lib/transcript-metadata'
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
 
+function openDirectoryInEditor(path: string): void {
+  const settings = loadSettings()
+  const editor = settings.editor
+  const validEditor = editor === 'vscode' || editor === 'cursor' || editor === 'windsurf'
+    || editor === 'goland' || editor === 'custom'
+  window.api.openInEditor({
+    path,
+    editor: validEditor ? editor : 'vscode',
+    customCommand: settings.customEditorCommand
+  })
+}
+
 function sanitizeSlugSegment(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -1083,8 +1095,7 @@ Then give me a brief summary of what the previous session was working on and whe
     if (!selectedAgentId) return
     const liveAgent = findLiveAgent(selectedAgentId)
     if (!liveAgent) return
-    const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
+    openDirectoryInEditor(liveAgent.directory)
   }, [selectedAgentId, findLiveAgent])
 
   const handleOpenWorkspace = useCallback((filePath?: string) => {
@@ -1154,8 +1165,7 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleOpenInEditorForAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
-    const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
+    openDirectoryInEditor(liveAgent.directory)
   }, [findLiveAgent])
 
   // ── Launch modal actions ──

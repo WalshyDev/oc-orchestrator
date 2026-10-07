@@ -309,7 +309,7 @@ const api = {
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),
 
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }): Promise<IpcResult> =>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' | 'custom'; customCommand?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
   openTerminal: (options: { path: string; terminal?: string }): Promise<IpcResult> =>
