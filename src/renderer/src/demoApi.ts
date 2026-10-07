@@ -349,7 +349,8 @@ export function createDemoApi(): OrchestratorApi {
     shareSession: noop,
     listAgentConfigs: () => ok([]),
     listTools: () => ok([]),
-    listSessions: () => ok([]),
+    listSessions: () => ok({ sessions: [], hasMore: false }),
+    getSessionFirstPrompt: () => ok(''),
     listSessionsByProject: () => ok([]),
     importSession: () => ok({
       id: 'demo-imported',

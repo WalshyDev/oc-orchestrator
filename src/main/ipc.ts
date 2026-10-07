@@ -414,12 +414,21 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('session:list', async (_event, directory: string) => {
+  ipcMain.handle('session:list', async (_event, directory: string, limit?: number) => {
     try {
-      const sessions = await agentController.listSessions(directory)
+      const sessions = await agentController.listSessions(directory, limit)
       return { ok: true, data: sessions }
     } catch (error) {
       logIpcError('session:list', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('session:first-prompt', async (_event, directory: string, sessionId: string) => {
+    try {
+      return { ok: true, data: await agentController.getSessionFirstPrompt(directory, sessionId) }
+    } catch (error) {
+      logIpcError('session:first-prompt', error)
       return { ok: false, error: String(error) }
     }
   })
