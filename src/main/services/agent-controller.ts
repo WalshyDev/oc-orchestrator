@@ -8,6 +8,7 @@ import { database } from './database'
 import { workspaceManager } from './workspace-manager'
 import { leaseRegistry } from './lease-registry'
 import { getForkedTitle } from '../../shared/project'
+import type { SessionListPage } from '../../shared/session-browser'
 
 interface Attachment {
   id?: string
@@ -1472,37 +1473,66 @@ class AgentController {
    * List existing OpenCode sessions for a directory.
    * Spins up a temporary runtime if needed, then queries the SDK.
    */
-  async listSessions(directory: string): Promise<Array<{
-    id: string
-    title: string
-    createdAt: number
-    updatedAt: number
-  }>> {
+  async listSessions(directory: string, limit = 100): Promise<SessionListPage> {
+    if (!Number.isInteger(limit) || limit < 1) throw new Error('Invalid session limit')
     const runtime = await this.ensureBridgeForDirectory(directory)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     const result = await runtime.client.session.list({
-      directory
+      directory,
+      roots: true,
+      limit: limit + 1
     })
 
-    if (!result.data) return []
+    if (!result.data) throw new Error('Failed to list sessions')
 
-    const sessions = result.data as Array<{
-      id: string
-      title?: string
-      time?: { created?: number; updated?: number }
-    }>
+    const sessions = result.data
 
     const activeSessionIds = this.getActiveSessionIds()
 
-    return sessions
-      .filter((session) => !activeSessionIds.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        title: session.title ?? session.id,
-        createdAt: session.time?.created ?? 0,
-        updatedAt: session.time?.updated ?? 0
-      }))
+    return {
+      hasMore: sessions.length > limit,
+      sessions: sessions.slice(0, limit)
+        .filter((session) => !activeSessionIds.has(session.id) && !session.parentID)
+        .map((session) => ({
+          id: session.id,
+          title: session.title ?? session.id,
+          directory: session.directory ?? directory,
+          createdAt: session.time?.created ?? 0,
+          updatedAt: session.time?.updated ?? 0
+        }))
+    }
+  }
+
+  async getSessionFirstPrompt(directory: string, sessionId: string): Promise<string> {
+    const runtime = await this.ensureBridgeForDirectory(directory)
+    runtimeManager.touchRuntimeActivity(runtime.id)
+    let before: string | undefined
+    let firstPrompt = ''
+    const seen = new Set<string>()
+    const signal = AbortSignal.timeout(15_000)
+    for (let page = 0; page < 50; page++) {
+      signal.throwIfAborted()
+      const result = await runtime.client.session.messages({
+        directory, sessionID: sessionId, limit: 100, ...(before ? { before } : {})
+      }, { signal })
+      if (!result.data) throw new Error('Failed to read session preview')
+      const messages = [...result.data].sort((a, b) => a.info.id.localeCompare(b.info.id))
+      for (const message of [...messages].reverse()) {
+        if (message.info.role !== 'user') continue
+        const text = message.parts
+          .filter((part) => part.type === 'text' && !part.synthetic && !part.ignored)
+          .map((part) => part.type === 'text' ? part.text : '')
+          .join('\n').trim()
+        if (text) firstPrompt = text
+      }
+      if (messages.length < 100) return firstPrompt
+      const oldestId = messages[0].info.id
+      if (seen.has(oldestId)) throw new Error('Session preview pagination did not advance')
+      seen.add(oldestId)
+      before = oldestId
+    }
+    throw new Error('Session is too long to load its first prompt preview')
   }
 
   /**

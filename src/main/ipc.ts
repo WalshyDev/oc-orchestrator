@@ -12,6 +12,7 @@ import { getAppVersion } from './version'
 import { buildTerminalTabScript } from './terminal'
 import { folderManager } from './services/folder-manager'
 import type { FolderSnapshot } from '../shared/folders'
+import { resolveEditorLaunch, type OpenInEditorOptions } from './editor'
 
 interface Attachment {
   id?: string
@@ -413,12 +414,21 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('session:list', async (_event, directory: string) => {
+  ipcMain.handle('session:list', async (_event, directory: string, limit?: number) => {
     try {
-      const sessions = await agentController.listSessions(directory)
+      const sessions = await agentController.listSessions(directory, limit)
       return { ok: true, data: sessions }
     } catch (error) {
       logIpcError('session:list', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('session:first-prompt', async (_event, directory: string, sessionId: string) => {
+    try {
+      return { ok: true, data: await agentController.getSessionFirstPrompt(directory, sessionId) }
+    } catch (error) {
+      logIpcError('session:first-prompt', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -1034,27 +1044,18 @@ export function registerIpcHandlers(): void {
   // ── Shell Integration ──
 
   /** Promisified execFile — avoids shell interpretation of arguments */
-  const run = (cmd: string, args: string[]): Promise<void> =>
+  const run = (cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> =>
     new Promise((resolve, reject) => {
-      execFile(cmd, args, (error) => {
+      execFile(cmd, args, { env }, (error) => {
         if (error) reject(error)
         else resolve()
       })
     })
 
-  ipcMain.handle('shell:open-in-editor', async (_event, options: {
-    path: string
-    editor: 'vscode' | 'cursor' | 'windsurf' | 'goland'
-  }) => {
+  ipcMain.handle('shell:open-in-editor', async (_event, options: OpenInEditorOptions) => {
     try {
-      const editorCommands: Record<string, string> = {
-        vscode: 'code',
-        cursor: 'cursor',
-        windsurf: 'windsurf',
-        goland: 'goland'
-      }
-      const cmd = editorCommands[options.editor] ?? 'code'
-      await run(cmd, [options.path])
+      const launch = resolveEditorLaunch(options)
+      await run(launch.command, launch.args, launch.env)
       return { ok: true }
     } catch (error) {
       logIpcError('shell:open-in-editor', error)

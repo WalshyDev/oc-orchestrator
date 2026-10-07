@@ -1,14 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { X, FolderOpen, CaretDown, Trash, ClockCounterClockwise, CircleNotch, ChatCircleDots } from '@phosphor-icons/react'
-import type { Project } from '../types/api'
+import type { Project, SessionListEntry } from '../types/api'
 import { PortaledMenu } from './PortaledMenu'
-
-interface SessionInfo {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
-}
+import { matchesSessionSearch } from '../lib/session-browser'
 
 interface KnownDirectory {
   name: string
@@ -20,8 +14,18 @@ interface SessionBrowserProps {
   onClose: () => void
   onResume: (directory: string, sessionId: string, title: string) => void
   onSelectDirectory: () => Promise<string | null>
-  onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
+}
+
+interface PromptPreview {
+  text?: string
+  error?: string
+}
+
+function previewText(preview?: PromptPreview): string {
+  if (!preview) return 'Loading first prompt...'
+  if (preview.error) return 'First prompt unavailable'
+  return preview.text || 'No user text prompt'
 }
 
 function dirDisplayName(path: string): string {
@@ -49,20 +53,38 @@ export function SessionBrowser({
   onClose,
   onResume,
   onSelectDirectory,
-  onValidateDirectory,
   knownDirectories
 }: SessionBrowserProps) {
   const [directory, setDirectory] = useState('')
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [sessions, setSessions] = useState<SessionListEntry[]>([])
+  const [homeDirectory, setHomeDirectory] = useState('')
+  const [sessionSearch, setSessionSearch] = useState('')
+  const [limit, setLimit] = useState(100)
+  const [hasMore, setHasMore] = useState(false)
+  const [previews, setPreviews] = useState<Record<string, PromptPreview>>({})
+  const previewCache = useRef<Record<string, PromptPreview>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resuming, setResuming] = useState<string | null>(null)
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
-  const [validating, setValidating] = useState(false)
-  const [dirError, setDirError] = useState<string | null>(null)
   const dropdownButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.getHomeDirectory().then((result) => {
+      if (cancelled) return
+      if (result.ok && result.data) {
+        const home = result.data
+        setHomeDirectory(home)
+        setDirectory((current) => current || home)
+      } else {
+        setError(result.error ?? 'Could not find the home directory. Browse for a directory below.')
+      }
+    }).catch((err) => { if (!cancelled) setError(String(err)) })
+    return () => { cancelled = true }
+  }, [])
 
   // Load saved projects
   useEffect(() => {
@@ -109,69 +131,25 @@ export function SessionBrowser({
     void seedFromAgents()
   }, [])
 
-  // Validate directory
   useEffect(() => {
-    if (!directory.trim()) {
-      setDirError(null)
-      setValidating(false)
-      return
-    }
-
-    const currentDir = directory.trim()
-    setValidating(true)
-
-    const timer = setTimeout(async () => {
-      if (onValidateDirectory) {
-        try {
-          const isValid = await onValidateDirectory(currentDir)
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) {
-              setDirError(isValid ? null : 'This directory is not a valid git repository.')
-              setValidating(false)
-            }
-            return latest
-          })
-        } catch {
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) {
-              setDirError('Could not validate directory.')
-              setValidating(false)
-            }
-            return latest
-          })
-        }
-      } else {
-        setValidating(false)
-      }
-    }, 500)
-
-    return () => clearTimeout(timer)
-  }, [directory, onValidateDirectory])
-
-  // Fetch sessions when directory changes and is valid
-  useEffect(() => {
-    if (!directory.trim() || dirError || validating) {
-      setSessions([])
-      setError(null)
-      return
-    }
+    if (!directory.trim()) return
 
     let cancelled = false
     const fetchSessions = async () => {
       setLoading(true)
       setError(null)
       setSessions([])
+      setHasMore(false)
+      setPreviews(previewCache.current)
 
       try {
-        const result = await window.api.listSessions(directory.trim())
+        const result = await window.api.listSessions(directory.trim(), limit)
         if (cancelled) return
 
         if (result.ok && result.data) {
-          const sorted = [...result.data].sort((a, b) => b.updatedAt - a.updatedAt)
+          const sorted = [...result.data.sessions].sort((a, b) => b.updatedAt - a.updatedAt)
           setSessions(sorted)
-          if (sorted.length === 0) {
-            setError('No existing sessions found in this directory.')
-          }
+          setHasMore(result.data.hasMore)
         } else {
           setError(result.error ?? 'Failed to list sessions.')
         }
@@ -186,7 +164,46 @@ export function SessionBrowser({
 
     void fetchSessions()
     return () => { cancelled = true }
-  }, [directory, dirError, validating])
+  }, [directory, limit])
+
+  useEffect(() => {
+    let cancelled = false
+    let next = 0
+    const loadPreviews = async () => {
+      while (!cancelled && next < sessions.length) {
+        const session = sessions[next++]
+        const cached = previewCache.current[session.id]
+        if (cached) {
+          setPreviews((current) => ({ ...current, [session.id]: cached }))
+          continue
+        }
+        try {
+          const result = await window.api.getSessionFirstPrompt(session.directory, session.id)
+          const preview = result.ok
+            ? { text: result.data ?? '' }
+            : { error: result.error ?? 'Could not load first prompt' }
+          previewCache.current = { ...previewCache.current, [session.id]: preview }
+          if (cancelled) return
+          setPreviews((current) => ({ ...current, [session.id]: preview }))
+        } catch (err) {
+          const preview = { error: String(err) }
+          previewCache.current = { ...previewCache.current, [session.id]: preview }
+          if (!cancelled) setPreviews((current) => ({ ...current, [session.id]: preview }))
+        }
+      }
+    }
+    for (let worker = 0; worker < Math.min(4, sessions.length); worker++) void loadPreviews()
+    return () => { cancelled = true }
+  }, [sessions])
+
+  const filteredSessions = useMemo(() => sessions.filter((session) =>
+    matchesSessionSearch(session, previews[session.id]?.text ?? '', sessionSearch)
+  ), [sessions, previews, sessionSearch])
+  const pendingPreviews = sessions.filter((session) => !previews[session.id]).length
+  const failedPreviews = sessions.filter((session) => previews[session.id]?.error).length
+  let emptyMessage = 'No sessions outside the fleet found in this directory.'
+  if (pendingPreviews > 0) emptyMessage = 'Searching first prompts...'
+  else if (sessions.length > 0) emptyMessage = 'No matching sessions.'
 
   const filteredProjects = useMemo(() => {
     if (!projectSearch.trim()) return savedProjects
@@ -201,28 +218,28 @@ export function SessionBrowser({
   const handleBrowse = async () => {
     const selected = await onSelectDirectory()
     if (selected) {
-      setDirectory(selected)
-      setShowDropdown(false)
-      setProjectSearch('')
+      handleSelectProject(selected)
     }
   }
 
   const handleSelectProject = (repoRoot: string) => {
+    setLimit(100)
+    setSessionSearch('')
     setDirectory(repoRoot)
     setShowDropdown(false)
     setProjectSearch('')
   }
 
-  const handleResume = useCallback(async (session: SessionInfo) => {
+  const handleResume = useCallback(async (session: SessionListEntry) => {
     setResuming(session.id)
     try {
-      await onResume(directory.trim(), session.id, session.title)
+      await onResume(session.directory, session.id, session.title)
       onClose()
     } catch (err) {
-      console.error('Resume failed:', err)
+      setError(`Resume failed: ${String(err)}`)
       setResuming(null)
     }
-  }, [directory, onResume, onClose])
+  }, [onResume, onClose])
 
   const removeProject = useCallback(async (projectId: string, event: React.MouseEvent) => {
     event.stopPropagation()
@@ -252,7 +269,7 @@ export function SessionBrowser({
         <div className="flex items-center justify-between px-5 py-4 border-b border-kumo-line">
           <div className="flex items-center gap-2.5">
             <ClockCounterClockwise size={18} className="text-kumo-brand" />
-            <h2 className="text-base font-semibold text-kumo-strong">Resume Session</h2>
+            <h2 className="text-base font-semibold text-kumo-strong">Restore / Resume Session</h2>
           </div>
           <button
             onClick={onClose}
@@ -267,10 +284,10 @@ export function SessionBrowser({
           {/* Directory Selector */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-              Project Directory
+              Session Directory
             </label>
             <p className="text-[11px] text-kumo-subtle -mt-0.5">
-              Select the original project directory (not a worktree) to browse its sessions.
+              Restore a session removed from the fleet. QuickStart sessions are in your home directory.
             </p>
             <div className="flex gap-2">
               <div className="flex-1 min-w-0">
@@ -278,15 +295,13 @@ export function SessionBrowser({
                   ref={dropdownButtonRef}
                   type="button"
                   onClick={() => setShowDropdown(!showDropdown)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 bg-kumo-control border rounded-md text-sm outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring ${
-                    dirError ? 'border-kumo-danger' : 'border-kumo-line'
-                  }`}
+                  className="w-full flex items-center gap-2 px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm outline-none transition-colors hover:bg-kumo-fill focus:border-kumo-ring"
                 >
                   <div className="min-w-0 flex-1 text-left truncate">
                     {hasDirectory ? (
                       <>
                         <span className="text-kumo-default font-medium">
-                          {selectedProject?.name || dirDisplayName(directory)}
+                          {directory === homeDirectory ? 'Home / QuickStart' : selectedProject?.name || dirDisplayName(directory)}
                         </span>
                         <span className="text-kumo-subtle font-mono text-xs ml-2">
                           {directory}
@@ -320,6 +335,14 @@ export function SessionBrowser({
                     </div>
                   )}
                   <div className="overflow-y-auto flex-1">
+                    {homeDirectory && (
+                      <button
+                        onMouseDown={() => handleSelectProject(homeDirectory)}
+                        className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"
+                      >
+                        Home / QuickStart
+                      </button>
+                    )}
                     {filteredProjects.length > 0 && (
                       <>
                         <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
@@ -371,20 +394,30 @@ export function SessionBrowser({
                 <FolderOpen size={16} />
               </button>
             </div>
-            {validating && (
-              <p className="text-[11px] text-kumo-subtle">Validating directory...</p>
-            )}
-            {dirError && (
-              <p className="text-[11px] text-kumo-danger">{dirError}</p>
-            )}
           </div>
 
           {/* Sessions List */}
-          {hasDirectory && !dirError && !validating && (
+          {hasDirectory && (
             <div className="flex flex-col gap-1.5 min-h-0 flex-1">
               <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide shrink-0">
                 Available Sessions
               </label>
+              <input
+                aria-label="Search sessions"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder="Search title, first prompt, directory, or date (YYYY-MM-DD)..."
+                className="w-full rounded-md border border-kumo-line bg-kumo-control px-3 py-2 text-xs text-kumo-default outline-none focus:border-kumo-ring"
+              />
+              <p className="text-[11px] text-kumo-subtle">
+                Sessions already in the fleet are hidden. Search covers loaded sessions; load more to find older ones.
+              </p>
+              {!loading && pendingPreviews > 0 && (
+                <p className="text-[11px] text-kumo-subtle">Loading first prompts for {pendingPreviews} sessions...</p>
+              )}
+              {!loading && failedPreviews > 0 && (
+                <p className="text-[11px] text-kumo-danger">First prompt search is incomplete for {failedPreviews} sessions. You can still find them by title or date.</p>
+              )}
 
               {loading && (
                 <div className="flex items-center gap-2 py-6 justify-center text-sm text-kumo-subtle">
@@ -400,9 +433,15 @@ export function SessionBrowser({
                 </div>
               )}
 
-              {!loading && !error && sessions.length > 0 && (
+              {!loading && filteredSessions.length === 0 && !error && (
+                <p className="py-4 text-sm text-kumo-subtle text-center">
+                  {emptyMessage}
+                </p>
+              )}
+
+              {!loading && filteredSessions.length > 0 && (
                 <div className="border border-kumo-line rounded-md overflow-y-auto min-h-0 flex-1">
-                  {sessions.map((session) => (
+                  {filteredSessions.map((session) => (
                     <div
                       key={session.id}
                       className="flex items-center gap-3 px-4 py-3 border-b border-kumo-line last:border-b-0 hover:bg-kumo-fill transition-colors group"
@@ -411,10 +450,16 @@ export function SessionBrowser({
                         <div className="text-sm text-kumo-default font-medium truncate">
                           {session.title}
                         </div>
+                        <p className="text-xs text-kumo-subtle line-clamp-2 mt-1 whitespace-pre-wrap" title={previews[session.id]?.text ?? previews[session.id]?.error}>
+                          {previewText(previews[session.id])}
+                        </p>
+                        <div className="text-[11px] text-kumo-subtle font-mono truncate mt-1" title={session.directory}>{session.directory}</div>
                         <div className="flex items-center gap-2 text-[11px] text-kumo-subtle mt-0.5">
                           <span>Updated {formatTimestamp(session.updatedAt)}</span>
                           <span className="text-kumo-line">|</span>
-                          <span className="font-mono truncate">{session.id.slice(0, 20)}</span>
+                          <span title={session.createdAt ? new Date(session.createdAt).toLocaleString() : undefined}>
+                            Created {session.createdAt ? new Date(session.createdAt).toLocaleDateString() : 'unknown'}
+                          </span>
                         </div>
                       </div>
                       <button
@@ -425,15 +470,25 @@ export function SessionBrowser({
                         {resuming === session.id ? (
                           <CircleNotch size={12} className="animate-spin" />
                         ) : (
-                          'Resume'
+                          'Restore'
                         )}
                       </button>
                     </div>
                   ))}
                 </div>
               )}
+              {!loading && hasMore && (
+                <button
+                  onClick={() => setLimit((current) => current + 100)}
+                  disabled={resuming !== null}
+                  className="px-3 py-2 text-xs text-kumo-brand border border-kumo-line rounded-md disabled:opacity-40"
+                >
+                  Load more sessions
+                </button>
+              )}
             </div>
           )}
+          {!hasDirectory && error && <p className="text-sm text-kumo-danger">{error}</p>}
         </div>
 
         {/* Footer */}

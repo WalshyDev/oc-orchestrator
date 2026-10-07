@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ProjectSettings } from '../shared/project'
 import type { FolderSnapshot } from '../shared/folders'
+import type { SessionListPage } from '../shared/session-browser'
 
 export interface IpcResult<T = unknown> {
   ok: boolean
@@ -109,8 +110,11 @@ const api = {
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
-  listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>
-    ipcRenderer.invoke('session:list', directory),
+  listSessions: (directory: string, limit?: number): Promise<IpcResult<SessionListPage>> =>
+    ipcRenderer.invoke('session:list', directory, limit),
+
+  getSessionFirstPrompt: (directory: string, sessionId: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('session:first-prompt', directory, sessionId),
 
   listSessionsByProject: (projectDirectory: string): Promise<IpcResult<Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }>>> =>
     ipcRenderer.invoke('session:list-by-project', projectDirectory),
@@ -309,7 +313,7 @@ const api = {
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),
 
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }): Promise<IpcResult> =>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' | 'custom'; customCommand?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
   openTerminal: (options: { path: string; terminal?: string }): Promise<IpcResult> =>

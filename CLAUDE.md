@@ -52,7 +52,7 @@ Test runtime compatibility with `OPENCODE_INTEGRATION=1 OPENCODE_PATH=/path/to/o
 - **StatusBar** — bottom bar with runtime health, agent count, version info
 - **TopBar** — header with global status summary, command palette trigger, launch button
 - **LaunchModal** — agent launch with project selection, worktree creation, model choice
-- **SessionBrowser** — browse and resume previous sessions per project
+- **SessionBrowser** — find and restore sessions outside the fleet, including QuickStart, with first prompt previews and search
 - **CommandPalette** — quick access to all actions via `Cmd+K`
 - **ModelPickerModal** — per-agent model switching with provider selection
 - **McpModal** — view, connect, and disconnect MCP servers per agent

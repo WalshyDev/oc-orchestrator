@@ -14,7 +14,7 @@ Desktop app for running and supervising 10+ concurrent [OpenCode](https://github
 - **Labels & workflow tags** — mark agents as In Review, Blocked, Done, or Draft to track progress
 - **Filter & search** — filter by status, label, or project; search by name or task; state persists across restarts
 - **Interrupt banner** — blocked and errored agents surface at the top for quick triage
-- **Session browser** — browse and resume previous sessions per project
+- **Session browser** lets you restore sessions removed from the fleet, including QuickStart sessions. Search by title, date, directory, or first prompt, and load older sessions.
 - **Model picker** — switch models on the fly per agent with provider selection
 - **MCP management** — view, connect, and disconnect MCP servers per agent
 - **`/new`** — reset an agent's conversation and branch without leaving the fleet table
@@ -43,6 +43,20 @@ Set `OPENCODE_PATH` to the executable for either official OpenCode v1 or the `2.
 ```bash
 oc-orchestrator
 ```
+
+## Restore a session
+
+Press `R` from the fleet, or choose **Restore / Resume Session** in the command palette.
+The browser opens **Home / QuickStart** by default. Choose another directory to find
+its sessions, then search by title, first prompt, or date (`YYYY-MM-DD`).
+Search covers the sessions loaded so far. Choose **Load more sessions** for older results.
+Select **Restore** to bring the original conversation back into the fleet.
+First prompt previews stop after 50 message pages or 15 seconds. If a preview
+can't load, the browser reports that prompt search is incomplete for that session.
+
+OCO lists sessions through the OpenCode server. The session and its directory must
+still exist. Removing a worktree session can also remove its worktree, so this
+picker can't recover deleted worktree files or sessions deleted from OpenCode.
 
 ## Current session identity
 
