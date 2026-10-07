@@ -117,6 +117,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
+  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null)
+  const [homeDirectory, setHomeDirectory] = useState('')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
   const [labelIds, setLabelIds] = useState<string[]>([])
@@ -335,6 +337,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       } catch { /* ignore */ }
     }
     void loadWorktreeRoot()
+    void window.api.getHomeDirectory().then((result) => {
+      if (isMounted && result.ok && result.data) setHomeDirectory(result.data)
+    }).catch(() => {})
     return () => { isMounted = false }
   }, [])
 
@@ -349,7 +354,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         try {
           const isValid = await onValidateDirectory(currentDir)
           if (cancelled) return
-          setDirError(isValid ? null : 'This directory is not a valid git repository.')
+          setDirError(isValid ? null : 'This directory does not exist or is not a folder.')
           setValidatedDirectory(isValid ? currentDir : '')
           setValidating(false)
         } catch {
@@ -367,7 +372,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   // Load per-project settings when directory changes
   useEffect(() => {
-    const dir = directory.trim()
+    const dir = modelDirectory
+    setIsGitRepo(null)
     if (!dir || !projectsReady) return
     let cancelled = false
     setDetectingBranch(true)
@@ -375,6 +381,14 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       try {
         const repoRootResult = await window.api.getRepoRoot(dir)
         if (cancelled) return
+        const hasRepo = !!(repoRootResult.ok && repoRootResult.data)
+        setIsGitRepo(hasRepo)
+        if (!hasRepo) {
+          setWorktreeStrategy('current-directory')
+          setFreshWorktree(false)
+          setBaseBranch('')
+          return
+        }
         const repoRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
         const matchedProject = savedProjects.find((p) => p.repo_root === repoRoot)
         const savedWorktreeStrategy = matchedProject?.worktree_strategy
@@ -389,18 +403,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         if (cancelled) return
         setBaseBranch(branchResult.ok && branchResult.data ? branchResult.data : 'origin/main')
       } catch {
-        if (!cancelled) { setFreshWorktree(false); setBaseBranch('origin/main') }
+        if (!cancelled) {
+          setIsGitRepo(false)
+          setWorktreeStrategy('current-directory')
+          setFreshWorktree(false)
+          setBaseBranch('')
+        }
       } finally {
         if (!cancelled) setDetectingBranch(false)
       }
     }
     void loadProjectSettings()
     return () => { cancelled = true }
-  }, [directory, savedProjects, projectsReady])
+  }, [modelDirectory, savedProjects, projectsReady])
 
   // Fetch sessions when import tab is active and directory is valid
   useEffect(() => {
-    if (activeTab !== 'import' || !directory.trim() || dirError || validating) {
+    if (activeTab !== 'import' || !modelDirectory) {
       setImportSessions([]); setImportError(null); setSelectedSession(null)
       return
     }
@@ -408,7 +427,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     const fetchSessions = async () => {
       setImportLoading(true); setImportError(null); setImportSessions([]); setSelectedSession(null)
       try {
-        const result = await window.api.listSessionsByProject(directory.trim())
+        const result = await window.api.listSessionsByProject(modelDirectory)
         if (cancelled) return
         if (result.ok && result.data) {
           const sorted = [...result.data].sort((a, b) => b.updatedAt - a.updatedAt)
@@ -425,7 +444,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
     void fetchSessions()
     return () => { cancelled = true }
-  }, [activeTab, directory, dirError, validating])
+  }, [activeTab, modelDirectory])
 
   // Reset import state when switching tabs
   const clearImportAttachments = importImages.clearAttachments
@@ -483,6 +502,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   }
 
   const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
+    || isGitRepo === null || detectingBranch
+    || (worktreeStrategy === 'new-worktree' && !isGitRepo)
     || (activeTab === 'import' && !selectedSession)
     || (activeTab === 'new' && !!prUrlError)
 
@@ -495,10 +516,8 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     if (isLaunchDisabled) return
     setLaunching(true)
     try {
-      const effectiveStrategy = activeTab === 'import' ? 'new-worktree' : worktreeStrategy
-
       const freshConfig: FreshWorktreeConfig | undefined =
-        effectiveStrategy === 'new-worktree' && freshWorktree
+        worktreeStrategy === 'new-worktree' && freshWorktree
           ? { enabled: true, baseBranch }
           : undefined
 
@@ -529,7 +548,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
-      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
+      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, worktreeStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
       void persistProjectSettings(directory.trim(), false)
 
       newImages.clearAttachments()
@@ -697,6 +716,14 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     {filteredProjects.length === 0 && savedProjects.length > 0 && (
                       <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
                     )}
+                    {homeDirectory && (
+                      <button
+                        onMouseDown={() => handleSelectProject(homeDirectory)}
+                        className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"
+                      >
+                        Home / QuickStart (~)
+                      </button>
+                    )}
                     <button
                       onMouseDown={() => void handleBrowse()}
                       className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors flex items-center gap-2"
@@ -723,61 +750,62 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             )}
           </div>
 
+          {/* Branch / Worktree Strategy */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Branch Strategy
+            </label>
+            <div className="relative">
+              <SelectField
+                value={worktreeStrategy}
+                onChange={(value) => setWorktreeStrategy(value as WorktreeStrategy)}
+                disabled={!modelDirectory || isGitRepo === null || detectingBranch}
+                options={[
+                  ...(isGitRepo ? [{ value: 'new-worktree', label: 'New Worktree (recommended)' }] : []),
+                  { value: 'current-directory', label: 'Use Current Directory' }
+                ]}
+                buttonClassName={selectButtonClasses}
+                menuClassName={selectMenuClasses}
+              />
+            </div>
+            {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
+              <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
+                Worktree path: {estimatedWorktreePath}
+              </p>
+            )}
+            {worktreeStrategy === 'new-worktree' && (
+              <div className="flex flex-col gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setFreshWorktree(!freshWorktree)}
+                  className="flex items-center gap-2 text-xs text-kumo-default cursor-pointer select-none group"
+                >
+                  <span className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
+                    freshWorktree
+                      ? 'bg-kumo-brand border-kumo-brand text-white'
+                      : 'border-kumo-line bg-kumo-control group-hover:border-kumo-subtle'
+                  }`}>
+                    {freshWorktree && <span className="text-[9px] font-bold leading-none">&#10003;</span>}
+                  </span>
+                  Fetch latest from base branch
+                </button>
+                {freshWorktree && (
+                  <input
+                    type="text"
+                    value={baseBranch}
+                    onChange={(e) => setBaseBranch(e.target.value)}
+                    placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
+                    disabled={detectingBranch}
+                    className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+
           {/* ── New Agent Tab ── */}
           {activeTab === 'new' && (
             <>
-              {/* Branch / Worktree Strategy */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  Branch Strategy
-                </label>
-                <div className="relative">
-                  <SelectField
-                    value={worktreeStrategy}
-                    onChange={(value) => setWorktreeStrategy(value as WorktreeStrategy)}
-                    options={[
-                      { value: 'new-worktree', label: 'New Worktree (recommended)' },
-                      { value: 'current-directory', label: 'Use Current Directory' }
-                    ]}
-                    buttonClassName={selectButtonClasses}
-                    menuClassName={selectMenuClasses}
-                  />
-                </div>
-                {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
-                  <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
-                    Worktree path: {estimatedWorktreePath}
-                  </p>
-                )}
-                {worktreeStrategy === 'new-worktree' && (
-                  <div className="flex flex-col gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => setFreshWorktree(!freshWorktree)}
-                      className="flex items-center gap-2 text-xs text-kumo-default cursor-pointer select-none group"
-                    >
-                      <span className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
-                        freshWorktree
-                          ? 'bg-kumo-brand border-kumo-brand text-white'
-                          : 'border-kumo-line bg-kumo-control group-hover:border-kumo-subtle'
-                      }`}>
-                        {freshWorktree && <span className="text-[9px] font-bold leading-none">&#10003;</span>}
-                      </span>
-                      Fetch latest from base branch
-                    </button>
-                    {freshWorktree && (
-                      <input
-                        type="text"
-                        value={baseBranch}
-                        onChange={(e) => setBaseBranch(e.target.value)}
-                        placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
-                        disabled={detectingBranch}
-                        className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-
               {/* Model */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
@@ -1047,7 +1075,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                       </PortaledMenu>
                     </div>
                     <p className="text-[11px] text-kumo-subtle -mt-0.5">
-                      Creates a new worktree and copies the session history into it.
+                      {worktreeStrategy === 'new-worktree'
+                        ? 'Creates a new worktree and copies the session history into it.'
+                        : 'Copies the session history into a new session in this directory.'}
                     </p>
                   </div>
 

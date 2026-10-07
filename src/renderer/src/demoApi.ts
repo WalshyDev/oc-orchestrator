@@ -386,6 +386,7 @@ export function createDemoApi(): OrchestratorApi {
     selectDirectory: () => ok(''),
 
     // ── Workspace Operations ──
+    validateDirectory: () => ok(true),
     validateGitRepo: () => ok(true),
     getWorktreeRoot: () => ok('/tmp/worktrees'),
     getRepoRoot: () => ok('/tmp/repo'),

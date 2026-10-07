@@ -353,6 +353,14 @@ class WorkspaceManager {
     }
   }
 
+  isDirectory(directory: string): boolean {
+    try {
+      return fs.statSync(directory).isDirectory()
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Validates whether a directory is a git repository.
    */

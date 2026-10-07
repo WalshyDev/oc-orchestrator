@@ -611,6 +611,10 @@ export function registerIpcHandlers(): void {
 
   // ── Workspace Operations ──
 
+  ipcMain.handle('workspace:validate-directory', async (_event, directory: string) => {
+    return { ok: true, data: workspaceManager.isDirectory(directory) }
+  })
+
   ipcMain.handle('workspace:validate-git', async (_event, directory: string) => {
     try {
       const isRepo = workspaceManager.isGitRepo(directory)
