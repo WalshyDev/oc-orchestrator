@@ -182,6 +182,8 @@ export interface GitStatusFile {
   status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unmerged' | 'typechange'
   staged: boolean
   unstaged: boolean
+  additions?: number | null
+  deletions?: number | null
 }
 
 export interface FileReadPayload {

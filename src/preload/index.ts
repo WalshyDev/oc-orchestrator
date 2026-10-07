@@ -203,7 +203,7 @@ const api = {
   getWorktreeStatus: (worktreePath: string): Promise<IpcResult> =>
     ipcRenderer.invoke('workspace:status', worktreePath),
 
-  getGitStatus: (agentId: string): Promise<IpcResult<Array<{ path: string; oldPath?: string; status: string; staged: boolean; unstaged: boolean }>>> =>
+  getGitStatus: (agentId: string): Promise<IpcResult<Array<{ path: string; oldPath?: string; status: string; staged: boolean; unstaged: boolean; additions?: number | null; deletions?: number | null }>>> =>
     ipcRenderer.invoke('workspace:git-status', agentId),
 
   getGitDiff: (agentId: string, relativePath: string): Promise<IpcResult<{ before: string; after: string }>> =>

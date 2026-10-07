@@ -38,6 +38,8 @@ export interface GitStatusFile {
   staged: boolean
   /** Whether there are further unstaged changes on top of any staged changes. */
   unstaged: boolean
+  additions?: number | null
+  deletions?: number | null
 }
 
 export interface FileReadResult {
@@ -621,6 +623,69 @@ class WorkspaceManager {
       // '!' ignored entries are skipped (we don't ask for them).
     }
 
+    if (files.length === 0) return files
+
+    try {
+      let base = 'HEAD'
+      try {
+        execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: worktreePath, stdio: 'pipe' })
+      } catch {
+        base = execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], {
+          cwd: worktreePath, input: '', encoding: 'utf-8', stdio: 'pipe'
+        }).trim()
+      }
+      const stats = execFileSync('git', ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', '--find-renames', base, '--'], {
+        cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe'
+      }).split('\0')
+      const byPath = new Map(files.map((file) => [file.path, file]))
+      for (let index = 0; index < stats.length; index++) {
+        const record = stats[index]
+        if (!record) continue
+        const firstTab = record.indexOf('\t')
+        const secondTab = record.indexOf('\t', firstTab + 1)
+        const added = record.slice(0, firstTab)
+        const removed = record.slice(firstTab + 1, secondTab)
+        let filePath = record.slice(secondTab + 1)
+        // Rename records carry the old and new paths in separate NUL fields
+        if (!filePath) {
+          filePath = stats[index + 2]
+          index += 2
+        }
+        const file = byPath.get(normalizePath(filePath))
+        if (file) {
+          file.additions = added === '-' ? null : Number(added)
+          file.deletions = removed === '-' ? null : Number(removed)
+        }
+      }
+      for (const file of files) {
+        if (file.status !== 'untracked' && file.additions === undefined && file.status !== 'unmerged') {
+          file.additions = 0
+          file.deletions = 0
+        }
+      }
+    } catch {
+      // Keep the status list usable when Git can't calculate line counts
+    }
+
+    for (const file of files) {
+      if (file.status !== 'untracked') continue
+      try {
+        if (fs.lstatSync(path.join(worktreePath, file.path)).isSymbolicLink()) continue
+        const read = this.readFileSafe(worktreePath, file.path)
+        if (read.encoding === 'binary' || read.truncated) continue
+        let lineCount = 0
+        let newline = read.content.indexOf('\n')
+        while (newline !== -1) {
+          lineCount++
+          newline = read.content.indexOf('\n', newline + 1)
+        }
+        if (read.content && !read.content.endsWith('\n')) lineCount++
+        file.additions = lineCount
+        file.deletions = 0
+      } catch {
+        // Files can disappear while the agent is writing
+      }
+    }
     return files
   }
 
