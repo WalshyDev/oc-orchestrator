@@ -28,12 +28,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('recent model selections', () => {
-  it('persists the last three distinct models, moving a reused model to the front', () => {
-    for (const model of ['openai/a', 'anthropic/a', 'openai/b', 'openai/c', 'anthropic/a']) {
+  it('persists the last five distinct models, moving a reused model to the front', () => {
+    for (const model of ['openai/a', 'anthropic/a', 'openai/b', 'openai/c', 'openai/d', 'openai/e', 'anthropic/a']) {
       recordRecentModel(model)
     }
     expect(storedModels()).toEqual([
-      'anthropic/a', 'openai/c', 'openai/b',
+      'anthropic/a', 'openai/e', 'openai/d', 'openai/c', 'openai/b',
     ])
   })
 
@@ -84,7 +84,7 @@ describe('recent model selections', () => {
     writesFail = false
     recordRecentModel('openai/c')
     expect(storedModels()).toEqual([
-      'openai/c', 'openai/b', 'openai/a',
+      'openai/c', 'openai/b', 'openai/a', 'old/model',
     ])
   })
 
@@ -92,18 +92,22 @@ describe('recent model selections', () => {
     for (const [model, usedAt] of [
       ['openai/a', 300], ['openai/b', 100], ['anthropic/a', 200],
       ['openai/c', 400], ['openai/a', 50], ['openai/c', 400], ['openai/b', 500],
+      ['openai/d', 250], ['openai/e', 150],
     ] as const) recordRecentModel(model, usedAt)
-    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'openai/a'])
+    const expected = ['openai/b', 'openai/c', 'openai/a', 'openai/d', 'anthropic/a']
+    expect(storedModels()).toEqual(expected)
     recordRecentModel('openai/a', 300)
-    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'openai/a'])
+    expect(storedModels()).toEqual(expected)
   })
 
   it('migrates selection history without letting old runs displace new selections', () => {
     storage.set(RECENT_MODELS_STORAGE_KEY, '["openai/a","openai/b"]')
     recordRecentModel('anthropic/a', 100)
     recordRecentModel('openai/b')
+    recordRecentModel('anthropic/b', 150)
+    recordRecentModel('anthropic/c', 120)
     recordRecentModel('openai/c', 200)
-    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'anthropic/a'])
+    expect(storedModels()).toEqual(['openai/b', 'openai/c', 'anthropic/b', 'anthropic/c', 'anthropic/a'])
   })
 })
 
