@@ -690,7 +690,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                       onSelect={handleSelectProject}
                       onRemove={(id, event) => void removeProject(id, event)}
                     />
-                    {homeDirectory && (
+                    {homeDirectory && !recentDirectories.includes(homeDirectory) && (
                       <button
                         onMouseDown={() => handleSelectProject(homeDirectory)}
                         className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"

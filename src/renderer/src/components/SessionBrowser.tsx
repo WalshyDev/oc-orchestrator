@@ -229,13 +229,13 @@ export function SessionBrowser({
     setResuming(session.id)
     try {
       await onResume(session.directory, session.id, session.title)
-      recordRecentDirectory(directory)
+      recordRecentDirectory(session.directory)
       onClose()
     } catch (err) {
       setError(`Resume failed: ${String(err)}`)
       setResuming(null)
     }
-  }, [directory, onResume, onClose])
+  }, [onResume, onClose])
 
   const removeProject = useCallback(async (projectId: string, event: React.MouseEvent) => {
     event.stopPropagation()
@@ -339,7 +339,7 @@ export function SessionBrowser({
                       onSelect={handleSelectProject}
                       onRemove={(id, event) => void removeProject(id, event)}
                     />
-                    {homeDirectory && (
+                    {homeDirectory && !recentDirectories.includes(homeDirectory) && (
                       <button
                         onMouseDown={() => handleSelectProject(homeDirectory)}
                         className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"
