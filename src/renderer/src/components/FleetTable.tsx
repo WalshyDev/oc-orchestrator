@@ -1443,6 +1443,11 @@ function AgentRow({
   const flashingClass = flashing ? 'ring-2 ring-inset ring-kumo-brand/60 bg-kumo-brand/[0.06]' : ''
   const draggingClass = isDragging ? 'opacity-40' : ''
 
+  // The first visible cell carries the folder rail even when the agent column is hidden
+  const folderRailClass = indented
+    ? '[&>td:first-child]:border-l-[3px] [&>td:first-child]:border-l-kumo-interact'
+    : ''
+
   return (
     <tr
       onMouseDown={(e) => onMouseDownStartDrag?.(e)}
@@ -1456,7 +1461,7 @@ function AgentRow({
       }}
       onClick={onSelect}
       onContextMenu={onContextMenu}
-      className={`group transition-colors border-b border-kumo-line ${isPending ? 'cursor-default' : 'cursor-pointer'} ${rowStateClass} ${flashingClass} ${draggingClass}`}
+      className={`group transition-colors border-b border-kumo-line ${isPending ? 'cursor-default' : 'cursor-pointer'} ${rowStateClass} ${flashingClass} ${draggingClass} ${folderRailClass}`}
     >
       {show('agent') && (
         <td className={`px-3 py-2 overflow-hidden ${indented ? 'pl-10' : ''}`}>
