@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { X, FolderOpen, CaretDown, Warning, Trash, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, Warning, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
 import { ImageAttachmentInput } from './ImageAttachmentInput'
 import { SelectField } from './SelectField'
 import { ModelSelectField } from './ModelSelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
+import { ProjectDirectoryOptions } from './ProjectDirectoryOptions'
+import { recordRecentDirectory, removeRecentDirectory, useRecentDirectories } from '../hooks/useRecentDirectories'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { buildLaunchPrompt, parseLaunchPrUrl } from '../lib/launch-pr-input'
 import { useImageAttachments } from '../hooks/useImageAttachments'
@@ -137,6 +139,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [projectsReady, setProjectsReady] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
+  const recentDirectories = useRecentDirectories()
   const newImages = useImageAttachments()
   const importImages = useImageAttachments()
   const dropdownButtonRef = useRef<HTMLButtonElement>(null)
@@ -324,6 +327,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       await window.api.deleteProject(projectId)
       setSavedProjects((prev) => prev.filter((p) => p.id !== projectId))
       const removed = savedProjects.find((p) => p.id === projectId)
+      if (removed) removeRecentDirectory(removed.repo_root)
       if (removed && removed.repo_root === directory) setDirectory('')
     } catch { /* ignore */ }
   }, [directory, savedProjects])
@@ -468,14 +472,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     )
   }, [importSessions, importSearch])
 
-  const filteredProjects = useMemo(() => {
-    if (!projectSearch.trim()) return savedProjects
-    const q = projectSearch.toLowerCase()
-    return savedProjects.filter((p) =>
-      p.name.toLowerCase().includes(q) || p.repo_root.toLowerCase().includes(q)
-    )
-  }, [savedProjects, projectSearch])
-
   // Project dropdown outside-click handling is delegated to PortaledMenu.
 
   /**
@@ -549,6 +545,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
       onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, worktreeStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
+      recordRecentDirectory(directory)
       void persistProjectSettings(directory.trim(), false)
 
       newImages.clearAttachments()
@@ -673,7 +670,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   onDismiss={() => { setShowDropdown(false); setProjectSearch('') }}
                   className="bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl max-h-[320px] flex flex-col overflow-hidden"
                 >
-                  {savedProjects.length > 0 && (
+                  {(savedProjects.length > 0 || recentDirectories.length > 0) && (
                     <div className="px-2 pt-2 pb-1 shrink-0">
                       <input
                         type="text"
@@ -686,36 +683,13 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     </div>
                   )}
                   <div className="overflow-y-auto flex-1">
-                    {filteredProjects.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
-                          Saved Projects
-                        </div>
-                        {filteredProjects.map((project) => (
-                          <div
-                            key={project.id}
-                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
-                            onMouseDown={() => handleSelectProject(project.repo_root)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
-                              <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
-                            </div>
-                            <button
-                              onMouseDown={(e) => void removeProject(project.id, e)}
-                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
-                              title="Remove from saved projects"
-                            >
-                              <Trash size={12} />
-                            </button>
-                          </div>
-                        ))}
-                        <div className="border-t border-kumo-fill-hover" />
-                      </>
-                    )}
-                    {filteredProjects.length === 0 && savedProjects.length > 0 && (
-                      <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
-                    )}
+                    <ProjectDirectoryOptions
+                      projects={savedProjects}
+                      search={projectSearch}
+                      homeDirectory={homeDirectory}
+                      onSelect={handleSelectProject}
+                      onRemove={(id, event) => void removeProject(id, event)}
+                    />
                     {homeDirectory && (
                       <button
                         onMouseDown={() => handleSelectProject(homeDirectory)}
