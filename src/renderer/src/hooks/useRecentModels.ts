@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 
 export const RECENT_MODELS_STORAGE_KEY = 'oc-orchestrator:recent-models'
 const RECENT_MODELS_CHANGED_EVENT = 'oc-orchestrator:recent-models-changed'
+const MAX_RECENT_MODELS = 5
 let fallbackSnapshot = '[]'
 let pendingSnapshot: string | null = null
 
@@ -29,7 +30,7 @@ function parseHistory(snapshot: string): RecentModelUse[] {
         typeof entry.usedAt !== 'number' || !Number.isFinite(entry.usedAt) || entry.usedAt < 0) return []
       return [{ model: entry.model, usedAt: entry.usedAt }]
     }).sort((a, b) => b.usedAt - a.usedAt)
-    return entries.filter((entry, index) => entries.findIndex((other) => other.model === entry.model) === index).slice(0, 3)
+    return entries.filter((entry, index) => entries.findIndex((other) => other.model === entry.model) === index).slice(0, MAX_RECENT_MODELS)
   } catch {
     return []
   }
@@ -43,7 +44,7 @@ export function recordRecentModel(model: string, usedAt?: number): void {
   let updated = history
   if (usedAt === undefined || !previous || previous.usedAt < timestamp) {
     updated = [{ model, usedAt: timestamp }, ...history.filter((entry) => entry.model !== model)]
-      .sort((a, b) => b.usedAt - a.usedAt).slice(0, 3)
+      .sort((a, b) => b.usedAt - a.usedAt).slice(0, MAX_RECENT_MODELS)
   }
   if (pendingSnapshot === null && JSON.stringify(updated) === JSON.stringify(history)) return
   fallbackSnapshot = JSON.stringify(updated)

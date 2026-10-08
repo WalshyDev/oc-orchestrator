@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { X, FolderOpen, CaretDown, Trash, ClockCounterClockwise, CircleNotch, ChatCircleDots } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, ClockCounterClockwise, CircleNotch, ChatCircleDots } from '@phosphor-icons/react'
 import type { Project, SessionListEntry } from '../types/api'
 import { PortaledMenu } from './PortaledMenu'
+import { ProjectDirectoryOptions } from './ProjectDirectoryOptions'
+import { recordRecentDirectory, removeRecentDirectory, useRecentDirectories } from '../hooks/useRecentDirectories'
 import { matchesSessionSearch } from '../lib/session-browser'
 
 interface KnownDirectory {
@@ -69,6 +71,7 @@ export function SessionBrowser({
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
+  const recentDirectories = useRecentDirectories()
   const dropdownButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -205,14 +208,6 @@ export function SessionBrowser({
   if (pendingPreviews > 0) emptyMessage = 'Searching first prompts...'
   else if (sessions.length > 0) emptyMessage = 'No matching sessions.'
 
-  const filteredProjects = useMemo(() => {
-    if (!projectSearch.trim()) return savedProjects
-    const q = projectSearch.toLowerCase()
-    return savedProjects.filter((p) =>
-      p.name.toLowerCase().includes(q) || p.repo_root.toLowerCase().includes(q)
-    )
-  }, [savedProjects, projectSearch])
-
   // Outside-click handling is delegated to PortaledMenu's onDismiss.
 
   const handleBrowse = async () => {
@@ -234,6 +229,7 @@ export function SessionBrowser({
     setResuming(session.id)
     try {
       await onResume(session.directory, session.id, session.title)
+      recordRecentDirectory(session.directory)
       onClose()
     } catch (err) {
       setError(`Resume failed: ${String(err)}`)
@@ -248,6 +244,7 @@ export function SessionBrowser({
       await window.api.deleteProject(projectId)
       setSavedProjects((prev) => prev.filter((p) => p.id !== projectId))
       const removed = savedProjects.find((p) => p.id === projectId)
+      if (removed) removeRecentDirectory(removed.repo_root)
       if (removed && removed.repo_root === directory) {
         setDirectory('')
       }
@@ -322,7 +319,7 @@ export function SessionBrowser({
                   onDismiss={() => { setShowDropdown(false); setProjectSearch('') }}
                   className="bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl max-h-[240px] flex flex-col overflow-hidden"
                 >
-                  {savedProjects.length > 0 && (
+                  {(savedProjects.length > 0 || recentDirectories.length > 0) && (
                     <div className="px-2 pt-2 pb-1 shrink-0">
                       <input
                         type="text"
@@ -335,47 +332,20 @@ export function SessionBrowser({
                     </div>
                   )}
                   <div className="overflow-y-auto flex-1">
-                    {homeDirectory && (
+                    <ProjectDirectoryOptions
+                      projects={savedProjects}
+                      search={projectSearch}
+                      homeDirectory={homeDirectory}
+                      onSelect={handleSelectProject}
+                      onRemove={(id, event) => void removeProject(id, event)}
+                    />
+                    {homeDirectory && !recentDirectories.includes(homeDirectory) && (
                       <button
                         onMouseDown={() => handleSelectProject(homeDirectory)}
                         className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"
                       >
                         Home / QuickStart
                       </button>
-                    )}
-                    {filteredProjects.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
-                          Saved Projects
-                        </div>
-                        {filteredProjects.map((project) => (
-                          <div
-                            key={project.id}
-                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
-                            onMouseDown={() => handleSelectProject(project.repo_root)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs text-kumo-default font-medium truncate">
-                                {project.name}
-                              </div>
-                              <div className="text-[11px] text-kumo-subtle font-mono truncate">
-                                {project.repo_root}
-                              </div>
-                            </div>
-                            <button
-                              onMouseDown={(e) => void removeProject(project.id, e)}
-                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
-                              title="Remove from saved projects"
-                            >
-                              <Trash size={12} />
-                            </button>
-                          </div>
-                        ))}
-                        <div className="border-t border-kumo-fill-hover" />
-                      </>
-                    )}
-                    {filteredProjects.length === 0 && savedProjects.length > 0 && (
-                      <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
                     )}
                     <button
                       onMouseDown={() => void handleBrowse()}
