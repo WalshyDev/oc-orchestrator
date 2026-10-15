@@ -239,7 +239,8 @@ export interface AgentHandle {
   modelOverride?: { providerID: string; modelID: string }
   variantOverride?: string
   modelUpdatedAt?: number
-  bridge: EventBridge
+  /** Unset when the runtime failed to start during restore; ensureRuntimeForAgent sets it. */
+  bridge?: EventBridge
 }
 
 interface PersistedAgentHandle {
@@ -299,27 +300,33 @@ class AgentController {
 
   async restorePersistedAgents(): Promise<void> {
     const persistedAgents = this.loadPersistedAgents()
-    if (persistedAgents.length === 0) return
+    if (persistedAgents.length === 0) {
+      this.restored = true
+      return
+    }
 
     const results = await Promise.allSettled(
-      persistedAgents.map(async (persistedAgent) => {
-        const runtime = await this.ensureBridgeForDirectory(persistedAgent.directory)
-        const directoryContext = workspaceManager.getDirectoryContext(persistedAgent.directory)
-        return { persistedAgent, runtime, directoryContext }
-      })
+      persistedAgents.map((persistedAgent) => this.ensureBridgeForDirectory(persistedAgent.directory))
     )
 
     const restoredHandles: Array<{ handle: AgentHandle; runtime: RuntimeInfo }> = []
-    for (const result of results) {
+    for (const [index, result] of results.entries()) {
+      const persistedAgent = persistedAgents[index]
+      // Keep the agent when its runtime fails to start. Dropping it here would
+      // persist a shorter fleet and lose it permanently. ensureRuntimeForAgent
+      // starts a runtime the next time the agent is used.
+      const runtime = result.status === 'fulfilled' ? result.value : undefined
       if (result.status === 'rejected') {
-        console.error('[AgentController] Failed to restore agent:', result.reason)
-        continue
+        console.error(
+          `[AgentController] Failed to start runtime for agent ${persistedAgent.id}; will retry on use:`,
+          result.reason
+        )
       }
 
-      const { persistedAgent, runtime, directoryContext } = result.value
+      const directoryContext = workspaceManager.getDirectoryContext(persistedAgent.directory)
       const handle: AgentHandle = {
         id: persistedAgent.id,
-        runtimeId: runtime.id,
+        runtimeId: runtime?.id ?? '',
         sessionId: persistedAgent.sessionId,
         directory: persistedAgent.directory,
         projectName: directoryContext.repoName,
@@ -336,11 +343,11 @@ class AgentController {
         modelOverride: persistedAgent.modelOverride,
         variantOverride: persistedAgent.variantOverride,
         modelUpdatedAt: persistedAgent.modelUpdatedAt,
-        bridge: this.bridges.get(runtime.id)!
+        bridge: runtime ? this.bridges.get(runtime.id) : undefined
       }
 
       this.agents.set(handle.id, handle)
-      restoredHandles.push({ handle, runtime })
+      if (runtime) restoredHandles.push({ handle, runtime })
       this.bumpNextId(handle.id)
     }
 
@@ -443,7 +450,7 @@ class AgentController {
     if (prompt && prompt.trim()) {
       // Re-establish the SSE stream in case the server disposed between
       // session.create and now, so response events aren't lost.
-      await handle.bridge.ensureStreaming()
+      await handle.bridge?.ensureStreaming()
       await client.session.promptAsync({
         sessionID: session.id,
         directory,
@@ -506,7 +513,7 @@ class AgentController {
     })
 
     if (prompt && prompt.trim()) {
-      await handle.bridge.ensureStreaming()
+      await handle.bridge?.ensureStreaming()
       await runtime.client.session.promptAsync({
         sessionID: session.id,
         directory: handle.directory,
@@ -574,7 +581,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    await handle.bridge.ensureStreaming()
+    await handle.bridge?.ensureStreaming()
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
@@ -737,7 +744,7 @@ class AgentController {
       if (this.isStallRecoverySuperseded(handle, sessionId, observedLastActivityAt, undefined, recovery)) return 'superseded'
     }
 
-    await handle.bridge.ensureStreaming()
+    await handle.bridge?.ensureStreaming()
     if (this.isStallRecoverySuperseded(
       handle,
       sessionId,
@@ -1255,7 +1262,7 @@ class AgentController {
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    await handle.bridge.ensureStreaming()
+    await handle.bridge?.ensureStreaming()
     await runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
@@ -1700,7 +1707,7 @@ class AgentController {
     })
 
     if (seedText) {
-      await handle.bridge.ensureStreaming()
+      await handle.bridge?.ensureStreaming()
       try {
         await targetClient.session.prompt({
           sessionID: newSession.id,
@@ -2090,7 +2097,7 @@ class AgentController {
 
   private async ensureRuntimeForAgent(handle: AgentHandle): Promise<RuntimeInfo> {
     const existingRuntime = runtimeManager.getRuntime(handle.runtimeId)
-    if (existingRuntime) return existingRuntime
+    if (existingRuntime && handle.bridge) return existingRuntime
 
     // Runtime was stopped (idle timeout, crash, etc.) — spin up a fresh one.
     // OpenCode persists sessions to disk, so the existing sessionId remains valid.

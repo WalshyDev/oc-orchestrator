@@ -736,7 +736,7 @@ describe('AgentController.executeCommand', () => {
   it('lets activity during stream reconnection supersede idle recovery', async () => {
     mocks.sessionStatus.mockResolvedValueOnce({ data: {} })
     const handle = agentController.getAgent('agent-1')!
-    vi.spyOn(handle.bridge, 'ensureStreaming').mockImplementationOnce(async () => {
+    vi.spyOn(handle.bridge!, 'ensureStreaming').mockImplementationOnce(async () => {
       mocks.bridgeEvent?.({
         type: 'message.part.delta',
         properties: { part: { sessionID: 'existing-session' } }
