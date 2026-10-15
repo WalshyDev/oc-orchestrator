@@ -2894,6 +2894,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     : existingAgent?.configuredModel
   const modelState = getAgentModelState(existingAgent, configuredModel)
   const status = initialStatus ?? existingAgent?.status ?? (hasPrompt ? 'running' : 'idle')
+  const reconnected = existingAgent?.status === 'disconnected' && payload.runtimeId
 
   const agent: LiveAgent = {
     id: payload.id,
@@ -2906,7 +2907,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
     isWorktree: payload.isWorktree ?? existingAgent?.isWorktree ?? false,
     workspaceName: payload.workspaceName ?? existingAgent?.workspaceName ?? payload.directory.split('/').pop() ?? payload.directory,
     taskSummary: payload.taskSummary || existingAgent?.taskSummary || (hasPrompt ? payload.prompt.slice(0, 120) : 'Waiting for prompt...'),
-    status,
+    status: reconnected && !initialStatus ? 'idle' : status,
     inputReason: getReconnectedInputReason(existingAgent, status),
     labelIds: existingAgent?.labelIds ?? [],
     ...modelState,
@@ -3867,7 +3868,10 @@ export function useAgentStore() {
         }
 
         for (const agent of agentsResult.data) {
-          const restoredStatus: AgentStatus = (agent.persistedStatus && PERSISTED_TO_STATUS[agent.persistedStatus]) || 'idle'
+          let restoredStatus: AgentStatus = (agent.persistedStatus && PERSISTED_TO_STATUS[agent.persistedStatus]) || 'idle'
+          if (!agent.runtimeId && restoredStatus !== 'completed' && restoredStatus !== 'errored') {
+            restoredStatus = 'disconnected'
+          }
           upsertAgent(agent, restoredStatus)
           const liveAgent = state.agents.get(agent.id)
           if (liveAgent) {
