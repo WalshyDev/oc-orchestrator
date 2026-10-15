@@ -4,12 +4,12 @@ This file provides guidance to AI Agents when working with code in this reposito
 
 ## Project Overview
 
-OC Orchestrator is an Electron + React + TypeScript desktop app for running and supervising 10+ concurrent OpenCode agents across multiple local projects. It uses SQLite (better-sqlite3) for local persistence and the `@opencode-ai/sdk` for communicating with OpenCode servers.
+OC Orchestrator is an Electron + React + TypeScript desktop app for running and supervising 10+ concurrent OpenCode agents across multiple local projects. It uses SQLite through sql.js for local persistence and the `@opencode-ai/sdk` for communicating with OpenCode servers.
 
 ## Commands
 
 ```bash
-npm install               # Install deps + rebuild native modules (better-sqlite3)
+npm install               # Install dependencies
 npm run dev               # Start Electron dev server with hot reload
 npm run build             # Production build via electron-vite
 npm run lint              # ESLint
@@ -34,7 +34,7 @@ Test runtime compatibility with `OPENCODE_INTEGRATION=1 OPENCODE_PATH=/path/to/o
   - `opencode-compat.ts` checks `/global/health` and saved message parts at startup. If OpenCode drops parts, it installs the `oco_message_part_compat_v1` SQLite event trigger and restarts with `OPENCODE_DB` pinned to that database and `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. This path also adapts async prompts through the synchronous endpoint. Working runtimes use their native prompt transport.
 - **AgentController** — manages agent sessions (launch, send message, respond to permission, reply to questions, abort)
 - **EventBridge** — bridges SSE events from OpenCode servers to the renderer via `opencode:event` IPC
-- **Database** — SQLite with prepared statements; tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in constructor
+- **Database** — sql.js keeps SQLite in memory and saves the whole image with a rollback journal header, writing a temporary file and renaming it so readers never see a partial save. Other processes should use the external API rather than reading this file. Tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in `init()`
 - **WorkspaceManager** — creates git worktrees (`oco-{hash}`) stored in `~/.oc-orchestrator/worktrees` by default
 - **NotificationService** — desktop notifications for configurable agent status changes (blocked, errored, completed)
 - **UpdateChecker** — checks npm registry for new versions, notifies renderer via IPC
