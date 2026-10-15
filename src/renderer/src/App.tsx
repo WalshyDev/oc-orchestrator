@@ -770,6 +770,11 @@ export function App() {
     [displayAgents]
   )
 
+  // Keep the dock badge in sync with the top bar's blocked count
+  useEffect(() => {
+    void window.api?.setBadgeCount(counts.blocked)
+  }, [counts.blocked])
+
   const labelCounts = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const agent of displayAgents) {
