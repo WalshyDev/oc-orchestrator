@@ -2294,6 +2294,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
           <Wrench size={13} className="shrink-0 text-kumo-subtle" />
           <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
           {toolModels && <span className="min-w-0 truncate font-mono text-[10px] text-kumo-subtle" title={toolModels}>{toolModels}</span>}
+          <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-[10px] text-kumo-subtle/70">{message.timestamp}</span>
         </button>
         {!isExpanded && activityTool && activityIndicator && (
           <div role="status" aria-atomic="true" className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-[10px] text-kumo-subtle" title={activitySummary}>
@@ -2320,6 +2321,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
                 tool={tool}
                 expanded={verbosity === 'recent' ? toolExpanded : undefined}
                 summary={!toolExpanded ? inputSummary ?? '' : undefined}
+                timestamp={formatRelativeTime(tool.timestamp)}
               />
             )
             return (
@@ -2368,6 +2370,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.model === next.message.model &&
   prev.message.providerID === next.message.providerID &&
   prev.message.variant === next.message.variant &&
+  prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.recentExpanded === next.recentExpanded &&
