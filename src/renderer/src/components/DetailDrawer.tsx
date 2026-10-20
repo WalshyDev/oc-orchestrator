@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   X,
   Check,
@@ -497,6 +497,14 @@ export const DetailDrawer = memo(function DetailDrawer({
     const container = transcriptScrollRef.current
     if (container) scrollToBottom(container)
   }
+
+  // Keep following when the message window advances without changing height
+  useLayoutEffect(() => {
+    const container = transcriptScrollRef.current
+    if (activeTab === 'transcript' && followBottomRef.current && container) {
+      scrollToBottom(container)
+    }
+  }, [messages, activeTab])
 
   // Pin to bottom whenever transcript content resizes. Catches all height
   // changes (new messages, streaming, status indicators, markdown reflow)
