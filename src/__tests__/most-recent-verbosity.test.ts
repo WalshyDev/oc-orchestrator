@@ -44,6 +44,35 @@ afterEach(async () => {
 })
 
 describe('Most recent output visibility', () => {
+  it('shows the latest message time on a tool group and each tool time when expanded', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(600_000)
+    let message: Message = {
+      id: 'tools', role: 'tool-group', content: '2 tool calls', timestamp: '1m ago',
+      toolCalls: [
+        { id: 'read', name: 'read', state: 'running', timestamp: 420_000 },
+        { id: 'bash', name: 'bash', state: 'completed', timestamp: 540_000 }
+      ]
+    }
+    const render = async () => act(async () => root.render(createElement(ToolGroupBubble, { message })))
+    try {
+      await render()
+      const groupButton = container.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+      expect(groupButton.textContent).toContain('1m ago')
+      expect(container.textContent).not.toContain('3m ago')
+
+      message = { ...message, timestamp: '2m ago' }
+      vi.mocked(Date.now).mockReturnValue(660_000)
+      await render()
+      expect(groupButton.textContent).toContain('2m ago')
+
+      await act(async () => groupButton.click())
+      expect(container.textContent).toContain('4m ago')
+      expect(container.textContent?.match(/2m ago/g)).toHaveLength(2)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('shows only the latest call in a group and lets earlier calls expand', async () => {
     let message: Message = {
       id: 'tools', role: 'tool-group', content: '2 tool calls', timestamp: 'now',
