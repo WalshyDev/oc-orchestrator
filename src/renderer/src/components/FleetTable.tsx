@@ -881,7 +881,7 @@ export function FleetTable({
             {activeColumns.map((col) => (
               <col key={col.key} style={{ width: col.width }} />
             ))}
-            <col style={{ width: 140 }} />
+            <col style={{ width: 160 }} />
             <col style={{ width: 40 }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
@@ -1626,7 +1626,7 @@ function AgentRow({
         </td>
       )}
       <td className="px-3 py-2 overflow-hidden">
-        <div className="flex items-center justify-end gap-1">
+        <div className="flex items-center justify-end gap-1 [&>*]:shrink-0">
           <RowActions
             agent={agent}
             onApprove={onApprove}
