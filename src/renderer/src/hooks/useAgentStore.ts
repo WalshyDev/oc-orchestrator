@@ -840,6 +840,12 @@ function generateEventSummary(type: string, props: Record<string, unknown>): str
       return `MCP auth failed to open browser for ${props.mcpName ?? 'unknown'}`
     case 'server.heartbeat':
       return 'Server heartbeat'
+    case 'tui.toast.show': {
+      const text = [props.title, props.message]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(': ')
+      return `${typeof props.variant === 'string' ? props.variant : 'unknown'} toast: ${text || 'no message'}`
+    }
     default:
       return `Event: ${type}`
   }
@@ -1699,9 +1705,6 @@ function processEvent(payload: OpenCodeEventPayload): void {
         // Within dedup window — ignore to avoid bouncing the banner repeatedly
         break
       }
-      if (toast.variant === 'error') {
-        toastDedup.set(key, { sig: toastSig, expiresAt: nowTs + ERROR_TOAST_DEDUP_MS })
-      }
 
     const target = pickToastTargetAgent(runtimeId)
     if (!target) {
@@ -1709,7 +1712,12 @@ function processEvent(payload: OpenCodeEventPayload): void {
       break
     }
 
-      if (toast.variant === 'error') {
+      if (toast.variant === 'error' && !target.compacting && target.status !== 'running') {
+        // Runtime toasts have no session ID; idle agents can't own their errors
+        console.warn('[tui.toast.show error] no active agent for runtime', { runtimeId, targetAgent: target.id, toast })
+        emit()
+      } else if (toast.variant === 'error') {
+        toastDedup.set(key, { sig: toastSig, expiresAt: nowTs + ERROR_TOAST_DEDUP_MS })
         console.error('[tui.toast.show error]', {
           runtimeId,
           targetAgent: target.id,
@@ -4742,14 +4750,38 @@ export function useAgentStore() {
    * Dismiss the current error banner without any corrective action. The user
    * decides when (and whether) to compact, switch models, or retry.
    */
-  const dismissAgentError = useCallback((agentId: string) => {
+  const dismissAgentError = useCallback(async (agentId: string) => {
     // getMutableAgent excludes placeholders, which is what we want here for a
     // second reason: a failed placeholder's error is the row's whole reason for
     // existing, so clearing it would leave a row with no explanation.
     const agent = getMutableAgent(agentId)
     if (!agent?.lastError) return
     agent.lastError = undefined
+    const errorBlocked = agent.status === 'needs_input' && agent.inputReason === 'error'
+    if (errorBlocked) {
+      if (agentHasPendingInterrupts(agent.id)) {
+        updateAgentAfterInterruptChange(agent, false, false)
+      } else {
+        agent.status = 'running'
+        agent.blockedSince = undefined
+        agent.inputReason = undefined
+      }
+    }
     emit({ agents: true })
+    if (!errorBlocked || !window.api) return
+    const observedActivity = agent.lastActivityAt
+    try {
+      const result = await window.api.getStatuses()
+      const entry = result.data?.[agent.sessionId]
+      if (!result.ok || !entry || state.agents.get(agent.id) !== agent
+        || agent.lastActivityAt !== observedActivity || agent.lastError
+        || agent.status !== 'running' || agentHasPendingInterrupts(agent.id)) return
+      applyReconciledStatus(agent, mapSessionStatus(entry.status.type))
+      persistAgentMeta(agent.id, { persistedStatus: agent.status })
+      emit({ agents: true })
+    } catch (error) {
+      console.warn('[dismissAgentError] Failed to reconcile status:', error)
+    }
   }, [])
 
   // Abort a running turn first because compactSession rejects busy sessions.
