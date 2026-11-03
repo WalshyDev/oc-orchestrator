@@ -671,13 +671,15 @@ export const DetailDrawer = memo(function DetailDrawer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+      return
+    }
+
     // ── Agent picker keyboard handling ──
     if (showAgentPicker) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setAgentPickerDismissed(true)
-        return
-      }
       if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
         event.preventDefault()
         const selected = matchingAgents[agentPickerIndex]
@@ -700,15 +702,10 @@ export const DetailDrawer = memo(function DetailDrawer({
     //
     // When the user is already navigating input history (historyIndexRef >= 0),
     // skip arrow-key handling so ArrowUp/ArrowDown continue cycling history
-    // instead of getting trapped on the popup. Tab/Enter/Escape are still
+    // instead of getting trapped on the popup. Tab/Enter are still
     // explicit "act on the popup" intents and remain handled.
     if (showCommandAutocomplete) {
       const navigatingHistory = historyIndexRef.current >= 0
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setInputText('')
-        return
-      }
       if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
         event.preventDefault()
         const selected = matchingCommands[commandPickerIndex]
