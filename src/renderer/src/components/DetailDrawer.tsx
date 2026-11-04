@@ -555,6 +555,7 @@ export const DetailDrawer = memo(function DetailDrawer({
     }
 
     const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return
       const scrolledUp = e.deltaY < 0
       if (scrolledUp) followBottomRef.current = false
       requestAnimationFrame(() => checkDetach(scrolledUp))
@@ -562,8 +563,10 @@ export const DetailDrawer = memo(function DetailDrawer({
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.offsetX < container.clientWidth) return
+      followBottomRef.current = false
       let lastScrollTop = container.scrollTop
       const onScroll = () => {
+        if (container.scrollTop === lastScrollTop) return
         const scrolledUp = container.scrollTop < lastScrollTop
         lastScrollTop = container.scrollTop
         checkDetach(scrolledUp)
@@ -578,6 +581,7 @@ export const DetailDrawer = memo(function DetailDrawer({
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (!SCROLL_KEYS.has(e.key)) return
+      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return
       const scrolledUp = SCROLL_UP_KEYS.has(e.key)
       if (scrolledUp) followBottomRef.current = false
       requestAnimationFrame(() => checkDetach(scrolledUp))
