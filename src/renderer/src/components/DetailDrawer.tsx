@@ -92,6 +92,7 @@ const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
 const NEAR_BOTTOM_THRESHOLD = 80
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
+const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 // Persists unsent input text per agent across drawer open/close cycles.
 // Module-level so it survives component unmount (the drawer is conditionally rendered).
@@ -508,27 +509,43 @@ export const DetailDrawer = memo(function DetailDrawer({
     const container = transcriptScrollRef.current
     if (!container) return
 
-    const checkDetach = () => {
+    // Scrolling up detaches at once, even a few pixels from the bottom, so the
+    // resize pin can't pull the view back down mid gesture. Only scrolling
+    // down to near the bottom reattaches.
+    const checkDetach = (scrolledUp: boolean) => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
       const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD
-      followBottomRef.current = nearBottom
+      followBottomRef.current = !scrolledUp && nearBottom
       setShowJumpToLatest(!nearBottom)
     }
 
-    const onWheel = () => requestAnimationFrame(checkDetach)
+    const onWheel = (e: WheelEvent) => {
+      const scrolledUp = e.deltaY < 0
+      if (scrolledUp) followBottomRef.current = false
+      requestAnimationFrame(() => checkDetach(scrolledUp))
+    }
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.offsetX < container.clientWidth) return
+      let lastScrollTop = container.scrollTop
+      const onScroll = () => {
+        const scrolledUp = container.scrollTop < lastScrollTop
+        lastScrollTop = container.scrollTop
+        checkDetach(scrolledUp)
+      }
       const onPointerUp = () => {
-        container.removeEventListener('scroll', checkDetach)
+        container.removeEventListener('scroll', onScroll)
         window.removeEventListener('pointerup', onPointerUp)
       }
-      container.addEventListener('scroll', checkDetach)
+      container.addEventListener('scroll', onScroll)
       window.addEventListener('pointerup', onPointerUp)
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (SCROLL_KEYS.has(e.key)) requestAnimationFrame(checkDetach)
+      if (!SCROLL_KEYS.has(e.key)) return
+      const scrolledUp = SCROLL_UP_KEYS.has(e.key)
+      if (scrolledUp) followBottomRef.current = false
+      requestAnimationFrame(() => checkDetach(scrolledUp))
     }
 
     container.addEventListener('wheel', onWheel, { passive: true })
