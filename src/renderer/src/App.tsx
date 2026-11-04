@@ -669,7 +669,9 @@ export function App() {
 
       if (toolCalls.length > 0) {
         pendingToolCalls.push(...toolCalls)
-        pendingToolAnchorId = msg.id
+        // Key the group by the first message in the run so the id, and the
+        // bubble's expanded state, survive later tool-only messages joining it.
+        if (!pendingToolAnchorId) pendingToolAnchorId = msg.id
         pendingToolTimestamp = msg.createdAt
       }
 
