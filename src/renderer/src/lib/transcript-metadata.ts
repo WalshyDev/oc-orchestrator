@@ -26,7 +26,7 @@ export function buildToolGroupMessage(
   timestamp: string
 ): Message {
   return {
-    id: `${anchor.id}-tools`,
+    id: `${toolCalls[0]?.id ?? anchor.id}-tools`,
     role: 'tool-group',
     content: `${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}`,
     timestamp,

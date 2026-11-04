@@ -26,6 +26,7 @@ import {
   collectSessionSubtreeIds,
   mergeLiveMessagePart,
   orderTranscriptByActivity,
+  splitTaskToolGroups,
   type TaskPartDescriptor
 } from '../renderer/src/lib/subagent-progress'
 import { getPendingInterruptStatus } from '../renderer/src/lib/interrupt-status'
@@ -391,7 +392,19 @@ describe('subagent progress', () => {
     }
 
     expect(orderTranscriptByActivity([taskGroup, userMessage]).map((message) => message.id))
-      .toEqual(['tasks-older', 'user', 'tasks-newer'])
+      .toEqual(['older-tools', 'user', 'newer-tools'])
+  })
+
+  it('keeps a task group id stable when a later tool splits the group', () => {
+    const task = { id: 'task', name: 'task', state: 'running' as const, timestamp: 1 }
+    const bash = { id: 'bash', name: 'bash', state: 'running' as const, timestamp: 2 }
+    const group: Message = {
+      id: 'tools', role: 'tool-group', content: '1 tool call', timestamp: 'now', toolCalls: [task]
+    }
+
+    expect(splitTaskToolGroups(group).map((message) => message.id)).toEqual(['task-tools'])
+    expect(splitTaskToolGroups({ ...group, toolCalls: [task, bash] }).map((message) => message.id))
+      .toEqual(['task-tools', 'bash-tools'])
   })
 
   it('keeps running and completed task details collapsed at None', () => {

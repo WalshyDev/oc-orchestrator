@@ -5,6 +5,9 @@ import { DetailDrawer } from '../renderer/src/components/DetailDrawer'
 import { getAssistantResponseMetadata, getMessageModelId } from '../renderer/src/hooks/useAgentStore'
 import { buildToolGroupMessage } from '../renderer/src/lib/transcript-metadata'
 import type { AgentRuntime } from '../renderer/src/types'
+import type { LiveMessage } from '../renderer/src/hooks/useAgentStore'
+import type { ToolCall } from '../renderer/src/components/ToolsUsage'
+import { splitTaskToolGroups } from '../renderer/src/lib/subagent-progress'
 
 const agent: AgentRuntime = {
   id: 'agent-1',
@@ -26,6 +29,20 @@ const agent: AgentRuntime = {
 
 describe('DetailDrawer transcript metadata', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('keeps group ids when tool messages arrive or a task splits the group', () => {
+    const anchor: LiveMessage = {
+      id: 'first', role: 'assistant', sessionId: 'session', createdAt: 1, parts: []
+    }
+    const tool: ToolCall = { id: 'read', name: 'read', state: 'completed', timestamp: 1 }
+    const later: ToolCall = { id: 'task', name: 'task', state: 'running', timestamp: 2 }
+    const first = buildToolGroupMessage(anchor, [tool], 'now')
+    const joined = buildToolGroupMessage({ ...anchor, id: 'second', createdAt: 2 }, [tool, later], 'now')
+
+    expect(first.id).toBe(joined.id)
+    expect(splitTaskToolGroups(joined)[0].id).toBe(first.id)
+    expect(joined.activityAt).toBe(2)
+  })
 
   it('preserves authoritative assistant response metadata', () => {
     const info = {

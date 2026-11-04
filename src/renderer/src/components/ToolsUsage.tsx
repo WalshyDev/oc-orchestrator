@@ -209,7 +209,7 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
       <div className="flex flex-col gap-1">
         {sorted.map((tool) => {
           const isExpanded = verbosity === 'recent'
-            ? recentExpansion.expandedId === tool.id
+            ? recentExpansion.isExpanded(tool.id)
             : expandedIds.has(tool.id)
 
           return (

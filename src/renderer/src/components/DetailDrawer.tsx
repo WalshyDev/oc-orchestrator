@@ -111,6 +111,7 @@ const VISIBLE_MESSAGE_WINDOW = 50
 const LOAD_MORE_INCREMENT = 50
 const NEAR_BOTTOM_THRESHOLD = 80
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'])
+const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 // Persists unsent input text per agent across drawer open/close cycles.
 // Module-level so it survives component unmount (the drawer is conditionally rendered).
@@ -543,27 +544,47 @@ export const DetailDrawer = memo(function DetailDrawer({
     const container = transcriptScrollRef.current
     if (!container) return
 
-    const checkDetach = () => {
+    // Scrolling up detaches at once, even a few pixels from the bottom, so the
+    // resize pin can't pull the view back down mid gesture. Only scrolling
+    // down to near the bottom reattaches.
+    const checkDetach = (scrolledUp: boolean) => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
       const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD
-      followBottomRef.current = nearBottom
+      followBottomRef.current = !scrolledUp && nearBottom
       setShowJumpToLatest(!nearBottom)
     }
 
-    const onWheel = () => requestAnimationFrame(checkDetach)
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return
+      const scrolledUp = e.deltaY < 0
+      if (scrolledUp) followBottomRef.current = false
+      requestAnimationFrame(() => checkDetach(scrolledUp))
+    }
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.offsetX < container.clientWidth) return
+      followBottomRef.current = false
+      let lastScrollTop = container.scrollTop
+      const onScroll = () => {
+        if (container.scrollTop === lastScrollTop) return
+        const scrolledUp = container.scrollTop < lastScrollTop
+        lastScrollTop = container.scrollTop
+        checkDetach(scrolledUp)
+      }
       const onPointerUp = () => {
-        container.removeEventListener('scroll', checkDetach)
+        container.removeEventListener('scroll', onScroll)
         window.removeEventListener('pointerup', onPointerUp)
       }
-      container.addEventListener('scroll', checkDetach)
+      container.addEventListener('scroll', onScroll)
       window.addEventListener('pointerup', onPointerUp)
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (SCROLL_KEYS.has(e.key)) requestAnimationFrame(checkDetach)
+      if (!SCROLL_KEYS.has(e.key)) return
+      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return
+      const scrolledUp = SCROLL_UP_KEYS.has(e.key)
+      if (scrolledUp) followBottomRef.current = false
+      requestAnimationFrame(() => checkDetach(scrolledUp))
     }
 
     container.addEventListener('wheel', onWheel, { passive: true })
@@ -958,8 +979,9 @@ export const DetailDrawer = memo(function DetailDrawer({
                         key={message.id}
                         message={message}
                         verbosity={outputVerbosity}
-                        recentExpanded={recentExpansion.expandedId === message.id}
+                        recentExpanded={recentExpansion.isExpanded(message.id)}
                         onToggleRecent={recentExpansion.toggle}
+                        onExpandRecent={recentExpansion.expand}
                         registerRef={registerMessageRef}
                       />
                     ))}
@@ -1987,12 +2009,14 @@ export const MessageBubble = memo(function MessageBubble({
   verbosity = 'none',
   recentExpanded = false,
   onToggleRecent,
+  onExpandRecent,
   registerRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
   recentExpanded?: boolean
   onToggleRecent?: (id: string) => void
+  onExpandRecent?: (id: string) => void
   registerRef?: MessageRefCallback
 }) {
   const rootRef = useCallback((node: HTMLElement | null) => {
@@ -2000,7 +2024,7 @@ export const MessageBubble = memo(function MessageBubble({
   }, [message.id, registerRef])
 
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} rootRef={rootRef} />
+    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} onExpandRecent={onExpandRecent} rootRef={rootRef} />
   }
 
   if (message.role === 'compaction') {
@@ -2139,6 +2163,7 @@ export const MessageBubble = memo(function MessageBubble({
   prev.verbosity === next.verbosity &&
   prev.recentExpanded === next.recentExpanded &&
   prev.onToggleRecent === next.onToggleRecent &&
+  prev.onExpandRecent === next.onExpandRecent &&
   prev.registerRef === next.registerRef
 )
 
@@ -2232,12 +2257,14 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   verbosity = 'none',
   recentExpanded = false,
   onToggleRecent,
+  onExpandRecent,
   rootRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
   recentExpanded?: boolean
   onToggleRecent?: (id: string) => void
+  onExpandRecent?: (id: string) => void
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
@@ -2311,7 +2338,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
       {isExpanded && (
         <div className="mt-2 flex min-w-0 flex-col gap-1.5 rounded-lg border border-kumo-line bg-kumo-overlay p-2">
           {toolCalls.map((tool) => {
-            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.expandedId === tool.id
+            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.isExpanded(tool.id)
             const inputSummary = summarizeToolInput(tool.name, tool.input)
             const header = (
               <ToolCallHeader
@@ -2327,7 +2354,10 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
                   <button
                     type="button"
                     aria-expanded={toolExpanded}
-                    onClick={() => recentToolExpansion.toggle(tool.id)}
+                    onClick={() => {
+                      if (!toolExpanded) onExpandRecent?.(message.id)
+                      recentToolExpansion.toggle(tool.id)
+                    }}
                     className="w-full min-w-0 rounded-md px-3 py-2.5 text-left hover:bg-kumo-fill/40 transition-colors"
                     title={inputSummary}
                   >
@@ -2371,7 +2401,8 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.recentExpanded === next.recentExpanded &&
-  prev.onToggleRecent === next.onToggleRecent
+  prev.onToggleRecent === next.onToggleRecent &&
+  prev.onExpandRecent === next.onExpandRecent
 )
 
 /**

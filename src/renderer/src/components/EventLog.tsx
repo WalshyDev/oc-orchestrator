@@ -185,7 +185,7 @@ export const EventLog = memo(function EventLog({ events, verbosity = 'none' }: E
       <div className="flex flex-col gap-px">
         {sorted.map((event) => {
           const isExpanded = verbosity === 'recent'
-            ? recentExpansion.expandedId === event.id
+            ? recentExpansion.isExpanded(event.id)
             : expandedIds.has(event.id)
           const typeStyle = typeColorMap[event.type] || defaultTypeStyle
 

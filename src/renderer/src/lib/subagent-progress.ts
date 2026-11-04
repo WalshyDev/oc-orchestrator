@@ -268,10 +268,10 @@ export function splitTaskToolGroups(message: Message): Message[] {
     return result
   }, [])
 
-  if (groups.length === 1) return [message]
+  // Each group keeps its first tool's id as later tools arrive or split the group
   return groups.map((toolCalls) => ({
     ...message,
-    id: `${message.id}-${toolCalls[0].id}`,
+    id: `${toolCalls[0].id}-tools`,
     content: `${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}`,
     toolCalls
   }))
