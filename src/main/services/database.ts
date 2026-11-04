@@ -1,7 +1,7 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { app } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'fs'
 import { randomUUID } from 'crypto'
 import type { ProjectSettings, WorktreeStrategy } from '../../shared/project'
 
@@ -45,10 +45,31 @@ function getDbPath(): string {
   return dbPath
 }
 
+// sql.js saves whole images without WAL side files, so use a rollback journal.
+// Export reopens the connection and resets its pragmas.
+function applyConnectionPragmas(sqlDb: SqlJsDatabase): void {
+  sqlDb.run('PRAGMA journal_mode = DELETE')
+  sqlDb.run('PRAGMA foreign_keys = ON')
+}
+
 function saveToDisk(): void {
   if (!db) return
   const data = db.export()
-  writeFileSync(getDbPath(), Buffer.from(data))
+  applyConnectionPragmas(db)
+  // Replace the file in one step so readers never see a partial image
+  const path = getDbPath()
+  const tempPath = `${path}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(tempPath, Buffer.from(data), { flag: 'wx', mode: 0o600 })
+    renameSync(tempPath, path)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      // Preserve the save error if cleanup also fails
+    }
+    throw error
+  }
 }
 
 function debouncedSave(): void {
@@ -89,8 +110,7 @@ class Database {
       db = new SQL.Database()
     }
 
-    db.run('PRAGMA journal_mode = WAL')
-    db.run('PRAGMA foreign_keys = ON')
+    applyConnectionPragmas(db)
 
     this.migrate()
     this.initialized = true

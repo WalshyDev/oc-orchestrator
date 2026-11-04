@@ -321,6 +321,9 @@ function makeDemoChildSessions(agentId: string) {
 }
 
 export function createDemoApi(): OrchestratorApi {
+  let folders: import('../../shared/folders').FolderSnapshot = { folders: [], membership: {} }
+  const folderListeners = new Set<(snapshot: typeof folders) => void>()
+  const notifyFolders = () => { for (const listener of folderListeners) listener({ ...folders }) }
   return {
     // ── Agent Operations ──
     launchAgent: noop,
@@ -346,7 +349,8 @@ export function createDemoApi(): OrchestratorApi {
     shareSession: noop,
     listAgentConfigs: () => ok([]),
     listTools: () => ok([]),
-    listSessions: () => ok([]),
+    listSessions: () => ok({ sessions: [], hasMore: false }),
+    getSessionFirstPrompt: () => ok(''),
     listSessionsByProject: () => ok([]),
     importSession: () => ok({
       id: 'demo-imported',
@@ -382,6 +386,7 @@ export function createDemoApi(): OrchestratorApi {
     selectDirectory: () => ok(''),
 
     // ── Workspace Operations ──
+    validateDirectory: () => ok(true),
     validateGitRepo: () => ok(true),
     getWorktreeRoot: () => ok('/tmp/worktrees'),
     getRepoRoot: () => ok('/tmp/repo'),
@@ -408,6 +413,37 @@ export function createDemoApi(): OrchestratorApi {
     updateProjectSettings: () => ok({ id: '1', name: 'demo', repo_root: '/tmp', default_branch: null, fresh_worktree: 0, worktree_strategy: null, created_at: '', updated_at: '' }),
 
     // ── Database: Custom Labels ──
+    listFolders: () => ok(folders),
+    migrateFolders: (legacy) => { folders = legacy; return ok(folders) },
+    createFolder: (name) => {
+      const folder = { id: crypto.randomUUID(), name, sortOrder: folders.folders.length }
+      folders = { ...folders, folders: [...folders.folders, folder] }
+      notifyFolders()
+      return ok(folder)
+    },
+    renameFolder: (id, name) => {
+      const folder = folders.folders.find((item) => item.id === id)!
+      folder.name = name
+      notifyFolders()
+      return ok(folder)
+    },
+    deleteFolder: (id) => {
+      folders.folders = folders.folders.filter((folder) => folder.id !== id)
+      folders.membership = Object.fromEntries(Object.entries(folders.membership).filter(([, folderId]) => folderId !== id))
+      notifyFolders()
+      return noop()
+    },
+    setAgentFolder: (agentId, folderId) => {
+      if (folderId === null) delete folders.membership[agentId]
+      else folders.membership[agentId] = folderId
+      notifyFolders()
+      return noop()
+    },
+    onFoldersChanged: (callback) => {
+      folderListeners.add(callback)
+      return () => { folderListeners.delete(callback) }
+    },
+
     listCustomLabels: () => ok([]),
     createCustomLabel: () => ok({ id: 'custom', name: 'Custom', color_key: 'blue', created_at: '' }),
     updateCustomLabel: () => ok({ id: 'custom', name: 'Custom', color_key: 'blue', created_at: '' }),
@@ -446,6 +482,8 @@ export function createDemoApi(): OrchestratorApi {
     onEvent: noopListener,
     onAgentLaunched: noopListener,
     onAgentModelChanged: noopListener,
+    onAgentPrUrlUpdated: noopListener,
+    onAgentLabelsUpdated: noopListener,
     onExternalAttached: noopListener,
     onSessionReset: noopListener,
     onRuntimeStarted: noopListener,

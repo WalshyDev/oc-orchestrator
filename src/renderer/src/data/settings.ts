@@ -27,10 +27,11 @@ export const MAX_QUICK_ACTIONS = 7
 
 export type QuickActionSlots = (QuickAction | null)[]
 
-export type OutputVerbosity = 'none' | 'some' | 'all'
+export type OutputVerbosity = 'none' | 'recent' | 'some' | 'all'
 
 export const OUTPUT_VERBOSITY_OPTIONS: ReadonlyArray<{ value: OutputVerbosity; label: string }> = [
   { value: 'none', label: 'None' },
+  { value: 'recent', label: 'Most recent' },
   { value: 'some', label: 'Some' },
   { value: 'all', label: 'All' },
 ]
@@ -94,9 +95,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   soundEnabled: true,
 }
 
+let currentSettings: AppSettings | undefined
+let databaseAvailable = false
+
 export function loadSettings(): AppSettings {
+  if (currentSettings) return currentSettings
+  return parseSettings(readLocalSettings())
+}
+
+function readLocalSettings(): string | null {
   try {
-    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
+    return localStorage.getItem(SETTINGS_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function parseSettings(stored: string | null): AppSettings {
+  try {
     if (!stored) return DEFAULT_SETTINGS
 
     const parsed = JSON.parse(stored) as Partial<AppSettings> & { verboseMode?: boolean }
@@ -137,8 +153,29 @@ export function loadSettings(): AppSettings {
   }
 }
 
+export async function initializeSettings(): Promise<void> {
+  try {
+    const result = await window.api.getPreference(SETTINGS_STORAGE_KEY)
+    if (!result.ok) throw new Error(result.error)
+    const stored = result.data ?? readLocalSettings()
+    currentSettings = parseSettings(stored)
+    databaseAvailable = true
+    if (stored !== null) {
+      cacheSettings(currentSettings)
+      if (result.data === undefined) await persistSettings(currentSettings)
+    }
+  } catch (error) {
+    console.error('Failed to initialize app settings', error)
+  }
+}
+
+async function persistSettings(settings: AppSettings): Promise<void> {
+  const result = await window.api.setPreference(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  if (!result.ok) throw new Error(result.error)
+}
+
 export function isOutputVerbosity(value: unknown): value is OutputVerbosity {
-  return value === 'none' || value === 'some' || value === 'all'
+  return value === 'none' || value === 'recent' || value === 'some' || value === 'all'
 }
 
 export function isQuickActionValid(qa: QuickAction): boolean {
@@ -164,6 +201,18 @@ export function getEditorDisplayLabel(editor: string): string {
 export const SETTINGS_CHANGED_EVENT = 'oc-orchestrator:settings-changed'
 
 export function saveSettings(settings: AppSettings): void {
-  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  currentSettings = settings
+  cacheSettings(settings)
+  if (databaseAvailable) {
+    void persistSettings(settings).catch((error) => console.error('Failed to save app settings', error))
+  }
   window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT))
+}
+
+function cacheSettings(settings: AppSettings): void {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  } catch (error) {
+    console.error('Failed to cache app settings', error)
+  }
 }

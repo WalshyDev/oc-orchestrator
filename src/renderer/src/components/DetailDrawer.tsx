@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react'
 import {
   X,
   Check,
@@ -50,6 +50,7 @@ import {
 } from '../data/agentSettings'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { useEditorLabel } from '../hooks/useEditorLabel'
+import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
 import { StatusBadge } from './StatusBadge'
 import { LabelDropdown } from './LabelDropdown'
@@ -60,14 +61,32 @@ import { Markdown } from './Markdown'
 import { FilesChanged } from './FilesChanged'
 import { CollapsibleSubagentProgress, ToolsUsage } from './ToolsUsage'
 import { EventLog } from './EventLog'
+import { AgentDiagnostics } from './AgentDiagnostics'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { findLastTranscriptMessageId } from '../lib/last-message'
+import type { ChildTranscriptEntry } from '../lib/subagent-progress'
+import { formatResponseMetadata } from '../lib/transcript-metadata'
+import { ToolCallHeader } from './ToolCallHeader'
 
 import type { FileChange } from './FilesChanged'
 import type { ToolCall } from './ToolsUsage'
 import type { EventEntry } from './EventLog'
 
 export type { FileChange, ToolCall, EventEntry }
+
+function ResponseMetadata({ response }: {
+  response: Pick<Message, 'providerID' | 'model' | 'variant'>
+}) {
+  const metadata = formatResponseMetadata(response)
+  if (!metadata) return null
+
+  return (
+    <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70">
+      {metadata}
+    </span>
+  )
+}
 
 const quickActionIconMap: Record<QuickActionIcon, typeof Lightning> = {
   'git-pull-request': GitPullRequest,
@@ -143,6 +162,7 @@ const todoStatusStyles: Record<TodoStatus, string> = {
 export interface ChatCommand {
   command: string
   description: string
+  model?: string
 }
 
 export interface AgentConfigItem {
@@ -302,6 +322,13 @@ export const DetailDrawer = memo(function DetailDrawer({
   const [outputVerbosity, setOutputVerbosity] = useState<OutputVerbosity>(() =>
     loadAgentOutputVerbosity(agent.sessionId ?? agent.id) ?? loadSettings().outputVerbosity
   )
+  const latestAgentMessage = messages.reduce<Message | undefined>((latest, message) => {
+    if (message.role === 'assistant' || message.role === 'tool-group' || message.role === 'tool') return message
+    return latest
+  }, undefined)
+  const latestTools = latestAgentMessage?.toolCalls
+  const latestToolId = latestTools?.[latestTools.length - 1]?.id
+  const recentExpansion = useMostRecentExpansion(outputVerbosity === 'recent', latestAgentMessage?.id, latestToolId)
   const [autoRecoverSetting, setAutoRecoverSetting] = useState<AgentAutoRecoverSetting>(() =>
     loadAgentAutoRecoverSetting(agent.id)
   )
@@ -471,6 +498,14 @@ export const DetailDrawer = memo(function DetailDrawer({
     const container = transcriptScrollRef.current
     if (container) scrollToBottom(container)
   }
+
+  // Keep following when the message window advances without changing height
+  useLayoutEffect(() => {
+    const container = transcriptScrollRef.current
+    if (activeTab === 'transcript' && followBottomRef.current && container) {
+      scrollToBottom(container)
+    }
+  }, [messages, activeTab])
 
   // Pin to bottom whenever transcript content resizes. Catches all height
   // changes (new messages, streaming, status indicators, markdown reflow)
@@ -653,13 +688,15 @@ export const DetailDrawer = memo(function DetailDrawer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+      return
+    }
+
     // ── Agent picker keyboard handling ──
     if (showAgentPicker) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setAgentPickerDismissed(true)
-        return
-      }
       if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
         event.preventDefault()
         const selected = matchingAgents[agentPickerIndex]
@@ -682,15 +719,10 @@ export const DetailDrawer = memo(function DetailDrawer({
     //
     // When the user is already navigating input history (historyIndexRef >= 0),
     // skip arrow-key handling so ArrowUp/ArrowDown continue cycling history
-    // instead of getting trapped on the popup. Tab/Enter/Escape are still
+    // instead of getting trapped on the popup. Tab/Enter are still
     // explicit "act on the popup" intents and remain handled.
     if (showCommandAutocomplete) {
       const navigatingHistory = historyIndexRef.current >= 0
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setInputText('')
-        return
-      }
       if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
         event.preventDefault()
         const selected = matchingCommands[commandPickerIndex]
@@ -943,23 +975,15 @@ export const DetailDrawer = memo(function DetailDrawer({
                         key={message.id}
                         message={message}
                         verbosity={outputVerbosity}
+                        recentExpanded={recentExpansion.expandedId === message.id}
+                        onToggleRecent={recentExpansion.toggle}
                         registerRef={registerMessageRef}
                       />
                     ))}
                   </>
                 )}
 
-                {/* Loading indicator when agent is running */}
-                {agent.status === 'running' && (
-                  <div className="flex items-center gap-2 px-3 py-2">
-                    <span className="text-[11px] text-kumo-subtle">Agent is thinking</span>
-                    <span className="flex gap-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:0ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:150ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-kumo-subtle animate-bounce [animation-delay:300ms]" />
-                    </span>
-                  </div>
-                )}
+                <AgentActivity agent={agent} messages={messages} />
 
                 {(permission || question || showQuestionFallback) && (
                   <div
@@ -1068,6 +1092,10 @@ export const DetailDrawer = memo(function DetailDrawer({
             </div>
           )}
         </div>
+
+        {activeTab === 'transcript' && (
+          <AgentDiagnostics agent={agent} workspacePath={workspacePath} messages={messages} events={events} />
+        )}
 
         {/* Vertical resize handle */}
         {/* Resize handle + bottom pane (chat input + action rail) only show
@@ -1774,6 +1802,7 @@ function Tab({
 
 const outputVerbosityDescriptions: Record<OutputVerbosity, string> = {
   none: 'Keep tool and event details collapsed.',
+  recent: 'Open the latest tool call. Expand earlier calls when needed. Agent messages stay expanded.',
   some: 'Expand parent tools and events, but collapse subagent transcripts.',
   all: 'Expand parent tools, events, and subagent transcripts.'
 }
@@ -1816,12 +1845,13 @@ function AgentConfigPanel({
   }, [agent.model, options, selectedModel])
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(selectedModel, providerData, configModel),
-    [selectedModel, providerData, configModel]
+    () => getVariantOptionsForModel(selectedModel, providerData, configModel, agent.configuredVariant),
+    [selectedModel, providerData, configModel, agent.configuredVariant]
   )
-  const selectedEffort = effortOptions.some((option) => option.value === agent.variant)
-    ? agent.variant ?? 'auto'
-    : 'auto'
+  const selectedEffort = agent.configuredVariant ?? 'auto'
+  let variantDescription = "Provider Default removes this agent's variant override."
+  if (loading) variantDescription = 'Loading model variants...'
+  else if (effortOptions.length === 1) variantDescription = 'This model does not expose explicit variants.'
 
   const updateModel = async (modelPath: string, variant?: string): Promise<void> => {
     if (!onChangeModel || savingRef.current) return
@@ -1908,8 +1938,8 @@ function AgentConfigPanel({
           <p className="mt-1 text-[11px] text-kumo-subtle">Changes the model for this agent's next prompt.</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Model</label>
-          <SelectField
+          <label className="text-[11px] font-medium text-kumo-default">Next prompt model</label>
+          <ModelSelectField
             value={selectedModel}
             options={modelOptions}
             disabled={saving || !onChangeModel}
@@ -1922,19 +1952,17 @@ function AgentConfigPanel({
           {loading && <span className="text-[10px] text-kumo-subtle">Loading provider models...</span>}
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-kumo-default">Effort</label>
+          <label className="text-[11px] font-medium text-kumo-default">Variant</label>
           <SelectField
             value={selectedEffort}
             options={effortOptions}
-            disabled={saving || !onChangeModel}
+            disabled={loading || saving || !onChangeModel}
             onChange={(value) => void updateModel(selectedModel, value === 'auto' ? undefined : value)}
             buttonClassName={selectButtonClasses}
             menuClassName={selectMenuClasses}
           />
           <span className="text-[10px] text-kumo-subtle">
-            {effortOptions.length === 1
-              ? 'This model does not expose explicit effort levels.'
-              : "Provider Default removes this agent's effort override."}
+            {variantDescription}
           </span>
         </div>
         {saving && <span className="text-[11px] text-kumo-link">Saving configuration...</span>}
@@ -1946,13 +1974,42 @@ function AgentConfigPanel({
 
 type MessageRefCallback = (id: string, node: HTMLElement | null) => void
 
-const MessageBubble = memo(function MessageBubble({
+function AgentActivity({ agent, messages }: { agent: AgentRuntime; messages: Message[] }) {
+  if (agent.status !== 'running') return null
+
+  let hasRunningTool = false
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === 'user') break
+    if (message.toolState === 'running' || message.toolCalls?.some((tool) => tool.state === 'running')) {
+      hasRunningTool = true
+      break
+    }
+  }
+
+  let activity = 'Agent is thinking…'
+  if (agent.compacting) activity = 'Agent is compacting…'
+  else if (agent.retry) activity = 'Agent is retrying…'
+  else if (hasRunningTool) activity = 'Agent is working…'
+
+  return (
+    <div data-agent-activity role="status" className="px-3 py-2 text-[11px] text-kumo-subtle">
+      {activity}
+    </div>
+  )
+}
+
+export const MessageBubble = memo(function MessageBubble({
   message,
   verbosity = 'none',
+  recentExpanded = false,
+  onToggleRecent,
   registerRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
+  recentExpanded?: boolean
+  onToggleRecent?: (id: string) => void
   registerRef?: MessageRefCallback
 }) {
   const rootRef = useCallback((node: HTMLElement | null) => {
@@ -1960,7 +2017,7 @@ const MessageBubble = memo(function MessageBubble({
   }, [message.id, registerRef])
 
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbosity={verbosity} rootRef={rootRef} />
+    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} rootRef={rootRef} />
   }
 
   if (message.role === 'compaction') {
@@ -1984,11 +2041,21 @@ const MessageBubble = memo(function MessageBubble({
     return (
       <div ref={rootRef} className="font-mono text-[11px] px-2.5 py-1.5 bg-kumo-overlay border-l-2 border-kumo-fill-hover rounded-r-md text-kumo-subtle">
         <div className="flex items-center gap-1.5 mb-0.5">
+          {verbosity === 'recent' && (
+            <button
+              type="button"
+              aria-label={recentExpanded ? 'Collapse tool output' : 'Expand tool output'}
+              aria-expanded={recentExpanded}
+              onClick={() => onToggleRecent?.(message.id)}
+            >
+              {recentExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+            </button>
+          )}
           <Wrench size={11} className="shrink-0" />
           <span className="font-semibold text-kumo-default">{toolName}</span>
           <CircleNotch size={11} className={toolIconStyle(message.toolState)} />
         </div>
-        {toolOutput && (
+        {toolOutput && (verbosity !== 'recent' || recentExpanded) && (
           <div className="whitespace-pre-wrap break-all mt-1">{toolOutput}</div>
         )}
       </div>
@@ -2021,27 +2088,35 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div
       ref={rootRef}
-      className={`group relative px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
+      className={`group px-3 py-2.5 rounded-lg text-[13px] leading-relaxed ${
         isUser
           ? 'bg-kumo-interact/10 border border-kumo-interact/15 text-kumo-default self-end max-w-[85%]'
           : 'bg-kumo-control border border-kumo-line text-kumo-default max-w-[95%]'
       }`}
     >
-      {message.content && (
-        <button
-          type="button"
-          onClick={handleCopy}
-          title={copyLabel}
-          aria-label={copyLabel}
-          className="absolute top-1.5 right-1.5 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-        >
-          {copied
-            ? <Check size={12} weight="bold" />
-            : <Copy size={12} weight="regular" />}
-        </button>
-      )}
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle mb-1">
-        {isUser ? 'You' : 'Agent'}
+      <div className="mb-1 flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-kumo-subtle">
+          <span>{isUser ? 'You' : 'Agent'}</span>
+          {!isUser && <ResponseMetadata response={message} />}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {message.content && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              title={copyLabel}
+              aria-label={copyLabel}
+              className="-my-1 p-1 rounded text-kumo-subtle/60 hover:text-kumo-default hover:bg-kumo-fill/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+            >
+              {copied
+                ? <Check size={12} weight="bold" />
+                : <Copy size={12} weight="regular" />}
+            </button>
+          )}
+          <span className="font-mono text-[10px] font-normal normal-case tracking-normal text-kumo-subtle/70 whitespace-nowrap">
+            {message.timestamp}
+          </span>
+        </div>
       </div>
       {message.images && message.images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -2073,8 +2148,14 @@ const MessageBubble = memo(function MessageBubble({
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
   prev.message.role === next.message.role &&
+  prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
+  prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
+  prev.recentExpanded === next.recentExpanded &&
+  prev.onToggleRecent === next.onToggleRecent &&
   prev.registerRef === next.registerRef
 )
 
@@ -2082,6 +2163,12 @@ const toolStateStyles: Record<string, string> = {
   failed: 'text-kumo-danger',
   completed: 'text-kumo-success',
   running: 'text-kumo-link'
+}
+
+const toolActivityIndicators = {
+  running: { Icon: CircleNotch, label: 'Running' },
+  completed: { Icon: Check, label: 'Completed' },
+  failed: { Icon: Warning, label: 'Failed' }
 }
 
 function toolIconStyle(toolState: string | undefined): string {
@@ -2147,87 +2234,146 @@ function summarizeToolInput(name: string, input: string | undefined): string | u
   }
 }
 
+function getLatestChildToolActivity(entries: ChildTranscriptEntry[]): ChildTranscriptEntry | undefined {
+  const tools = entries.filter((entry) => entry.kind === 'tool')
+  const runningTools = tools.filter((entry) => entry.toolState === 'running')
+  const activity = runningTools[runningTools.length - 1] ?? tools[tools.length - 1]
+  if (activity?.toolState === 'running' && activity.childTranscript?.length) {
+    return getLatestChildToolActivity(activity.childTranscript) ?? activity
+  }
+  return activity
+}
+
 export const ToolGroupBubble = memo(function ToolGroupBubble({
   message,
   verbosity = 'none',
+  recentExpanded = false,
+  onToggleRecent,
   rootRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
+  recentExpanded?: boolean
+  onToggleRecent?: (id: string) => void
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
+  const latestToolId = toolCalls[toolCalls.length - 1]?.id
+  const recentToolExpansion = useMostRecentExpansion(verbosity === 'recent', latestToolId)
+  const toolModels = [...new Set(toolCalls.map((tool) => tool.model).filter(Boolean))].join(', ')
 
-  // Auto-expand the bubble when any tool in the group is still running so
-  // the user can see progress without having to click. Otherwise the bubble
-  // looks frozen ("tool completed" only appears at the very end) and the user
-  // has no feedback until the tool finishes — which for CI-watching tasks
-  // can be many minutes.
-  const hasRunningTool = toolCalls.some((tool) => tool.state === 'running')
-  const [expanded, setExpanded] = useState(verbosity !== 'none' || hasRunningTool)
+  const runningTools = toolCalls.filter((tool) => tool.state === 'running')
+  const activityTool = runningTools[runningTools.length - 1] ?? toolCalls[toolCalls.length - 1]
+  const childActivity = activityTool?.state === 'running'
+    ? getLatestChildToolActivity(activityTool.childTranscript ?? [])
+    : undefined
+  const activityDetail = childActivity
+    ? [childActivity.label, childActivity.toolSummary].filter(Boolean).join(' · ')
+    : activityTool && summarizeToolInput(activityTool.name, activityTool.input)
+  const activitySummary = activityTool
+    ? `${activityTool.name}${activityDetail ? ` · ${activityDetail}` : ''}`.replace(/\s+/g, ' ').trim()
+    : undefined
+  const activityIndicator = activityTool && toolActivityIndicators[activityTool.state]
+  const [expanded, setExpanded] = useState(verbosity !== 'none')
   const previousVerbosityRef = useRef(verbosity)
 
   useEffect(() => {
     if (previousVerbosityRef.current === verbosity) return
-    setExpanded(verbosity !== 'none' || hasRunningTool)
+    setExpanded(verbosity !== 'none')
     previousVerbosityRef.current = verbosity
-  }, [verbosity, hasRunningTool])
+  }, [verbosity])
 
-  // Once a tool starts running inside this group, force the bubble open.
-  // We don't collapse it again when the tool finishes — the user may want to
-  // scroll back through the progress.
-  useEffect(() => {
-    if (hasRunningTool) setExpanded(true)
-  }, [hasRunningTool])
+  const isExpanded = verbosity === 'recent' ? recentExpanded : expanded
 
   return (
-    <div ref={rootRef} className="max-w-[95%] self-start">
-      <button
-        onClick={() => setExpanded((prev) => !prev)}
-        className="inline-flex items-center gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
-      >
-        <span className="text-kumo-subtle">
-          {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
-        </span>
-        <Wrench size={13} className="text-kumo-subtle" />
-        <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
-      </button>
+    <div ref={rootRef} className="w-full min-w-0 max-w-[95%] self-start">
+      {message.providerID && message.model && (
+        <div className="mb-1 text-[10px]">
+          <ResponseMetadata response={message} />
+        </div>
+      )}
+      <div className="inline-flex max-w-full flex-col rounded-lg border border-kumo-line bg-kumo-overlay">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => {
+            if (verbosity === 'recent') onToggleRecent?.(message.id)
+            else setExpanded((prev) => !prev)
+          }}
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-kumo-fill transition-colors"
+        >
+          <span className="text-kumo-subtle">
+            {isExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+          </span>
+          <Wrench size={13} className="shrink-0 text-kumo-subtle" />
+          <span className="text-[12px] font-medium text-kumo-default">{message.content}</span>
+          {toolModels && <span className="min-w-0 truncate font-mono text-[10px] text-kumo-subtle" title={toolModels}>{toolModels}</span>}
+          <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-[10px] text-kumo-subtle/70">{message.timestamp}</span>
+        </button>
+        {!isExpanded && activityTool && activityIndicator && (
+          <div role="status" aria-atomic="true" className="flex min-w-0 items-center gap-1.5 px-3 pb-2 text-[10px] text-kumo-subtle" title={activitySummary}>
+            <activityIndicator.Icon
+              size={11}
+              className={`shrink-0 ${toolStateStyles[activityTool.state]} ${activityTool.state === 'running' ? 'animate-spin' : ''}`}
+            />
+            <span className={`shrink-0 ${toolStateStyles[activityTool.state]}`}>
+              {activityIndicator.label}
+              {runningTools.length > 1 ? ` (${runningTools.length})` : ''}
+            </span>
+            <span className="min-w-0 truncate font-mono">{activitySummary}</span>
+          </div>
+        )}
+      </div>
 
-      {expanded && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-kumo-line bg-kumo-overlay px-3 py-2">
-          {toolCalls.map((tool) => (
-            <div key={tool.id} className="rounded-md bg-kumo-control border border-kumo-line px-2.5 py-2">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] text-kumo-default">{tool.name}</span>
-                <span className={`text-[10px] ${toolStateStyles[tool.state] ?? 'text-kumo-link'}`}>
-                  {tool.state}
-                </span>
+      {isExpanded && (
+        <div className="mt-2 flex min-w-0 flex-col gap-1.5 rounded-lg border border-kumo-line bg-kumo-overlay p-2">
+          {toolCalls.map((tool) => {
+            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.expandedId === tool.id
+            const inputSummary = summarizeToolInput(tool.name, tool.input)
+            const header = (
+              <ToolCallHeader
+                tool={tool}
+                expanded={verbosity === 'recent' ? toolExpanded : undefined}
+                summary={!toolExpanded ? inputSummary ?? '' : undefined}
+                timestamp={formatRelativeTime(tool.timestamp)}
+              />
+            )
+            return (
+              <div key={tool.id} className="min-w-0 rounded-md bg-kumo-control border border-kumo-line">
+                {verbosity === 'recent' ? (
+                  <button
+                    type="button"
+                    aria-expanded={toolExpanded}
+                    onClick={() => recentToolExpansion.toggle(tool.id)}
+                    className="w-full min-w-0 rounded-md px-3 py-2.5 text-left hover:bg-kumo-fill/40 transition-colors"
+                    title={inputSummary}
+                  >
+                    {header}
+                  </button>
+                ) : <div className="px-3 py-2.5">{header}</div>}
+                {toolExpanded && (
+                  <div className="border-t border-kumo-line px-3 pb-2.5 pt-1">
+                    {inputSummary && (
+                      <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
+                        {inputSummary}
+                      </pre>
+                    )}
+                    {/* Show live subagent progress before its final output */}
+                    {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
+                      <div className="mt-2">
+                        <CollapsibleSubagentProgress tool={tool} verbosity={verbosity} />
+                      </div>
+                    )}
+                    {tool.output && (
+                      <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
+                        {tool.output}
+                      </pre>
+                    )}
+                  </div>
+                )}
               </div>
-              {summarizeToolInput(tool.name, tool.input) && (
-                <pre className="mt-1.5 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-link bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto max-h-[120px]">
-                  {summarizeToolInput(tool.name, tool.input)}
-                </pre>
-              )}
-              {/* Live sub-agent progress for the `task` tool. The child
-                  session's messages are already flowing through EventBridge →
-                  useAgentStore; we just mirror them inline so the user can
-                  watch what the sub-agent is doing. Rendered above the final
-                  output so the transcript reads top-to-bottom. */}
-              {tool.name === 'task' && (tool.state === 'running' || tool.childTranscript?.length) && (
-                <div className="mt-2">
-                  <CollapsibleSubagentProgress
-                    tool={tool}
-                    verbosity={verbosity}
-                  />
-                </div>
-              )}
-              {tool.output && (
-                <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-kumo-subtle bg-kumo-overlay rounded-md px-2 py-1.5 overflow-x-auto">
-                  {tool.output}
-                </pre>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -2235,8 +2381,14 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
+  prev.message.model === next.message.model &&
+  prev.message.providerID === next.message.providerID &&
+  prev.message.variant === next.message.variant &&
+  prev.message.timestamp === next.message.timestamp &&
   prev.message.toolCalls === next.message.toolCalls &&
-  prev.verbosity === next.verbosity
+  prev.verbosity === next.verbosity &&
+  prev.recentExpanded === next.recentExpanded &&
+  prev.onToggleRecent === next.onToggleRecent
 )
 
 /**

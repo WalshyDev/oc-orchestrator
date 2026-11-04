@@ -1,5 +1,8 @@
 import type { ProjectSettings, WorktreeStrategy } from '../../../shared/project'
+import type { SessionListPage } from '../../../shared/session-browser'
+import type { AgentFolder, FolderSnapshot } from '../../../shared/folders'
 
+export type { SessionListEntry } from '../../../shared/session-browser'
 export type { ProjectSettings, WorktreeStrategy }
 
 export interface IpcResult<T = unknown> {
@@ -45,7 +48,8 @@ export interface OrchestratorApi {
   listAgentConfigs: (agentId: string) => Promise<IpcResult>
   listTools: (agentId: string) => Promise<IpcResult>
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
-  listSessions: (directory: string) => Promise<IpcResult<SessionListEntry[]>>
+  listSessions: (directory: string, limit?: number) => Promise<IpcResult<SessionListPage>>
+  getSessionFirstPrompt: (directory: string, sessionId: string) => Promise<IpcResult<string>>
   listSessionsByProject: (projectDirectory: string) => Promise<IpcResult<ProjectSessionEntry[]>>
   importSession: (options: {
     sourceSessionId: string
@@ -67,13 +71,14 @@ export interface OrchestratorApi {
   listPermissions: () => Promise<IpcResult<PendingPermissionsPayload>>
   listRuntimes: () => Promise<IpcResult>
   stopRuntime: (runtimeId: string) => Promise<IpcResult>
-  listAllProviders: () => Promise<IpcResult>
-  getSystemConfig: () => Promise<IpcResult>
+  listAllProviders: (directory?: string) => Promise<IpcResult>
+  getSystemConfig: (directory?: string) => Promise<IpcResult>
   listAllCommands: () => Promise<IpcResult>
   listAllAgentConfigs: () => Promise<IpcResult>
   selectDirectory: () => Promise<IpcResult<string>>
 
   // ── Workspace Operations ──
+  validateDirectory: (directory: string) => Promise<IpcResult<boolean>>
   validateGitRepo: (directory: string) => Promise<IpcResult<boolean>>
   getWorktreeRoot: () => Promise<IpcResult<string>>
   getRepoRoot: (directory: string) => Promise<IpcResult<string>>
@@ -100,6 +105,14 @@ export interface OrchestratorApi {
   updateProjectSettings: (options: { repoRoot: string; settings: ProjectSettings }) => Promise<IpcResult<Project>>
 
   // ── Database: Custom Labels ──
+  listFolders: () => Promise<IpcResult<FolderSnapshot>>
+  migrateFolders: (legacy: FolderSnapshot) => Promise<IpcResult<FolderSnapshot>>
+  createFolder: (name: string) => Promise<IpcResult<AgentFolder>>
+  renameFolder: (id: string, name: string) => Promise<IpcResult<AgentFolder>>
+  deleteFolder: (id: string) => Promise<IpcResult>
+  setAgentFolder: (agentId: string, folderId: string | null) => Promise<IpcResult>
+  onFoldersChanged: (callback: (data: FolderSnapshot) => void) => () => void
+
   listCustomLabels: () => Promise<IpcResult<CustomLabelPayload[]>>
   createCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
   updateCustomLabel: (options: { id: string; name: string; colorKey: string }) => Promise<IpcResult<CustomLabelPayload>>
@@ -123,13 +136,15 @@ export interface OrchestratorApi {
 
   // ── Shell Integration ──
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string) => Promise<IpcResult>
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }) => Promise<IpcResult>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' | 'custom'; customCommand?: string }) => Promise<IpcResult>
   openTerminal: (options: { path: string; terminal?: string }) => Promise<IpcResult>
   openExternal: (url: string) => Promise<IpcResult>
 
   onEvent: (callback: (data: OpenCodeEventPayload) => void) => () => void
   onAgentLaunched: (callback: (data: AgentLaunchedPayload) => void) => () => void
   onAgentModelChanged: (callback: (data: AgentModelChangedPayload) => void) => () => void
+  onAgentPrUrlUpdated: (callback: (data: AgentPrUrlUpdatedPayload) => void) => () => void
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => () => void
   onExternalAttached: (callback: (data: ExternalAttachedPayload) => void) => () => void
   onSessionReset: (callback: (data: SessionResetPayload) => void) => () => void
   onRuntimeStarted: (callback: (data: RuntimeStartedPayload) => void) => () => void
@@ -147,13 +162,6 @@ export interface WorktreeListEntry {
   path: string
   head: string
   branch: string
-}
-
-export interface SessionListEntry {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
 }
 
 export interface ProjectSessionEntry {
@@ -175,6 +183,8 @@ export interface GitStatusFile {
   status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unmerged' | 'typechange'
   staged: boolean
   unstaged: boolean
+  additions?: number | null
+  deletions?: number | null
 }
 
 export interface FileReadPayload {
@@ -277,6 +287,11 @@ export interface AgentModelChangedPayload {
   variantOverride?: string
 }
 
+export interface AgentPrUrlUpdatedPayload {
+  id: string
+  prUrl: string
+}
+
 export interface SessionResetPayload {
   id: string
   sessionId: string
@@ -299,6 +314,9 @@ export type AgentStatusesPayload = Record<string, {
   agentId: string
   status: {
     type: string
+    attempt?: number
+    message?: string
+    next?: number
   }
 }>
 

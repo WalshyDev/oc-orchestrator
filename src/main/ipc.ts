@@ -10,6 +10,9 @@ import { notificationService, type NotifiableEventType } from './services/notifi
 import { subscribeFileChanges, unsubscribeFileChanges } from './services/file-watcher'
 import { getAppVersion } from './version'
 import { buildTerminalTabScript } from './terminal'
+import { folderManager } from './services/folder-manager'
+import type { FolderSnapshot } from '../shared/folders'
+import { resolveEditorLaunch, type OpenInEditorOptions } from './editor'
 
 interface Attachment {
   id?: string
@@ -85,6 +88,27 @@ function logIpcError(channel: string, error: unknown, context?: Record<string, u
  * Register all IPC handlers for renderer <-> main communication.
  */
 export function registerIpcHandlers(): void {
+  ipcMain.handle('folders:list', () => ({ ok: true, data: folderManager.getSnapshot() }))
+  ipcMain.handle('folders:migrate', (_event, legacy: FolderSnapshot) => (
+    { ok: true, data: folderManager.migrateLegacy(legacy) }
+  ))
+  for (const action of ['create', 'rename', 'delete', 'assign'] as const) {
+    ipcMain.handle(`folders:${action}`, (_event, id: string, value?: string | null) => {
+      try {
+        if (action === 'create') return { ok: true, data: folderManager.create(id) }
+        if (action === 'rename') return { ok: true, data: folderManager.rename(id, value) }
+        if (action === 'delete') folderManager.delete(id)
+        if (action === 'assign') {
+          if (!agentController.getAgent(id)) throw new Error(`Unknown agent: ${id}`)
+          folderManager.setAgentFolder(id, value)
+        }
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: String(error) }
+      }
+    })
+  }
+
   // ── Agent Lifecycle ──
 
   ipcMain.handle('agent:launch', async (_event, options: {
@@ -390,12 +414,21 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('session:list', async (_event, directory: string) => {
+  ipcMain.handle('session:list', async (_event, directory: string, limit?: number) => {
     try {
-      const sessions = await agentController.listSessions(directory)
+      const sessions = await agentController.listSessions(directory, limit)
       return { ok: true, data: sessions }
     } catch (error) {
       logIpcError('session:list', error)
+      return { ok: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('session:first-prompt', async (_event, directory: string, sessionId: string) => {
+    try {
+      return { ok: true, data: await agentController.getSessionFirstPrompt(directory, sessionId) }
+    } catch (error) {
+      logIpcError('session:first-prompt', error)
       return { ok: false, error: String(error) }
     }
   })
@@ -521,9 +554,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('runtime:providers', async () => {
+  ipcMain.handle('runtime:providers', async (_event, directory?: string) => {
     try {
-      const data = await agentController.getProvidersFromAnyRuntime()
+      const data = await agentController.getProvidersFromAnyRuntime(directory)
       return { ok: true, data }
     } catch (error) {
       logIpcError('runtime:providers', error)
@@ -551,9 +584,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('runtime:config', async () => {
+  ipcMain.handle('runtime:config', async (_event, directory?: string) => {
     try {
-      const data = await agentController.getConfigFromAnyRuntime()
+      const data = await agentController.getConfigFromAnyRuntime(directory)
       return { ok: true, data }
     } catch (error) {
       logIpcError('runtime:config', error)
@@ -577,6 +610,10 @@ export function registerIpcHandlers(): void {
   })
 
   // ── Workspace Operations ──
+
+  ipcMain.handle('workspace:validate-directory', async (_event, directory: string) => {
+    return { ok: true, data: workspaceManager.isDirectory(directory) }
+  })
 
   ipcMain.handle('workspace:validate-git', async (_event, directory: string) => {
     try {
@@ -1011,27 +1048,18 @@ export function registerIpcHandlers(): void {
   // ── Shell Integration ──
 
   /** Promisified execFile — avoids shell interpretation of arguments */
-  const run = (cmd: string, args: string[]): Promise<void> =>
+  const run = (cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> =>
     new Promise((resolve, reject) => {
-      execFile(cmd, args, (error) => {
+      execFile(cmd, args, { env }, (error) => {
         if (error) reject(error)
         else resolve()
       })
     })
 
-  ipcMain.handle('shell:open-in-editor', async (_event, options: {
-    path: string
-    editor: 'vscode' | 'cursor' | 'windsurf' | 'goland'
-  }) => {
+  ipcMain.handle('shell:open-in-editor', async (_event, options: OpenInEditorOptions) => {
     try {
-      const editorCommands: Record<string, string> = {
-        vscode: 'code',
-        cursor: 'cursor',
-        windsurf: 'windsurf',
-        goland: 'goland'
-      }
-      const cmd = editorCommands[options.editor] ?? 'code'
-      await run(cmd, [options.path])
+      const launch = resolveEditorLaunch(options)
+      await run(launch.command, launch.args, launch.env)
       return { ok: true }
     } catch (error) {
       logIpcError('shell:open-in-editor', error)

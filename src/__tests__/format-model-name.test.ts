@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { applyConfiguredModel, formatModelName } from '../renderer/src/hooks/useAgentStore'
+import {
+  applyConfiguredModel,
+  applyObservedResponse,
+  applyObservedModel,
+  formatModelName,
+  getAgentModelState,
+  refreshEffectiveVariant,
+  resetObservedResponse
+} from '../renderer/src/hooks/useAgentStore'
+import { getDisplayedModel, getDisplayedVariant } from '../renderer/src/types'
 
 describe('formatModelName', () => {
   describe('Claude models', () => {
@@ -59,16 +68,244 @@ describe('formatModelName', () => {
   })
 })
 
-describe('applyConfiguredModel', () => {
-  it('replaces a stale message-derived display model with the configured model', () => {
-    const agent = { model: 'sonnet-5' }
+describe('getDisplayedModel', () => {
+  it('shows the configured next model', () => {
+    expect(getDisplayedModel({
+      model: 'gpt-5.6-sol',
+      configuredModel: 'gpt-5.6-luna'
+    })).toBe('gpt-5.6-luna')
+  })
 
+  it('falls back to the active model', () => {
+    expect(getDisplayedModel({ model: 'gpt-5.6-sol' })).toBe('gpt-5.6-sol')
+  })
+})
+
+describe('getDisplayedVariant', () => {
+  it('formats explicit variants', () => {
+    expect(getDisplayedVariant({ variant: 'max' })).toBe('Max')
+  })
+
+  it('labels provider-default variants', () => {
+    expect(getDisplayedVariant({})).toBe('Provider default')
+    expect(getDisplayedVariant({ variant: 'auto' })).toBe('Provider default')
+    expect(getDisplayedVariant({ variant: 'none' })).toBe('Provider default')
+  })
+})
+
+describe('configured model and effort display', () => {
+  it.each([
+    ['gpt-6-luna', undefined, 'Provider default'],
+    ['gpt-6.1-sol', undefined, 'Provider default'],
+    ['gpt-6-luna', 'high', 'High'],
+    ['gpt-6.1-sol', 'high', 'High']
+  ])('ignores %s command effort with configured effort %s', (commandModel, configuredVariant, displayedVariant) => {
+    const agent = {
+      id: 'command-agent',
+      model: 'gpt-6.1-sol',
+      configuredModel: 'gpt-6.1-sol',
+      configuredModelPath: 'openai/gpt-6.1-sol',
+      configuredVariant,
+      variant: 'none'
+    }
+
+    applyObservedResponse(agent, commandModel, 'openai', 'max', 100)
+
+    expect(getDisplayedModel(agent)).toBe('gpt-6.1-sol')
+    expect(getDisplayedVariant(agent)).toBe(displayedVariant)
+    expect(agent.variant).toBe('max')
+  })
+
+  it('resolves configured defaults when providers load after a command response', () => {
+    const agent = {
+      id: 'command-agent',
+      model: 'gpt-6.1-sol',
+      configuredModel: 'gpt-6.1-sol',
+      configuredModelPath: 'openai/gpt-6.1-sol',
+      variant: 'none'
+    }
+    applyObservedResponse(agent, 'gpt-6-luna', 'openai', 'max', 100)
+    const providers = {
+      providers: [{
+        id: 'openai',
+        name: 'OpenAI',
+        models: {
+          'gpt-6.1-sol': {
+            id: 'gpt-6.1-sol',
+            name: 'GPT-6.1 Sol',
+            options: { reasoningEffort: 'medium' },
+            variants: { medium: { reasoningEffort: 'medium' } }
+          }
+        }
+      }]
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(getDisplayedVariant(agent)).toBe('Medium')
+    expect(agent.variant).toBe('max')
+
+    applyConfiguredModel(agent, 'openai/gpt-6-luna')
+    refreshEffectiveVariant(agent, providers)
+    expect(getDisplayedModel(agent)).toBe('gpt-6-luna')
+    expect(getDisplayedVariant(agent)).toBe('Provider default')
+    expect(agent.variant).toBe('max')
+  })
+})
+
+describe('applyConfiguredModel', () => {
+  it('uses the configured model until an assistant response identifies the active model', () => {
+    const agent = { model: 'Loading...' }
+
+    applyConfiguredModel(agent, 'openai/gpt-5.6-sol')
+    expect(agent.model).toBe('gpt-5.6-sol')
+
+    applyObservedModel(agent, 'claude-sonnet-5')
     applyConfiguredModel(agent, 'openai/gpt-5.6-sol')
 
     expect(agent).toEqual({
-      model: 'gpt-5.6-sol',
+      model: 'sonnet-5',
       configuredModel: 'gpt-5.6-sol',
-      configuredModelPath: 'openai/gpt-5.6-sol'
+      configuredModelPath: 'openai/gpt-5.6-sol',
+      rawModelId: 'claude-sonnet-5'
     })
+  })
+
+  it('preserves the observed model across reconnects', () => {
+    const modelState = getAgentModelState(
+      { model: 'sonnet-5', rawModelId: 'claude-sonnet-5' },
+      'gpt-5.6-sol'
+    )
+
+    applyConfiguredModel(modelState, 'openai/gpt-5.6-sol')
+
+    expect(modelState.model).toBe('sonnet-5')
+    expect(modelState.rawModelId).toBe('claude-sonnet-5')
+  })
+})
+
+describe('effective response variant', () => {
+  const providers = {
+    providers: [{
+      id: 'openai',
+      name: 'OpenAI',
+      models: {
+        'gpt-5.6-luna': {
+          id: 'gpt-5.6-luna',
+          name: 'GPT-5.6 Luna',
+          options: { reasoningEffort: 'max' },
+          variants: { max: { reasoningEffort: 'max' } }
+        }
+      }
+    }]
+  }
+
+  it('does not let delayed history replace a newer live response', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      rawProviderId: 'openai',
+      rawMessageVariant: 'max',
+      observedModelAt: 200
+    }
+
+    expect(applyObservedResponse(agent, 'claude-sonnet-5', 'anthropic', 'high', 100)).toBe(false)
+    expect(agent).toMatchObject({
+      model: 'gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      observedModelAt: 200
+    })
+  })
+
+  it('lets a later message with the same timestamp replace the observed response', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      variant: 'max',
+      rawModelId: 'gpt-5.6-luna',
+      rawProviderId: 'openai',
+      rawMessageVariant: 'max',
+      observedModelAt: 200
+    }
+
+    expect(applyObservedResponse(agent, 'claude-sonnet-5', 'anthropic', 'high', 200)).toBe(true)
+    expect(agent).toMatchObject({
+      model: 'sonnet-5',
+      variant: 'high',
+      rawModelId: 'claude-sonnet-5',
+      observedModelAt: 200
+    })
+  })
+
+  it('restores the configured variant when a session resets', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'high',
+      configuredVariant: 'max',
+      rawModelId: 'claude-sonnet-5',
+      rawProviderId: 'anthropic',
+      rawMessageVariant: 'high',
+      observedModelAt: 200
+    }
+
+    resetObservedResponse(agent)
+
+    expect(agent).toMatchObject({ model: 'gpt-5.6-luna', variant: 'max' })
+    expect(agent.rawModelId).toBeUndefined()
+    expect(agent.rawProviderId).toBeUndefined()
+    expect(agent.rawMessageVariant).toBeUndefined()
+    expect(agent.observedModelAt).toBeUndefined()
+  })
+
+  it('waits for a model before applying a configured variant', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'Loading...',
+      variant: 'max',
+      configuredVariant: 'max'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(agent.variant).toBe('none')
+  })
+
+  it('ignores the configured variant when a response used a different model', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-sol',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'high',
+      configuredVariant: 'high',
+      rawModelId: 'gpt-5.6-sol',
+      rawProviderId: 'openai'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+    expect(agent.variant).toBe('none')
+
+    agent.rawModelId = 'gpt-5.6-luna'
+    agent.rawProviderId = 'azure'
+    refreshEffectiveVariant(agent, providers)
+    expect(agent.variant).toBe('none')
+  })
+
+  it('uses merged model effort when no explicit variant applies', () => {
+    const agent = {
+      id: 'agent-1',
+      model: 'gpt-5.6-luna',
+      configuredModelPath: 'openai/gpt-5.6-luna',
+      variant: 'none'
+    }
+
+    refreshEffectiveVariant(agent, providers)
+
+    expect(agent.variant).toBe('max')
   })
 })

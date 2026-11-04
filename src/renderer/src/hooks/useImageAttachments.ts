@@ -82,8 +82,10 @@ export function useImageAttachments() {
   const [isDragOver, setIsDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragCounterRef = useRef(0)
+  const generationRef = useRef(0)
 
   const addImageFiles = useCallback(async (files: FileList | File[]) => {
+    const generation = generationRef.current
     const imageFiles = Array.from(files).filter(
       (f) => ACCEPTED_IMAGE_TYPES.includes(f.type) && f.size <= MAX_ATTACHMENT_SIZE
     )
@@ -106,7 +108,7 @@ export function useImageAttachments() {
       .filter((r): r is PromiseFulfilledResult<MessageAttachment> => r.status === 'fulfilled')
       .map((r) => r.value)
 
-    if (succeeded.length === 0) return
+    if (succeeded.length === 0 || generation !== generationRef.current) return
 
     setAttachments((prev) => {
       const remaining = MAX_ATTACHMENT_COUNT - prev.length
@@ -120,6 +122,7 @@ export function useImageAttachments() {
   }, [])
 
   const clearAttachments = useCallback(() => {
+    generationRef.current++
     setAttachments([])
   }, [])
 

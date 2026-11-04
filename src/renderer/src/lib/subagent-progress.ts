@@ -12,6 +12,9 @@ export interface ChildTranscriptEntry {
   toolOutput?: string
   childSessionId?: string
   childTranscript?: ChildTranscriptEntry[]
+  modelId?: string
+  providerID?: string
+  variant?: string
 }
 
 export interface ChildSessionDescriptor {
@@ -172,13 +175,23 @@ export function buildChildTranscript(
 
     for (const part of message.parts) {
       if (part.type === 'text' && part.text) {
-        entries.push({ id: part.id, kind: 'text', label: part.text })
+        entries.push({
+          id: part.id,
+          kind: 'text',
+          label: part.text,
+          modelId: message.modelId,
+          providerID: message.providerID,
+          variant: message.variant
+        })
       } else if (part.type === 'tool' && part.toolName) {
         const toolState = mapToolState(part.toolName, part.toolState, messageActive)
         entries.push({
           id: part.id,
           kind: 'tool',
           label: part.toolName,
+          modelId: message.modelId,
+          providerID: message.providerID,
+          variant: message.variant,
           toolState,
           toolSummary: summarizeChildToolInput(part.toolName, part.toolInput),
           toolOutput: part.text,
@@ -255,11 +268,10 @@ export function splitTaskToolGroups(message: Message): Message[] {
     return result
   }, [])
 
-  // Always suffix the first tool id, even for a single group, so a group keeps
-  // its id (and its expanded state) when a later tool splits it.
+  // Each group keeps its first tool's id as later tools arrive or split the group
   return groups.map((toolCalls) => ({
     ...message,
-    id: `${message.id}-${toolCalls[0].id}`,
+    id: `${toolCalls[0].id}-tools`,
     content: `${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}`,
     toolCalls
   }))

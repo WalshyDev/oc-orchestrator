@@ -1,9 +1,14 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { X, FolderOpen, CaretDown, Warning, Trash, Paperclip, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
+import { X, FolderOpen, CaretDown, Warning, ClockCounterClockwise, CircleNotch, Play } from '@phosphor-icons/react'
+import { ImageAttachmentInput } from './ImageAttachmentInput'
 import { SelectField } from './SelectField'
+import { ModelSelectField } from './ModelSelectField'
 import { LabelDropdown } from './LabelDropdown'
 import { PortaledMenu } from './PortaledMenu'
+import { ProjectDirectoryOptions } from './ProjectDirectoryOptions'
+import { recordRecentDirectory, removeRecentDirectory, useRecentDirectories } from '../hooks/useRecentDirectories'
 import { getVariantOptionsForModel, useModelOptions } from '../hooks/useModelOptions'
+import { buildLaunchPrompt, parseLaunchPrUrl } from '../lib/launch-pr-input'
 import { useImageAttachments } from '../hooks/useImageAttachments'
 import { loadSettings } from '../data/settings'
 import type { LabelDefinition, LabelColorKey } from '../types'
@@ -93,7 +98,7 @@ interface KnownDirectory {
 
 interface LaunchModalProps {
   onClose: () => void
-  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[]) => void
+  onLaunch: (directory: string, prompt?: string, title?: string, model?: string, modelVariant?: string, worktreeStrategy?: string, attachments?: MessageAttachment[], freshWorktreeConfig?: FreshWorktreeConfig, importSession?: ImportSessionConfig, labelIds?: string[], prUrl?: string) => void
   onSelectDirectory: () => Promise<string | null>
   onValidateDirectory?: (dir: string) => Promise<boolean>
   knownDirectories?: KnownDirectory[]
@@ -107,11 +112,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [activeTab, setActiveTab] = useState<ModalTab>('new')
   const [directory, setDirectory] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [prUrlInput, setPrUrlInput] = useState('')
+  const prUrl = parseLaunchPrUrl(prUrlInput)
+  const prUrlError = prUrlInput.trim() && !prUrl ? 'Enter an HTTP or HTTPS URL.' : null
   const [title, setTitle] = useState('')
   const [model, setModel] = useState(() => loadSettings().model)
   const [modelVariant, setModelVariant] = useState(() => loadSettings().modelVariant)
-  const { options: modelOptions, providerData, configModel } = useModelOptions()
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeStrategy>('new-worktree')
+  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null)
+  const [homeDirectory, setHomeDirectory] = useState('')
   const [freshWorktree, setFreshWorktree] = useState(false)
   const [baseBranch, setBaseBranch] = useState('')
   const [labelIds, setLabelIds] = useState<string[]>([])
@@ -122,16 +131,17 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const [launching, setLaunching] = useState(false)
   const [dirError, setDirError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
+  const [validatedDirectory, setValidatedDirectory] = useState('')
+  const modelDirectory = validatedDirectory === directory.trim() ? validatedDirectory : undefined
+  const { options: modelOptions, loading: modelsLoading, providerData, configModel } = useModelOptions(undefined, modelDirectory)
   const [worktreeRoot, setWorktreeRoot] = useState('')
   const [savedProjects, setSavedProjects] = useState<Project[]>([])
   const [projectsReady, setProjectsReady] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
-  const {
-    attachments, isDragOver, fileInputRef,
-    removeAttachment, clearAttachments,
-    handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
-  } = useImageAttachments()
+  const recentDirectories = useRecentDirectories()
+  const newImages = useImageAttachments()
+  const importImages = useImageAttachments()
   const dropdownButtonRef = useRef<HTMLButtonElement>(null)
   const sessionDropdownButtonRef = useRef<HTMLButtonElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
@@ -154,13 +164,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
   const trimmedPrompt = prompt.trim().toLowerCase()
 
   const effortOptions = useMemo(
-    () => getVariantOptionsForModel(model, providerData, configModel),
-    [model, providerData, configModel]
+    () => getVariantOptionsForModel(model, providerData, configModel, modelVariant),
+    [model, modelVariant, providerData, configModel]
   )
 
-  const selectedEffort = effortOptions.some((option) => option.value === modelVariant)
-    ? modelVariant
-    : 'auto'
+  const selectedEffort = modelVariant
 
   // Only suggest commands while the user is still typing a single-token command
   // (no space or newline yet). Once they add a space, they've committed to that
@@ -319,6 +327,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       await window.api.deleteProject(projectId)
       setSavedProjects((prev) => prev.filter((p) => p.id !== projectId))
       const removed = savedProjects.find((p) => p.id === projectId)
+      if (removed) removeRecentDirectory(removed.repo_root)
       if (removed && removed.repo_root === directory) setDirectory('')
     } catch { /* ignore */ }
   }, [directory, savedProjects])
@@ -332,10 +341,15 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       } catch { /* ignore */ }
     }
     void loadWorktreeRoot()
+    void window.api.getHomeDirectory().then((result) => {
+      if (isMounted && result.ok && result.data) setHomeDirectory(result.data)
+    }).catch(() => {})
     return () => { isMounted = false }
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    setValidatedDirectory('')
     if (!directory.trim()) { setDirError(null); setValidating(false); return }
     const currentDir = directory.trim()
     setValidating(true)
@@ -343,26 +357,27 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       if (onValidateDirectory) {
         try {
           const isValid = await onValidateDirectory(currentDir)
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError(isValid ? null : 'This directory is not a valid git repository.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError(isValid ? null : 'This directory does not exist or is not a folder.')
+          setValidatedDirectory(isValid ? currentDir : '')
+          setValidating(false)
         } catch {
-          setDirectory((latest) => {
-            if (latest.trim() === currentDir) { setDirError('Could not validate directory.'); setValidating(false) }
-            return latest
-          })
+          if (cancelled) return
+          setDirError('Could not validate directory.')
+          setValidating(false)
         }
       } else {
+        setValidatedDirectory(currentDir)
         setValidating(false)
       }
     }, 500)
-    return () => clearTimeout(timer)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [directory, onValidateDirectory])
 
   // Load per-project settings when directory changes
   useEffect(() => {
-    const dir = directory.trim()
+    const dir = modelDirectory
+    setIsGitRepo(null)
     if (!dir || !projectsReady) return
     let cancelled = false
     setDetectingBranch(true)
@@ -370,6 +385,14 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       try {
         const repoRootResult = await window.api.getRepoRoot(dir)
         if (cancelled) return
+        const hasRepo = !!(repoRootResult.ok && repoRootResult.data)
+        setIsGitRepo(hasRepo)
+        if (!hasRepo) {
+          setWorktreeStrategy('current-directory')
+          setFreshWorktree(false)
+          setBaseBranch('')
+          return
+        }
         const repoRoot = repoRootResult.ok && repoRootResult.data ? repoRootResult.data : dir
         const matchedProject = savedProjects.find((p) => p.repo_root === repoRoot)
         const savedWorktreeStrategy = matchedProject?.worktree_strategy
@@ -384,18 +407,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
         if (cancelled) return
         setBaseBranch(branchResult.ok && branchResult.data ? branchResult.data : 'origin/main')
       } catch {
-        if (!cancelled) { setFreshWorktree(false); setBaseBranch('origin/main') }
+        if (!cancelled) {
+          setIsGitRepo(false)
+          setWorktreeStrategy('current-directory')
+          setFreshWorktree(false)
+          setBaseBranch('')
+        }
       } finally {
         if (!cancelled) setDetectingBranch(false)
       }
     }
     void loadProjectSettings()
     return () => { cancelled = true }
-  }, [directory, savedProjects, projectsReady])
+  }, [modelDirectory, savedProjects, projectsReady])
 
   // Fetch sessions when import tab is active and directory is valid
   useEffect(() => {
-    if (activeTab !== 'import' || !directory.trim() || dirError || validating) {
+    if (activeTab !== 'import' || !modelDirectory) {
       setImportSessions([]); setImportError(null); setSelectedSession(null)
       return
     }
@@ -403,7 +431,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     const fetchSessions = async () => {
       setImportLoading(true); setImportError(null); setImportSessions([]); setSelectedSession(null)
       try {
-        const result = await window.api.listSessionsByProject(directory.trim())
+        const result = await window.api.listSessionsByProject(modelDirectory)
         if (cancelled) return
         if (result.ok && result.data) {
           const sorted = [...result.data].sort((a, b) => b.updatedAt - a.updatedAt)
@@ -420,12 +448,19 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
     void fetchSessions()
     return () => { cancelled = true }
-  }, [activeTab, directory, dirError, validating])
+  }, [activeTab, modelDirectory])
 
   // Reset import state when switching tabs
+  const clearImportAttachments = importImages.clearAttachments
   useEffect(() => {
-    if (activeTab !== 'import') { setSelectedSession(null); setImportSearch(''); setImportName(''); setImportPrompt('') }
-  }, [activeTab])
+    if (activeTab !== 'import') {
+      setSelectedSession(null)
+      setImportSearch('')
+      setImportName('')
+      setImportPrompt('')
+      clearImportAttachments()
+    }
+  }, [activeTab, clearImportAttachments])
 
   // Session dropdown outside-click handling is delegated to PortaledMenu.
 
@@ -436,14 +471,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
       s.title.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)
     )
   }, [importSessions, importSearch])
-
-  const filteredProjects = useMemo(() => {
-    if (!projectSearch.trim()) return savedProjects
-    const q = projectSearch.toLowerCase()
-    return savedProjects.filter((p) =>
-      p.name.toLowerCase().includes(q) || p.repo_root.toLowerCase().includes(q)
-    )
-  }, [savedProjects, projectSearch])
 
   // Project dropdown outside-click handling is delegated to PortaledMenu.
 
@@ -470,20 +497,23 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
     }
   }
 
+  const isLaunchDisabled = !modelDirectory || modelsLoading || launching || validating || !!dirError
+    || isGitRepo === null || detectingBranch
+    || (worktreeStrategy === 'new-worktree' && !isGitRepo)
+    || (activeTab === 'import' && !selectedSession)
+    || (activeTab === 'new' && !!prUrlError)
+
   /**
-   * Closes the modal as soon as the launch is handed off. The launch itself
+    * Closes the modal as soon as the launch is handed off. The launch itself
    * takes seconds on a cold runtime; the fleet table shows a placeholder row
    * for it in the meantime, and reports any failure there.
    */
   const handleLaunch = () => {
-    if (!directory.trim() || dirError || validating || launching) return
-    if (activeTab === 'import' && !selectedSession) return
+    if (isLaunchDisabled) return
     setLaunching(true)
     try {
-      const effectiveStrategy = activeTab === 'import' ? 'new-worktree' : worktreeStrategy
-
       const freshConfig: FreshWorktreeConfig | undefined =
-        effectiveStrategy === 'new-worktree' && freshWorktree
+        worktreeStrategy === 'new-worktree' && freshWorktree
           ? { enabled: true, baseBranch }
           : undefined
 
@@ -504,19 +534,22 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
       const effectivePrompt = activeTab === 'import'
         ? (importPrompt.trim() || undefined)
-        : (prompt || undefined)
+        : buildLaunchPrompt(prompt, prUrl)
 
-      const effectiveAttachments = activeTab === 'new' && attachments.length > 0
-        ? attachments
+      const images = activeTab === 'import' ? importImages : newImages
+      const effectiveAttachments = images.attachments.length > 0
+        ? images.attachments
         : undefined
 
       const effectiveLabels = labelIds.length > 0 ? labelIds : undefined
 
       const effectiveModelVariant = selectedEffort === 'auto' ? undefined : selectedEffort
-      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, effectiveStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels)
+      onLaunch(directory, effectivePrompt, effectiveTitle, model, effectiveModelVariant, worktreeStrategy, effectiveAttachments, freshConfig, importConfig, effectiveLabels, activeTab === 'new' ? prUrl : undefined)
+      recordRecentDirectory(directory)
       void persistProjectSettings(directory.trim(), false)
 
-      clearAttachments()
+      newImages.clearAttachments()
+      importImages.clearAttachments()
       onClose()
     } catch (error) {
       console.error('Launch failed:', error)
@@ -543,10 +576,6 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
   const selectedProject = savedProjects.find((p) => p.repo_root === directory)
   const hasDirectory = directory.trim().length > 0
-
-  const isLaunchDisabled = activeTab === 'new'
-    ? !directory.trim() || launching || validating || !!dirError
-    : !directory.trim() || launching || validating || !!dirError || !selectedSession
 
   const launchButtonLabel = launching
     ? 'Launching...'
@@ -641,7 +670,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                   onDismiss={() => { setShowDropdown(false); setProjectSearch('') }}
                   className="bg-kumo-control border border-kumo-fill-hover rounded-md shadow-2xl max-h-[320px] flex flex-col overflow-hidden"
                 >
-                  {savedProjects.length > 0 && (
+                  {(savedProjects.length > 0 || recentDirectories.length > 0) && (
                     <div className="px-2 pt-2 pb-1 shrink-0">
                       <input
                         type="text"
@@ -654,35 +683,20 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     </div>
                   )}
                   <div className="overflow-y-auto flex-1">
-                    {filteredProjects.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 text-[10px] font-medium text-kumo-subtle uppercase tracking-wider">
-                          Saved Projects
-                        </div>
-                        {filteredProjects.map((project) => (
-                          <div
-                            key={project.id}
-                            className="group flex items-center px-3 py-1.5 hover:bg-kumo-fill-hover transition-colors cursor-pointer"
-                            onMouseDown={() => handleSelectProject(project.repo_root)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs text-kumo-default font-medium truncate">{project.name}</div>
-                              <div className="text-[11px] text-kumo-subtle font-mono truncate">{project.repo_root}</div>
-                            </div>
-                            <button
-                              onMouseDown={(e) => void removeProject(project.id, e)}
-                              className="ml-2 p-1 rounded text-kumo-subtle/0 group-hover:text-kumo-subtle hover:!text-kumo-danger hover:bg-kumo-fill-hover transition-colors shrink-0"
-                              title="Remove from saved projects"
-                            >
-                              <Trash size={12} />
-                            </button>
-                          </div>
-                        ))}
-                        <div className="border-t border-kumo-fill-hover" />
-                      </>
-                    )}
-                    {filteredProjects.length === 0 && savedProjects.length > 0 && (
-                      <div className="px-3 py-4 text-xs text-kumo-subtle text-center">No matching projects</div>
+                    <ProjectDirectoryOptions
+                      projects={savedProjects}
+                      search={projectSearch}
+                      homeDirectory={homeDirectory}
+                      onSelect={handleSelectProject}
+                      onRemove={(id, event) => void removeProject(id, event)}
+                    />
+                    {homeDirectory && !recentDirectories.includes(homeDirectory) && (
+                      <button
+                        onMouseDown={() => handleSelectProject(homeDirectory)}
+                        className="w-full px-3 py-2 text-left text-xs text-kumo-default hover:bg-kumo-fill-hover transition-colors"
+                      >
+                        Home / QuickStart (~)
+                      </button>
                     )}
                     <button
                       onMouseDown={() => void handleBrowse()}
@@ -710,66 +724,67 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
             )}
           </div>
 
+          {/* Branch / Worktree Strategy */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+              Branch Strategy
+            </label>
+            <div className="relative">
+              <SelectField
+                value={worktreeStrategy}
+                onChange={(value) => setWorktreeStrategy(value as WorktreeStrategy)}
+                disabled={!modelDirectory || isGitRepo === null || detectingBranch}
+                options={[
+                  ...(isGitRepo ? [{ value: 'new-worktree', label: 'New Worktree (recommended)' }] : []),
+                  { value: 'current-directory', label: 'Use Current Directory' }
+                ]}
+                buttonClassName={selectButtonClasses}
+                menuClassName={selectMenuClasses}
+              />
+            </div>
+            {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
+              <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
+                Worktree path: {estimatedWorktreePath}
+              </p>
+            )}
+            {worktreeStrategy === 'new-worktree' && (
+              <div className="flex flex-col gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setFreshWorktree(!freshWorktree)}
+                  className="flex items-center gap-2 text-xs text-kumo-default cursor-pointer select-none group"
+                >
+                  <span className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
+                    freshWorktree
+                      ? 'bg-kumo-brand border-kumo-brand text-white'
+                      : 'border-kumo-line bg-kumo-control group-hover:border-kumo-subtle'
+                  }`}>
+                    {freshWorktree && <span className="text-[9px] font-bold leading-none">&#10003;</span>}
+                  </span>
+                  Fetch latest from base branch
+                </button>
+                {freshWorktree && (
+                  <input
+                    type="text"
+                    value={baseBranch}
+                    onChange={(e) => setBaseBranch(e.target.value)}
+                    placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
+                    disabled={detectingBranch}
+                    className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+
           {/* ── New Agent Tab ── */}
           {activeTab === 'new' && (
             <>
-              {/* Branch / Worktree Strategy */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
-                  Branch Strategy
-                </label>
-                <div className="relative">
-                  <SelectField
-                    value={worktreeStrategy}
-                    onChange={(value) => setWorktreeStrategy(value as WorktreeStrategy)}
-                    options={[
-                      { value: 'new-worktree', label: 'New Worktree (recommended)' },
-                      { value: 'current-directory', label: 'Use Current Directory' }
-                    ]}
-                    buttonClassName={selectButtonClasses}
-                    menuClassName={selectMenuClasses}
-                  />
-                </div>
-                {worktreeStrategy === 'new-worktree' && estimatedWorktreePath && (
-                  <p className="text-[11px] text-kumo-subtle font-mono truncate" title={estimatedWorktreePath}>
-                    Worktree path: {estimatedWorktreePath}
-                  </p>
-                )}
-                {worktreeStrategy === 'new-worktree' && (
-                  <div className="flex flex-col gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => setFreshWorktree(!freshWorktree)}
-                      className="flex items-center gap-2 text-xs text-kumo-default cursor-pointer select-none group"
-                    >
-                      <span className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
-                        freshWorktree
-                          ? 'bg-kumo-brand border-kumo-brand text-white'
-                          : 'border-kumo-line bg-kumo-control group-hover:border-kumo-subtle'
-                      }`}>
-                        {freshWorktree && <span className="text-[9px] font-bold leading-none">&#10003;</span>}
-                      </span>
-                      Fetch latest from base branch
-                    </button>
-                    {freshWorktree && (
-                      <input
-                        type="text"
-                        value={baseBranch}
-                        onChange={(e) => setBaseBranch(e.target.value)}
-                        placeholder={detectingBranch ? 'Detecting...' : 'origin/main'}
-                        disabled={detectingBranch}
-                        className="w-full rounded-md border border-kumo-line bg-kumo-control px-2.5 py-1.5 text-xs text-kumo-default font-mono placeholder:text-kumo-subtle outline-none transition-colors focus:border-kumo-ring disabled:opacity-50"
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-
               {/* Model */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Model</label>
                 <div className="relative">
-                  <SelectField
+                  <ModelSelectField
                     value={model}
                     onChange={(value) => { setModel(value); setModelVariant('auto') }}
                     options={modelOptions}
@@ -781,20 +796,42 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 </div>
               </div>
 
-              {/* Effort */}
+              {/* Variant */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Effort Level</label>
+                <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">Variant</label>
                 <div className="relative">
                   <SelectField
                     value={selectedEffort}
                     onChange={(value) => setModelVariant(value)}
                     options={effortOptions}
+                    disabled={modelsLoading}
                     buttonClassName={selectButtonClasses}
                     menuClassName={selectMenuClasses}
                   />
                 </div>
                 <p className="text-[11px] text-kumo-subtle">
-                  Provider Default sends no override; OpenCode uses the selected model&apos;s default effort.
+                  {modelsLoading
+                    ? 'Loading model variants...'
+                    : "Provider Default uses the selected model's default variant."}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="launch-pr-url" className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                  Link <span className="text-kumo-subtle/60">(optional)</span>
+                </label>
+                <input
+                  id="launch-pr-url"
+                  type="url"
+                  value={prUrlInput}
+                  onChange={(event) => setPrUrlInput(event.target.value)}
+                  placeholder="https://example.com/review"
+                  aria-invalid={!!prUrlError}
+                  aria-describedby="launch-pr-url-help"
+                  className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none focus:border-kumo-ring placeholder:text-kumo-subtle"
+                />
+                <p id="launch-pr-url-help" className={`text-[11px] ${prUrlError ? 'text-kumo-danger' : 'text-kumo-subtle'}`}>
+                  {prUrlError || "Included in the initial prompt and saved as this agent's PR link."}
                 </p>
               </div>
 
@@ -834,40 +871,7 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                 <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                   Initial Prompt <span className="text-kumo-subtle/60">(optional — you can prompt from the session)</span>
                 </label>
-                <div
-                  className={`relative flex flex-col gap-0 rounded-md border transition-colors ${
-                    isDragOver ? 'border-kumo-brand bg-kumo-brand/[0.04]' : 'border-kumo-line focus-within:border-kumo-ring'
-                  }`}
-                  onDragOver={handleDragOver}
-                  onDragEnter={handleDragEnter}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  {attachments.length > 0 && (
-                    <div className="flex gap-2 px-3 py-2 overflow-x-auto">
-                      {attachments.map((att) => (
-                        <div key={att.id} className="relative group shrink-0">
-                          <img
-                            src={att.dataUrl}
-                            alt={att.filename ?? 'attachment'}
-                            className="h-16 w-16 rounded-md border border-kumo-line object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(att.id!)}
-                            className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-kumo-danger text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <X size={8} weight="bold" />
-                          </button>
-                          {att.filename && (
-                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded-b-md truncate">
-                              {att.filename}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <ImageAttachmentInput images={newImages}>
 
                   {/* Popup visibility is driven by prompt content. onDismiss is
                       a no-op so clicks outside the textarea don't permanently
@@ -934,32 +938,11 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                     onKeyDown={handlePromptKeyDown}
                     onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart)}
                     onClick={(e) => setCursorPos(e.currentTarget.selectionStart)}
-                    onPaste={handlePaste}
-                    placeholder={isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session... Type / for commands, @ for agents.'}
+                    placeholder={newImages.isDragOver ? 'Drop image here...' : 'Leave empty to start an interactive session... Type / for commands, @ for agents.'}
                     rows={3}
                     className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
                   />
-                  <div className="flex items-center gap-2 px-3 py-1.5 border-t border-kumo-line">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center gap-1 text-[10px] text-kumo-subtle hover:text-kumo-default transition-colors"
-                      title="Attach image"
-                    >
-                      <Paperclip size={11} />
-                      <span>Attach image</span>
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/gif,image/webp"
-                      multiple
-                      className="hidden"
-                      onChange={handleFileInputChange}
-                    />
-                    <span className="text-[10px] text-kumo-subtle/60">Paste or drag images to attach.</span>
-                  </div>
-                </div>
+                </ImageAttachmentInput>
               </div>
             </>
           )}
@@ -1066,7 +1049,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                       </PortaledMenu>
                     </div>
                     <p className="text-[11px] text-kumo-subtle -mt-0.5">
-                      Creates a new worktree and copies the session history into it.
+                      {worktreeStrategy === 'new-worktree'
+                        ? 'Creates a new worktree and copies the session history into it.'
+                        : 'Copies the session history into a new session in this directory.'}
                     </p>
                   </div>
 
@@ -1091,9 +1076,9 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
                           Model
                         </label>
                         <div className="relative">
-                          <SelectField
+                          <ModelSelectField
                             value={model}
-                            onChange={(value) => setModel(value)}
+                            onChange={(value) => { setModel(value); setModelVariant('auto') }}
                             options={modelOptions}
                             searchable
                             searchPlaceholder="Search models…"
@@ -1105,15 +1090,36 @@ export function LaunchModal({ onClose, onLaunch, onSelectDirectory, onValidateDi
 
                       <div className="flex flex-col gap-1.5">
                         <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
+                          Variant
+                        </label>
+                        <SelectField
+                          value={selectedEffort}
+                          onChange={setModelVariant}
+                          options={effortOptions}
+                          disabled={modelsLoading}
+                          buttonClassName={selectButtonClasses}
+                          menuClassName={selectMenuClasses}
+                        />
+                        <p className="text-[11px] text-kumo-subtle">
+                          {modelsLoading
+                            ? 'Loading model variants...'
+                            : "Provider Default uses the selected model's default variant."}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">
                           Initial Prompt <span className="text-kumo-subtle/60">(optional)</span>
                         </label>
-                        <textarea
-                          value={importPrompt}
-                          onChange={(e) => setImportPrompt(e.target.value)}
-                          placeholder="Continue where you left off, or give new instructions..."
-                          rows={2}
-                          className="px-3 py-2 bg-kumo-control border border-kumo-line rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none focus:border-kumo-ring"
-                        />
+                        <ImageAttachmentInput images={importImages}>
+                          <textarea
+                            value={importPrompt}
+                            onChange={(e) => setImportPrompt(e.target.value)}
+                            placeholder={importImages.isDragOver ? 'Drop image here...' : 'Continue where you left off, or give new instructions...'}
+                            rows={2}
+                            className="px-3 py-2 bg-kumo-control rounded-md text-sm text-kumo-default outline-none placeholder:text-kumo-subtle resize-none border-0 focus:ring-0"
+                          />
+                        </ImageAttachmentInput>
                       </div>
                     </>
                   )}

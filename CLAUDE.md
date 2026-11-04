@@ -4,12 +4,12 @@ This file provides guidance to AI Agents when working with code in this reposito
 
 ## Project Overview
 
-OC Orchestrator is an Electron + React + TypeScript desktop app for running and supervising 10+ concurrent OpenCode agents across multiple local projects. It uses SQLite (better-sqlite3) for local persistence and the `@opencode-ai/sdk` for communicating with OpenCode servers.
+OC Orchestrator is an Electron + React + TypeScript desktop app for running and supervising 10+ concurrent OpenCode agents across multiple local projects. It uses SQLite through sql.js for local persistence and the `@opencode-ai/sdk` for communicating with OpenCode servers.
 
 ## Commands
 
 ```bash
-npm install               # Install deps + rebuild native modules (better-sqlite3)
+npm install               # Install dependencies
 npm run dev               # Start Electron dev server with hot reload
 npm run build             # Production build via electron-vite
 npm run lint              # ESLint
@@ -22,6 +22,8 @@ npm run test:integration  # Integration tests (requires OPENCODE_INTEGRATION=1)
 
 Run a single test file: `npx vitest run src/__tests__/database.test.ts`
 
+Test runtime compatibility with `OPENCODE_INTEGRATION=1 OPENCODE_PATH=/path/to/opencode npx vitest run src/__tests__/integration/opencode-compat.test.ts`. Set `OPENCODE_EXPECT_COMPAT=0` for v1 or `1` for the tested v2 build to check which path starts.
+
 ## Architecture
 
 ### Process Model
@@ -29,9 +31,10 @@ Run a single test file: `npx vitest run src/__tests__/database.test.ts`
 **Main process** (`src/main/`) — Electron backend with seven service singletons:
 
 - **RuntimeManager** — spawns one `opencode serve` process per project directory, maintains SDK client connections, health checks every 30s with exponential backoff reconnection
+  - `opencode-compat.ts` checks `/global/health` and saved message parts at startup. If OpenCode drops parts, it installs the `oco_message_part_compat_v1` SQLite event trigger and restarts with `OPENCODE_DB` pinned to that database and `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. This path also adapts async prompts through the synchronous endpoint. Working runtimes use their native prompt transport.
 - **AgentController** — manages agent sessions (launch, send message, respond to permission, reply to questions, abort)
 - **EventBridge** — bridges SSE events from OpenCode servers to the renderer via `opencode:event` IPC
-- **Database** — SQLite with prepared statements; tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in constructor
+- **Database** — sql.js keeps SQLite in memory and saves the whole image with a rollback journal header, writing a temporary file and renaming it so readers never see a partial save. Other processes should use the external API rather than reading this file. Tables: projects, workspaces, runtimes, sessions, events, rule_sets, preferences. Migrations run in `init()`
 - **WorkspaceManager** — creates git worktrees (`oco-{hash}`) stored in `~/.oc-orchestrator/worktrees` by default
 - **NotificationService** — desktop notifications for configurable agent status changes (blocked, errored, completed)
 - **UpdateChecker** — checks npm registry for new versions, notifies renderer via IPC
@@ -49,7 +52,7 @@ Run a single test file: `npx vitest run src/__tests__/database.test.ts`
 - **StatusBar** — bottom bar with runtime health, agent count, version info
 - **TopBar** — header with global status summary, command palette trigger, launch button
 - **LaunchModal** — agent launch with project selection, worktree creation, model choice
-- **SessionBrowser** — browse and resume previous sessions per project
+- **SessionBrowser** — find and restore sessions outside the fleet, including QuickStart, with first prompt previews and search
 - **CommandPalette** — quick access to all actions via `Cmd+K`
 - **ModelPickerModal** — per-agent model switching with provider selection
 - **McpModal** — view, connect, and disconnect MCP servers per agent

@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyReconciledStatus,
+  applySessionRetry,
   getReconnectedInputReason,
   isRetryableApiError,
   isStalledResponse,
   resolveServerStatus,
   shouldAutoRecoverStalledResponse,
   wasStallRecoveryLastPrompt,
+  type LiveAgent,
   type LiveMessage
 } from '../renderer/src/hooks/useAgentStore'
 
@@ -713,6 +715,18 @@ describe('agent reconnection', () => {
 })
 
 describe('stalled response watchdog', () => {
+  it('preserves retry details and waits until the scheduled attempt has had time to respond', () => {
+    const agent: Pick<LiveAgent, 'status' | 'lastActivityAt' | 'retry'> = { status: 'running', lastActivityAt: 1 }
+    const retry = { type: 'retry', attempt: 2, message: '429 Too Many Requests', next: 600_000 }
+    expect(applySessionRetry(agent, retry)).toBe(true)
+    expect(agent.retry).toEqual({ attempt: 2, message: '429 Too Many Requests', next: 600_000 })
+    expect(applySessionRetry(agent, retry)).toBe(false)
+    expect(isStalledResponse(agent, [], 700_000)).toBe(false)
+    expect(isStalledResponse(agent, [], 900_000)).toBe(true)
+    expect(applySessionRetry(agent, { type: 'busy' })).toBe(true)
+    expect(agent.retry).toBeUndefined()
+  })
+
   const now = 1_000_000
 
   function toolMessage(

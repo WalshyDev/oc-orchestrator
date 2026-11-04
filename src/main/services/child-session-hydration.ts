@@ -54,6 +54,35 @@ export function groupRequestsByOwner<T extends { sessionID: string }>(
   return agentIds.map((agentId) => ({ agentId, requests: grouped.get(agentId) ?? [] }))
 }
 
+const SETTLED_TOOL_STATUSES = new Set(['completed', 'error'])
+
+// Keep requests unless their tool call has finished; the server can list abandoned requests.
+export async function dropSettledToolRequests<
+  T extends { sessionID: string; tool?: { messageID: string; callID: string } }
+>(
+  client: OpencodeClient,
+  requests: T[],
+  directory: string
+): Promise<T[]> {
+  const settled = await Promise.all(requests.map(async (request) => {
+    if (!request.tool) return false
+    try {
+      const result = await client.session.message({
+        sessionID: request.sessionID,
+        messageID: request.tool.messageID,
+        directory
+      })
+      const part = result.data?.parts.find(
+        (candidate) => candidate.type === 'tool' && candidate.callID === request.tool?.callID
+      )
+      return part?.type === 'tool' && SETTLED_TOOL_STATUSES.has(part.state.status)
+    } catch {
+      return false
+    }
+  }))
+  return requests.filter((_, index) => !settled[index])
+}
+
 export async function collectChildSessionTranscripts(
   client: OpencodeClient,
   rootSessionId: string,

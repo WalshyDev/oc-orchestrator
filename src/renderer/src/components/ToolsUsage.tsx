@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react'
 import { Wrench, CaretDown, CaretRight, MagnifyingGlass } from '@phosphor-icons/react'
 import { SubagentProgress } from './SubagentProgress'
 import type { ChildTranscriptEntry } from '../lib/subagent-progress'
+import { ToolCallHeader } from './ToolCallHeader'
 import type { OutputVerbosity } from '../data/settings'
+import { useMostRecentExpansion } from '../hooks/useMostRecentExpansion'
 
 export interface ToolCall {
   id: string
@@ -10,6 +12,9 @@ export interface ToolCall {
   state: 'running' | 'completed' | 'failed'
   input?: string
   output?: string
+  model?: string
+  providerID?: string
+  variant?: string
   timestamp: number
   childActivityAt?: number
   /** For the `task` tool — sessionId of the sub-agent, so the UI can
@@ -26,18 +31,6 @@ interface ToolsUsageProps {
   verbosity?: OutputVerbosity
 }
 
-const stateStyles: Record<ToolCall['state'], string> = {
-  running: 'bg-kumo-interact/12 text-kumo-link border-kumo-interact/25',
-  completed: 'bg-kumo-success/12 text-kumo-success border-kumo-success/25',
-  failed: 'bg-kumo-danger/10 text-kumo-danger border-kumo-danger/20'
-}
-
-const stateLabels: Record<ToolCall['state'], string> = {
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed'
-}
-
 function formatRelativeTime(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
   if (seconds < 60) return `${seconds}s ago`
@@ -51,10 +44,15 @@ function formatRelativeTime(timestamp: number): string {
 
 export function shouldAutoExpandTool(tool: ToolCall, verbosity: OutputVerbosity, manuallyCollapsed: boolean): boolean {
   return !manuallyCollapsed && (
-    (verbosity !== 'none' && tool.name !== 'task')
-    || verbosity === 'all'
-    || tool.state === 'running'
+    verbosity === 'all' || (verbosity === 'some' && tool.name !== 'task')
   )
+}
+
+function toolActivityAt(tool: ToolCall): number {
+  if (tool.name === 'task' && tool.state === 'running') {
+    return Math.max(tool.timestamp, tool.childActivityAt ?? tool.timestamp)
+  }
+  return tool.timestamp
 }
 
 export function CollapsibleSubagentProgress({
@@ -65,23 +63,22 @@ export function CollapsibleSubagentProgress({
   verbosity: OutputVerbosity
 }) {
   const [expanded, setExpanded] = useState(
-    verbosity === 'all' || (verbosity === 'none' && tool.state === 'running')
+    verbosity === 'all' || verbosity === 'recent'
   )
   const previousVerbosityRef = useRef(verbosity)
 
   useEffect(() => {
     if (previousVerbosityRef.current !== verbosity) {
-      setExpanded(verbosity === 'all')
+      setExpanded(verbosity === 'all' || verbosity === 'recent')
       previousVerbosityRef.current = verbosity
-    } else if (verbosity === 'none' && tool.state === 'running') {
-      setExpanded(true)
     }
-  }, [tool.state, verbosity])
+  }, [verbosity])
 
   return (
     <div className="rounded-md border border-kumo-line bg-kumo-overlay">
       <button
         type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded((previous) => !previous)}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[10px] text-kumo-subtle hover:text-kumo-default"
       >
@@ -103,6 +100,10 @@ export function CollapsibleSubagentProgress({
 }
 
 export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }: ToolsUsageProps) {
+  const latestToolId = tools.reduce<ToolCall | undefined>((latest, tool) =>
+    !latest || toolActivityAt(tool) >= toolActivityAt(latest) ? tool : latest, undefined
+  )?.id
+  const recentExpansion = useMostRecentExpansion(verbosity === 'recent', latestToolId)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(
     tools.filter((tool) => shouldAutoExpandTool(tool, verbosity, false)).map((tool) => tool.id)
   ))
@@ -110,10 +111,11 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
   const manuallyCollapsedRef = useRef<Set<string>>(new Set())
   const previousVerbosityRef = useRef(verbosity)
 
-  // Expand verbose entries and running tools unless the user collapsed them;
+  // Expand verbose entries unless the user collapsed them;
   // reset manual collapses when verbosity changes.
   useEffect(() => {
     const verbosityChanged = previousVerbosityRef.current !== verbosity
+    if (verbosityChanged) manuallyCollapsedRef.current.clear()
     setExpandedIds((prev) => {
       const next = verbosityChanged ? new Set<string>() : new Set(prev)
       for (const tool of tools) {
@@ -141,6 +143,10 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
   }, [tools, filterQuery])
 
   const toggleExpanded = (toolId: string) => {
+    if (verbosity === 'recent') {
+      recentExpansion.toggle(toolId)
+      return
+    }
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(toolId)) {
@@ -202,7 +208,9 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
       {/* Tool call timeline */}
       <div className="flex flex-col gap-1">
         {sorted.map((tool) => {
-          const isExpanded = expandedIds.has(tool.id)
+          const isExpanded = verbosity === 'recent'
+            ? recentExpansion.expandedId === tool.id
+            : expandedIds.has(tool.id)
 
           return (
             <div
@@ -210,29 +218,12 @@ export const ToolsUsage = memo(function ToolsUsage({ tools, verbosity = 'none' }
               className="rounded-md bg-kumo-control border border-kumo-line hover:border-kumo-fill-hover transition-colors"
             >
               <button
+                type="button"
                 onClick={() => toggleExpanded(tool.id)}
-                className="w-full flex items-center gap-2.5 px-2.5 py-2 cursor-pointer"
+                aria-expanded={isExpanded}
+                className="w-full min-w-0 px-3 py-2.5 cursor-pointer rounded-md hover:bg-kumo-fill/40 transition-colors"
               >
-                <span className="shrink-0 text-kumo-subtle">
-                  {isExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
-                </span>
-
-                <span className="font-mono text-xs text-kumo-default">{tool.name}</span>
-
-                <span
-                  className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${stateStyles[tool.state]}`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full bg-current ${tool.state === 'running' ? 'animate-pulse-dot' : ''}`}
-                  />
-                  {stateLabels[tool.state]}
-                </span>
-
-                <span className="flex-1" />
-
-                <span className="shrink-0 text-[10px] text-kumo-subtle font-mono">
-                  {formatRelativeTime(tool.timestamp)}
-                </span>
+                <ToolCallHeader tool={tool} expanded={isExpanded} timestamp={formatRelativeTime(tool.timestamp)} />
               </button>
 
               {isExpanded && (

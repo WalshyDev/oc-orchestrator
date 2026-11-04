@@ -4,6 +4,7 @@ import {
   buildSessionOwnerIndex,
   collectChildSessionIds,
   collectChildSessionTranscripts,
+  dropSettledToolRequests,
   groupRequestsByOwner
 } from '../main/services/child-session-hydration'
 
@@ -101,6 +102,47 @@ describe('child session hydration', () => {
     expect(result.owners.get('broken-root')).toBe('broken-agent')
     expect(result.owners.get('healthy-child')).toBe('healthy-agent')
     expect(result.incompleteAgentIds).toEqual(new Set(['broken-agent']))
+  })
+
+  it('drops requests whose tool call already settled and keeps unconfirmed ones', async () => {
+    const toolStatuses = new Map([
+      ['msg-aborted', 'error'],
+      ['msg-done', 'completed'],
+      ['msg-live', 'running']
+    ])
+    const client = {
+      session: {
+        message: vi.fn(async ({ messageID }: { messageID: string }) => {
+          if (messageID === 'msg-broken') throw new Error('unavailable')
+          const status = toolStatuses.get(messageID)
+          return {
+            data: {
+              parts: [
+                { type: 'text', text: 'ignored' },
+                { type: 'tool', callID: 'other-call', state: { status: 'completed' } },
+                ...(status ? [{ type: 'tool', callID: 'call', state: { status } }] : [])
+              ]
+            }
+          }
+        })
+      }
+    } as unknown as OpencodeClient
+    const request = (id: string, messageID?: string) => ({
+      id,
+      sessionID: 'session',
+      ...(messageID ? { tool: { messageID, callID: 'call' } } : {})
+    })
+
+    const kept = await dropSettledToolRequests(client, [
+      request('aborted', 'msg-aborted'),
+      request('done', 'msg-done'),
+      request('live', 'msg-live'),
+      request('missing-part', 'msg-missing'),
+      request('fetch-failed', 'msg-broken'),
+      request('no-tool')
+    ], '/repo')
+
+    expect(kept.map((entry) => entry.id)).toEqual(['live', 'missing-part', 'fetch-failed', 'no-tool'])
   })
 
   it('returns empty groups so stale interrupt state can be pruned', () => {

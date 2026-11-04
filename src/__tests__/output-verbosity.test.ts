@@ -65,4 +65,11 @@ describe('output verbosity settings', () => {
     expect(loadAgentOutputVerbosity('existing-agent')).toBeUndefined()
     expect(storage.getItem(AGENT_SETTINGS_STORAGE_KEY)).toContain('agent-one')
   })
+
+  it('loads Most recent globally and per agent', () => {
+    storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ outputVerbosity: 'recent' }))
+    expect(loadSettings().outputVerbosity).toBe('recent')
+    saveAgentOutputVerbosity('agent-one', 'recent')
+    expect(loadAgentOutputVerbosity('agent-one')).toBe('recent')
+  })
 })

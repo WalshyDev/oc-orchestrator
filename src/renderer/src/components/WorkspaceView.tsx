@@ -16,6 +16,7 @@ import {
 } from '@phosphor-icons/react'
 import { HighlightAskPopover, type HighlightSelection, type SelectionRect } from './HighlightAskPopover'
 import { languageForPath } from '../lib/language'
+import type { GitStatusFile } from '../types/api'
 
 // Wire the Monaco loader to the bundled copy so it doesn't try to fetch from a
 // CDN at runtime — we can't hit the network reliably in a packaged Electron
@@ -43,14 +44,6 @@ interface WorkspaceViewProps {
    *  workspace to keep reviewing (false). The host honours it via a
    *  scrollRequest signal; the workspace itself only decides the policy. */
   onSendMessage: (text: string, options: { returnToTranscript: boolean }) => void
-}
-
-interface GitStatusFile {
-  path: string
-  oldPath?: string
-  status: string
-  staged: boolean
-  unstaged: boolean
 }
 
 interface DiffSides {
@@ -177,8 +170,8 @@ export function WorkspaceView({
   const watchSubIdRef = useRef<string>(makeWatchSubscriptionId())
 
   // ── Fetch git status ─────────────────────────────────────────────────────
-  const refreshStatus = useCallback(async () => {
-    setLoadingStatus(true)
+  const refreshStatus = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoadingStatus(true)
     setStatusError(null)
     try {
       const result = await window.api.getGitStatus(agentId)
@@ -195,7 +188,7 @@ export function WorkspaceView({
       setStatusError(String(error))
       setFiles([])
     } finally {
-      setLoadingStatus(false)
+      if (showLoading) setLoadingStatus(false)
     }
   }, [agentId])
 
@@ -307,6 +300,7 @@ export function WorkspaceView({
       lastSyncedContentRef.current = content
       setIsDirty(false)
       setSaveState('saved')
+      void refreshStatus(false)
       // Auto-clear the "saved" indicator after a moment so it doesn't linger.
       setTimeout(() => {
         setSaveState((prev) => (prev === 'saved' ? 'idle' : prev))
@@ -315,7 +309,7 @@ export function WorkspaceView({
       setSaveState('error')
       setSaveError(String(error))
     }
-  }, [agentId, selectedPath, canEdit])
+  }, [agentId, selectedPath, canEdit, refreshStatus])
 
   // ── Autosave: 1s debounce after last edit ─────────────────────────────────
   // We keep a ref-based timer so re-renders don't clobber it. When the buffer
@@ -392,6 +386,7 @@ export function WorkspaceView({
         return
       }
       if (data.event === 'deleted') {
+        void refreshStatus(false)
         // File vanished. Tell the user; their buffer is effectively orphaned.
         setExternalChange({ mtimeMs: null })
         return
@@ -402,6 +397,8 @@ export function WorkspaceView({
       if (data.mtimeMs && mtimeAtReadRef.current && data.mtimeMs === mtimeAtReadRef.current) {
         return
       }
+
+      void refreshStatus(false)
 
       if (isDirty) {
         // User has unsaved edits. Show banner so they decide.
@@ -420,7 +417,7 @@ export function WorkspaceView({
       unsubscribe()
       void window.api.unwatchFile(subId)
     }
-  }, [agentId, selectedPath, isDirty, loadDiff])
+  }, [agentId, selectedPath, isDirty, loadDiff, refreshStatus])
 
   // ── Hunk navigation ──────────────────────────────────────────────────────
   const handleJumpHunk = useCallback((direction: 'next' | 'prev') => {
@@ -744,6 +741,7 @@ export function WorkspaceView({
                         className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs ${
                           isSelected ? 'bg-sky-500/10 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800/50'
                         }`}
+                        title={file.path}
                       >
                         <span
                           className={`w-3 text-center font-mono text-[10px] font-semibold ${STATUS_COLORS[file.status] ?? 'text-neutral-400'}`}
@@ -759,6 +757,7 @@ export function WorkspaceView({
                         {rowDirty && (
                           <span className="text-amber-400 text-[10px]" title="Unsaved changes">●</span>
                         )}
+                        <FileLineCounts file={file} />
                       </button>
                     </li>
                   )
@@ -803,6 +802,7 @@ export function WorkspaceView({
                 {selectedFile.oldPath && (
                   <span className="text-neutral-500 text-[10px]">← {selectedFile.oldPath}</span>
                 )}
+                <FileLineCounts file={selectedFile} />
                 {/* Save state chip. Renders inline so it's visible without
                     stealing focus or requiring a toast system. */}
                 <SaveStateBadge state={saveState} error={saveError} />
@@ -946,6 +946,22 @@ export function WorkspaceView({
         />
       )}
     </div>
+  )
+}
+
+function FileLineCounts({ file }: { file: GitStatusFile }) {
+  if (file.additions == null || file.deletions == null) {
+    return <span className="shrink-0 text-[10px] text-neutral-500" title="Line counts unavailable">—</span>
+  }
+  return (
+    <span
+      className="flex shrink-0 gap-1.5 text-[10px] font-mono tabular-nums"
+      title={`${file.additions} lines added, ${file.deletions} lines removed (on disk)`}
+      aria-label={`${file.additions} lines added, ${file.deletions} lines removed`}
+    >
+      <span className="text-emerald-400">+{file.additions}</span>
+      <span className="text-rose-400">−{file.deletions}</span>
+    </span>
   )
 }
 

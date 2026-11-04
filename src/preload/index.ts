@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ProjectSettings } from '../shared/project'
+import type { FolderSnapshot } from '../shared/folders'
+import type { SessionListPage } from '../shared/session-browser'
 
 export interface IpcResult<T = unknown> {
   ok: boolean
@@ -108,8 +110,11 @@ const api = {
   sendMessageWithModel: (agentId: string, text: string, providerID: string, modelID: string, attachments?: Attachment[]): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:send-message-with-model', agentId, text, providerID, modelID, attachments),
 
-  listSessions: (directory: string): Promise<IpcResult<Array<{ id: string; title: string; createdAt: number; updatedAt: number }>>> =>
-    ipcRenderer.invoke('session:list', directory),
+  listSessions: (directory: string, limit?: number): Promise<IpcResult<SessionListPage>> =>
+    ipcRenderer.invoke('session:list', directory, limit),
+
+  getSessionFirstPrompt: (directory: string, sessionId: string): Promise<IpcResult<string>> =>
+    ipcRenderer.invoke('session:first-prompt', directory, sessionId),
 
   listSessionsByProject: (projectDirectory: string): Promise<IpcResult<Array<{ id: string; title: string; directory: string; createdAt: number; updatedAt: number }>>> =>
     ipcRenderer.invoke('session:list-by-project', projectDirectory),
@@ -151,11 +156,11 @@ const api = {
   stopRuntime: (runtimeId: string): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:stop', runtimeId),
 
-  listAllProviders: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:providers'),
+  listAllProviders: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:providers', directory),
 
-  getSystemConfig: (): Promise<IpcResult> =>
-    ipcRenderer.invoke('runtime:config'),
+  getSystemConfig: (directory?: string): Promise<IpcResult> =>
+    ipcRenderer.invoke('runtime:config', directory),
 
   listAllCommands: (): Promise<IpcResult> =>
     ipcRenderer.invoke('runtime:commands'),
@@ -168,6 +173,9 @@ const api = {
     ipcRenderer.invoke('dialog:select-directory'),
 
   // ── Workspace Operations ──
+  validateDirectory: (directory: string): Promise<IpcResult<boolean>> =>
+    ipcRenderer.invoke('workspace:validate-directory', directory),
+
   validateGitRepo: (directory: string): Promise<IpcResult<boolean>> =>
     ipcRenderer.invoke('workspace:validate-git', directory),
 
@@ -198,7 +206,7 @@ const api = {
   getWorktreeStatus: (worktreePath: string): Promise<IpcResult> =>
     ipcRenderer.invoke('workspace:status', worktreePath),
 
-  getGitStatus: (agentId: string): Promise<IpcResult<Array<{ path: string; oldPath?: string; status: string; staged: boolean; unstaged: boolean }>>> =>
+  getGitStatus: (agentId: string): Promise<IpcResult<Array<{ path: string; oldPath?: string; status: string; staged: boolean; unstaged: boolean; additions?: number | null; deletions?: number | null }>>> =>
     ipcRenderer.invoke('workspace:git-status', agentId),
 
   getGitDiff: (agentId: string, relativePath: string): Promise<IpcResult<{ before: string; after: string }>> =>
@@ -253,7 +261,19 @@ const api = {
   setPreference: (key: string, value: string): Promise<IpcResult> =>
     ipcRenderer.invoke('db:preferences:set', key, value),
 
-  // ── Database: Custom Labels ──
+  // ── Folders ──
+  listFolders: (): Promise<IpcResult<FolderSnapshot>> => ipcRenderer.invoke('folders:list'),
+  migrateFolders: (legacy: FolderSnapshot): Promise<IpcResult<FolderSnapshot>> => ipcRenderer.invoke('folders:migrate', legacy),
+  createFolder: (name: string): Promise<IpcResult> => ipcRenderer.invoke('folders:create', name),
+  renameFolder: (id: string, name: string): Promise<IpcResult> => ipcRenderer.invoke('folders:rename', id, name),
+  deleteFolder: (id: string): Promise<IpcResult> => ipcRenderer.invoke('folders:delete', id),
+  setAgentFolder: (agentId: string, folderId: string | null): Promise<IpcResult> => ipcRenderer.invoke('folders:assign', agentId, folderId),
+  onFoldersChanged: (callback: (data: FolderSnapshot) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: FolderSnapshot) => callback(data)
+    ipcRenderer.on('folders:changed', handler)
+    return () => ipcRenderer.removeListener('folders:changed', handler)
+  },
+
   listCustomLabels: (): Promise<IpcResult> =>
     ipcRenderer.invoke('db:labels:list'),
 
@@ -296,7 +316,7 @@ const api = {
   notifyAgentStatus: (agentId: string, status: string, agentName: string, projectName?: string, preview?: string): Promise<IpcResult> =>
     ipcRenderer.invoke('agent:notify-status', agentId, status, agentName, projectName, preview),
 
-  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' }): Promise<IpcResult> =>
+  openInEditor: (options: { path: string; editor: 'vscode' | 'cursor' | 'windsurf' | 'goland' | 'custom'; customCommand?: string }): Promise<IpcResult> =>
     ipcRenderer.invoke('shell:open-in-editor', options),
 
   openTerminal: (options: { path: string; terminal?: string }): Promise<IpcResult> =>
@@ -322,6 +342,18 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
     ipcRenderer.on('agent:model-changed', handler)
     return () => ipcRenderer.removeListener('agent:model-changed', handler)
+  },
+
+  onAgentPrUrlUpdated: (callback: (data: { id: string; prUrl: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:pr-url-updated', handler)
+    return () => ipcRenderer.removeListener('agent:pr-url-updated', handler)
+  },
+
+  onAgentLabelsUpdated: (callback: (data: { id: string; sessionId: string; labelIds: string[] }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as never)
+    ipcRenderer.on('agent:labels-updated', handler)
+    return () => ipcRenderer.removeListener('agent:labels-updated', handler)
   },
 
   onExternalAttached: (callback: (data: { source: string; projectName?: string; sessionId?: string; agentId?: string }) => void) => {

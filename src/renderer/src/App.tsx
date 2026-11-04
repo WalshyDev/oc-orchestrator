@@ -13,9 +13,9 @@ import { ModelPickerModal } from './components/ModelPickerModal'
 import { getForkedTitle } from '../../shared/project'
 import { McpModal } from './components/McpModal'
 import { WorkspaceView } from './components/WorkspaceView'
-import { useAgentStore, setViewedAgentId, type LiveAgent } from './hooks/useAgentStore'
+import { formatModelName, useAgentStore, setViewedAgentId, type LiveAgent, type LiveMessage } from './hooks/useAgentStore'
 import { useCustomLabels } from './hooks/useCustomLabels'
-import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority } from './types'
+import { type AgentRuntime, type Interrupt, type Message, type ColumnKey, type ColumnWidths, type SortDirection, loadColumnVisibility, saveColumnVisibility, loadColumnWidths, saveColumnWidths, loadSort, saveSort, compareStatusPriority, getDisplayedModel } from './types'
 import type { FileChange } from './components/FilesChanged'
 import type { ToolCall } from './components/ToolsUsage'
 import type { EventEntry } from './components/EventLog'
@@ -29,9 +29,22 @@ import {
 } from './lib/subagent-progress'
 import { extractLastAssistantMessage } from './lib/last-message'
 import { getCurrentTaskProgress } from './lib/task-progress'
+import { buildToolGroupMessage } from './lib/transcript-metadata'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
+
+function openDirectoryInEditor(path: string): void {
+  const settings = loadSettings()
+  const editor = settings.editor
+  const validEditor = editor === 'vscode' || editor === 'cursor' || editor === 'windsurf'
+    || editor === 'goland' || editor === 'custom'
+  window.api.openInEditor({
+    path,
+    editor: validEditor ? editor : 'vscode',
+    customCommand: settings.customEditorCommand
+  })
+}
 
 function sanitizeSlugSegment(value: string, fallback: string): string {
   const sanitized = value
@@ -198,7 +211,8 @@ export function App() {
           if (builtInCommands.some((local) => local.command === `/${cmd.name}`)) continue
           builtInCommands.push({
             command: `/${cmd.name}`,
-            description: cmd.description || cmd.template || cmd.name
+            description: cmd.description || cmd.template || cmd.name,
+            model: cmd.model
           })
         }
       }
@@ -364,11 +378,15 @@ export function App() {
         status: displayStatus,
         labelIds: agent.labelIds,
         model: agent.model,
+        configuredModel: agent.configuredModel,
         configuredModelPath: agent.configuredModelPath,
         variant: agent.variant,
+        configuredVariant: agent.configuredVariant,
+        configuredEffectiveVariant: agent.configuredEffectiveVariant,
         prUrl: agent.prUrl,
         lastActivityAt: formatTimeAgo(agent.lastActivityAt),
         lastActivityAtMs: agent.lastActivityAt,
+        retry: agent.retry,
         blockedSince: agent.blockedSince ? formatTimeAgo(agent.blockedSince) : undefined,
         blockedSinceMs: agent.blockedSince,
         lastMessage,
@@ -494,8 +512,8 @@ export function App() {
             rightVal = (right.branchName || '').toLowerCase()
             break
           case 'model':
-            leftVal = (left.model || '').toLowerCase()
-            rightVal = (right.model || '').toLowerCase()
+            leftVal = getDisplayedModel(left).toLowerCase()
+            rightVal = getDisplayedModel(right).toLowerCase()
             break
           case 'lastMessage':
             leftVal = (left.lastMessage || '').toLowerCase()
@@ -555,24 +573,19 @@ export function App() {
     const activeAssistantMessage = getActiveAssistantMessage(liveMessages, sessionActive)
     const transcriptItems: Message[] = []
     let pendingToolCalls: ToolCall[] = []
-    let pendingToolAnchorId = ''
-    let pendingToolTimestamp = 0
+    let pendingToolAnchor: LiveMessage | undefined
 
     const flushPendingToolCalls = () => {
-      if (pendingToolCalls.length === 0) return
+      if (pendingToolCalls.length === 0 || !pendingToolAnchor) return
 
-      transcriptItems.push({
-        id: `${pendingToolAnchorId}-tools`,
-        role: 'tool-group',
-        content: `${pendingToolCalls.length} tool call${pendingToolCalls.length === 1 ? '' : 's'}`,
-        timestamp: formatTimeAgo(pendingToolTimestamp),
-        activityAt: pendingToolTimestamp,
-        toolCalls: pendingToolCalls
-      })
+      transcriptItems.push(buildToolGroupMessage(
+        pendingToolAnchor,
+        pendingToolCalls,
+        formatTimeAgo(pendingToolAnchor.createdAt)
+      ))
 
       pendingToolCalls = []
-      pendingToolAnchorId = ''
-      pendingToolTimestamp = 0
+      pendingToolAnchor = undefined
     }
 
     for (const msg of liveMessages) {
@@ -601,6 +614,9 @@ export function App() {
               state: toolState,
               input: part.toolInput,
               output: part.text ?? undefined,
+              model: msg.modelId ? formatModelName(msg.modelId) : undefined,
+              providerID: msg.providerID,
+              variant: msg.variant,
               timestamp: msg.createdAt,
               childSessionId: part.childSessionId,
               childActivityAt: part.childSessionId
@@ -663,16 +679,23 @@ export function App() {
           content: textContent,
           timestamp: formatTimeAgo(msg.createdAt),
           activityAt: msg.createdAt,
+          model: msg.role === 'assistant' && msg.modelId ? formatModelName(msg.modelId) : undefined,
+          providerID: msg.providerID,
+          variant: msg.variant,
           ...(images.length > 0 ? { images } : {})
         })
       }
 
       if (toolCalls.length > 0) {
+        if (pendingToolCalls.length > 0 && (
+          pendingToolAnchor?.providerID !== msg.providerID
+          || pendingToolAnchor?.modelId !== msg.modelId
+          || pendingToolAnchor?.variant !== msg.variant
+        )) {
+          flushPendingToolCalls()
+        }
         pendingToolCalls.push(...toolCalls)
-        // Key the group by the first message in the run so the id, and the
-        // bubble's expanded state, survive later tool-only messages joining it.
-        if (!pendingToolAnchorId) pendingToolAnchorId = msg.id
-        pendingToolTimestamp = msg.createdAt
+        pendingToolAnchor = msg
       }
 
       if (!textContent.trim() && pendingToolCalls.length > 0 && msg === liveMessages[liveMessages.length - 1]) {
@@ -746,6 +769,11 @@ export function App() {
     }),
     [displayAgents]
   )
+
+  // Keep the dock badge in sync with the top bar's blocked count
+  useEffect(() => {
+    void window.api?.setBadgeCount(counts.blocked)
+  }, [counts.blocked])
 
   const labelCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -904,9 +932,9 @@ export function App() {
 
       default: {
         // Check if it's a custom command from the API (skills, /init, /review, etc.)
-        const isKnownCommand = agentCommands.some((cmd) => cmd.command === `/${commandName}`)
-        if (isKnownCommand) {
-          await storeExecuteCommand(agentId, commandName, commandArgs)
+        const knownCommand = agentCommands.find((cmd) => cmd.command === `/${commandName}`)
+        if (knownCommand) {
+          await storeExecuteCommand(agentId, commandName, commandArgs, knownCommand.model)
           return true
         }
         return false
@@ -939,12 +967,6 @@ export function App() {
     if (parsed) {
       const handled = await handleBuiltInCommand(selectedAgentId, parsed.name, parsed.args)
       if (handled) return
-
-      // Not a built-in — unknown commands fall through as plain messages
-      if (agentCommands.some((cmd) => cmd.command === `/${parsed.name}`)) {
-        await storeExecuteCommand(selectedAgentId, parsed.name, parsed.args)
-        return
-      }
     }
 
     // Check for @agentname mentions — extract agent name and strip from text
@@ -960,7 +982,7 @@ export function App() {
     }
 
     await storeSendMessage(selectedAgentId, text, undefined, attachments)
-  }, [agentCommands, agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeExecuteCommand, storeReplyToQuestion, storeResetSession])
+  }, [agentConfigs, handleBuiltInCommand, selectedAgentId, selectedQuestion, storeSendMessage, storeReplyToQuestion, storeResetSession])
 
   const handleApprove = useCallback(async (permissionId: string) => {
     if (!selectedAgentId) return
@@ -1078,8 +1100,7 @@ Then give me a brief summary of what the previous session was working on and whe
     if (!selectedAgentId) return
     const liveAgent = findLiveAgent(selectedAgentId)
     if (!liveAgent) return
-    const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
+    openDirectoryInEditor(liveAgent.directory)
   }, [selectedAgentId, findLiveAgent])
 
   const handleOpenWorkspace = useCallback((filePath?: string) => {
@@ -1131,11 +1152,13 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleQuickActionForAgent = useCallback(async (agentId: string, action: QuickAction) => {
     const parsed = parseSlashCommand(action.prompt)
     if (parsed) {
-      await storeExecuteCommand(agentId, parsed.name, parsed.args)
+      const commands = await store.listCommands(agentId)
+      const commandModel = commands?.find((command) => command.name === parsed.name)?.model
+      await store.executeCommand(agentId, parsed.name, parsed.args, commandModel)
       return
     }
     await store.sendMessage(agentId, action.prompt.trim(), undefined, undefined, action.label)
-  }, [store, storeExecuteCommand])
+  }, [store])
 
   const handleOpenTerminal = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
@@ -1147,8 +1170,7 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleOpenInEditorForAgent = useCallback((agentId: string) => {
     const liveAgent = findLiveAgent(agentId)
     if (!liveAgent) return
-    const settings = loadSettings()
-    window.api.openInEditor({ path: liveAgent.directory, editor: settings.editor as 'vscode' | 'cursor' | 'windsurf' | 'goland' })
+    openDirectoryInEditor(liveAgent.directory)
   }, [findLiveAgent])
 
   // ── Launch modal actions ──
@@ -1169,7 +1191,8 @@ Then give me a brief summary of what the previous session was working on and whe
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
     importSession?: ImportSessionConfig,
-    labelIds?: string[]
+    labelIds?: string[],
+    prUrl?: string
   ) => {
     let launchDirectory = directory
     // Auto-selecting the new agent is only welcome if the user hasn't moved on
@@ -1244,8 +1267,8 @@ Then give me a brief summary of what the previous session was working on and whe
         store.setAgentModel(agentId, model, modelVariant)
       }
 
-      if (prompt?.trim()) {
-        try { await store.sendMessage(agentId, prompt.trim(), undefined, attachments) }
+      if (prompt?.trim() || attachments?.length) {
+        try { await store.sendMessage(agentId, prompt?.trim() ?? '', undefined, attachments) }
         catch (error) { console.error('[App] Post-import prompt failed:', error) }
       }
 
@@ -1278,6 +1301,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
     const agentId = (result.data as { id: string }).id
     selectNewAgent(agentId)
+    if (prUrl) store.setPrUrl(agentId, prUrl)
 
     if (labelIds?.length) {
       for (const labelId of labelIds) store.toggleLabel(agentId, labelId)
@@ -1301,9 +1325,9 @@ Then give me a brief summary of what the previous session was working on and whe
         const commandArgs = spaceIndex === -1 ? '' : trimmedPrompt.slice(spaceIndex + 1).trim()
 
         const runtimeCommands = await store.listCommands(agentId)
-        const isCustomCommand = runtimeCommands?.some((cmd: { name: string }) => cmd.name === commandName)
-        if (isCustomCommand) {
-          await store.executeCommand(agentId, commandName, commandArgs)
+        const customCommand = runtimeCommands?.find((cmd: { name: string }) => cmd.name === commandName)
+        if (customCommand) {
+          await store.executeCommand(agentId, commandName, commandArgs, customCommand.model)
         } else {
           await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
         }
@@ -1339,7 +1363,8 @@ Then give me a brief summary of what the previous session was working on and whe
     attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>,
     freshWorktreeConfig?: FreshWorktreeConfig,
     importSession?: ImportSessionConfig,
-    labelIds?: string[]
+    labelIds?: string[],
+    prUrl?: string
   ) => {
     const launchId = store.beginLaunch({
       directory,
@@ -1351,7 +1376,7 @@ Then give me a brief summary of what the previous session was working on and whe
 
     void runLaunch(
       launchId, directory, prompt, title, model, modelVariant, worktreeStrategy,
-      attachments, freshWorktreeConfig, importSession, labelIds
+      attachments, freshWorktreeConfig, importSession, labelIds, prUrl
     ).catch((error) => {
       console.error('[App] Launch failed:', error)
       store.failLaunch(launchId, error instanceof Error ? error.message : String(error))
@@ -1376,7 +1401,8 @@ Then give me a brief summary of what the previous session was working on and whe
       launchId = store.beginLaunch({ directory: homeResult.data, title })
       setQuickLaunching(false)
       const epochAtStart = selectionEpochRef.current
-      const result = await store.launchAgent(homeResult.data, undefined, title, 'auto', undefined, undefined, launchId)
+      const { model, modelVariant } = loadSettings()
+      const result = await store.launchAgent(homeResult.data, undefined, title, model, modelVariant, undefined, launchId)
 
       if (!result?.ok) {
         store.failLaunch(launchId, result?.error || 'Failed to launch agent')
@@ -1400,7 +1426,7 @@ Then give me a brief summary of what the previous session was working on and whe
   const handleResumeSession = useCallback(async (directory: string, sessionId: string, title: string) => {
     const result = await window.api.resumeAgent({ directory, sessionId, title })
     if (!result?.ok) {
-      throw new Error('Failed to resume session')
+      throw new Error(result?.error ?? 'Failed to resume session')
     }
     if (result.data) {
       const data = result.data as { id: string }
@@ -1409,13 +1435,12 @@ Then give me a brief summary of what the previous session was working on and whe
   }, [])
 
   const handleValidateDirectory = useCallback(async (dir: string): Promise<boolean> => {
-    if (!dir.trim() || dir.trim().length < 2) return false
+    if (!dir.trim()) return false
     try {
-      const result = await window.api.validateGitRepo(dir.trim())
+      const result = await window.api.validateDirectory(dir.trim())
       return result.ok && result.data === true
     } catch {
-      // Fallback: accept any non-empty path starting with /
-      return dir.startsWith('/')
+      return false
     }
   }, [])
 
@@ -1764,7 +1789,6 @@ Then give me a brief summary of what the previous session was working on and whe
           onClose={() => setShowSessionBrowser(false)}
           onResume={handleResumeSession}
           onSelectDirectory={store.selectDirectory}
-          onValidateDirectory={handleValidateDirectory}
           knownDirectories={store.agents.map((a) => ({
             name: a.projectName,
             directory: a.directory,
