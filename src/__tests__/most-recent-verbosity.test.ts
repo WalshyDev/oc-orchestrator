@@ -94,10 +94,10 @@ describe('Most recent output visibility', () => {
       .find((button) => button.textContent?.includes('npm run lint'))!
     expect(olderButton.getAttribute('aria-expanded')).toBe('false')
     await act(async () => olderButton.click())
-    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed'])
+    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed', '$ npm test', 'Tests running'])
     message = { ...message, toolCalls: message.toolCalls!.map((tool) => ({ ...tool, output: `${tool.output} updated` })) }
     await render()
-    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed updated'])
+    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed updated', '$ npm test', 'Tests running updated'])
     const groupButton = container.querySelector<HTMLButtonElement>('button[aria-expanded]')!
     await act(async () => groupButton.click())
     expect(outputs()).toEqual([])
@@ -106,7 +106,7 @@ describe('Most recent output visibility', () => {
     }] }
     await render()
     expect(groupButton.getAttribute('aria-expanded')).toBe('true')
-    expect(outputs()).toEqual(['$ npm run build', 'Build passed'])
+    expect(outputs()).toEqual(['$ npm run lint', 'Lint passed updated', '$ npm run build', 'Build passed'])
     await render('all')
     expect(outputs()).toHaveLength(6)
   })
@@ -140,6 +140,36 @@ describe('Most recent output visibility', () => {
     }]
     await render()
     expect(activity()?.textContent).toBe('Agent is thinking…')
+  })
+
+  it('keeps a group visible when a tool inside it was manually opened', async () => {
+    const messages: Message[] = [{
+      id: 'tools', role: 'tool-group', content: 'Earlier tools', timestamp: 'now',
+      toolCalls: [
+        { id: 'older', name: 'read', state: 'completed', timestamp: 1, output: 'Pinned output' },
+        { id: 'newer', name: 'read', state: 'completed', timestamp: 2, output: 'Automatic output' }
+      ]
+    }]
+    const render = async () => act(async () => root.render(createElement(DetailDrawer, {
+      agent, messages: [...messages], onClose: () => {}
+    })))
+    await render()
+    const older = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    await act(async () => older.click())
+    messages.push({ id: 'text', role: 'assistant', content: 'New response', timestamp: 'now' })
+    await render()
+    expect(container.textContent).toContain('Pinned output')
+    messages.push({
+      id: 'latest', role: 'tool-group', content: 'Latest tools', timestamp: 'now',
+      toolCalls: [{ id: 'latest-tool', name: 'read', state: 'completed', timestamp: 3, output: 'Latest output' }]
+    })
+    await render()
+    expect(container.textContent).toContain('Pinned output')
+    expect(container.textContent).toContain('Latest output')
+    const group = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      .find((button) => button.textContent?.includes('Earlier tools'))!
+    await act(async () => group.click())
+    expect(container.textContent).not.toContain('Pinned output')
   })
 
   it.each(['tools', 'subagent'] as const)('keeps running %s details collapsed at None across state and visibility changes', async (kind) => {
@@ -214,8 +244,7 @@ describe('Most recent output visibility', () => {
     messages.push({ id: 'final', role: 'assistant', content: 'Final response', timestamp: 'now' })
     await render()
     expect(agentMessages()).toEqual(['Older response', 'Latest response continues streaming', 'Final response'])
-    expect(container.querySelector('pre')).toBeNull()
-    expect(container.querySelector('[role="status"]')?.textContent).toContain('new-file')
+    expect(container.querySelector('pre')?.textContent).toContain('new-file')
   })
 
   it.each(['none', 'some', 'recent'] as const)('updates collapsed task activity in place at %s visibility', async (verbosity) => {
@@ -311,5 +340,35 @@ describe('Most recent output visibility', () => {
     tools[0] = { ...tools[0], state: 'completed' }
     await render()
     expect(container.querySelector('pre')?.textContent).toBe('read input')
+  })
+
+  it.each(['tools', 'events'] as const)('keeps manually opened %s entries across new output until closed', async (kind) => {
+    const entries = [
+      { id: 'older', timestamp: 1, name: 'read', state: 'completed', input: 'older input', type: 'tool', summary: 'Older event', data: 'older data' },
+      { id: 'newer', timestamp: 2, name: 'read', state: 'completed', input: 'newer input', type: 'tool', summary: 'Newer event', data: 'newer data' }
+    ]
+    const render = async (verbosity: 'recent' | 'all' = 'recent') => {
+      await act(async () => root.render(kind === 'tools'
+        ? createElement(ToolsUsage, { tools: [...entries] as ToolCall[], verbosity })
+        : createElement(EventLog, { events: [...entries] as EventEntry[], verbosity })))
+    }
+    const details = () => [...container.querySelectorAll('pre')].map((element) =>
+      kind === 'events' ? JSON.parse(element.textContent!) : element.textContent
+    )
+    const suffix = kind === 'tools' ? 'input' : 'data'
+    await render()
+    const older = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    await act(async () => older.click())
+    entries.push({ ...entries[1], id: 'newest', timestamp: 3, input: 'newest input', data: 'newest data' })
+    await render()
+    expect(details()).toEqual(expect.arrayContaining([`older ${suffix}`, `newest ${suffix}`]))
+    expect(details()).not.toContain(`newer ${suffix}`)
+    await act(async () => older.click())
+    entries.push({ ...entries[2], id: 'final', timestamp: 4, input: 'final input', data: 'final data' })
+    await render()
+    expect(details()).toEqual([`final ${suffix}`])
+    await render('all')
+    await render()
+    expect(details()).toEqual([`final ${suffix}`])
   })
 })

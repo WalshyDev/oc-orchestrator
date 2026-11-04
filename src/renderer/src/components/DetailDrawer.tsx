@@ -975,8 +975,9 @@ export const DetailDrawer = memo(function DetailDrawer({
                         key={message.id}
                         message={message}
                         verbosity={outputVerbosity}
-                        recentExpanded={recentExpansion.expandedId === message.id}
+                        recentExpanded={recentExpansion.isExpanded(message.id)}
                         onToggleRecent={recentExpansion.toggle}
+                        onExpandRecent={recentExpansion.expand}
                         registerRef={registerMessageRef}
                       />
                     ))}
@@ -2004,12 +2005,14 @@ export const MessageBubble = memo(function MessageBubble({
   verbosity = 'none',
   recentExpanded = false,
   onToggleRecent,
+  onExpandRecent,
   registerRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
   recentExpanded?: boolean
   onToggleRecent?: (id: string) => void
+  onExpandRecent?: (id: string) => void
   registerRef?: MessageRefCallback
 }) {
   const rootRef = useCallback((node: HTMLElement | null) => {
@@ -2017,7 +2020,7 @@ export const MessageBubble = memo(function MessageBubble({
   }, [message.id, registerRef])
 
   if (message.role === 'tool-group') {
-    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} rootRef={rootRef} />
+    return <ToolGroupBubble message={message} verbosity={verbosity} recentExpanded={recentExpanded} onToggleRecent={onToggleRecent} onExpandRecent={onExpandRecent} rootRef={rootRef} />
   }
 
   if (message.role === 'compaction') {
@@ -2156,6 +2159,7 @@ export const MessageBubble = memo(function MessageBubble({
   prev.verbosity === next.verbosity &&
   prev.recentExpanded === next.recentExpanded &&
   prev.onToggleRecent === next.onToggleRecent &&
+  prev.onExpandRecent === next.onExpandRecent &&
   prev.registerRef === next.registerRef
 )
 
@@ -2249,12 +2253,14 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   verbosity = 'none',
   recentExpanded = false,
   onToggleRecent,
+  onExpandRecent,
   rootRef
 }: {
   message: Message
   verbosity?: OutputVerbosity
   recentExpanded?: boolean
   onToggleRecent?: (id: string) => void
+  onExpandRecent?: (id: string) => void
   rootRef?: (node: HTMLElement | null) => void
 }) {
   const toolCalls = message.toolCalls ?? []
@@ -2328,7 +2334,7 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
       {isExpanded && (
         <div className="mt-2 flex min-w-0 flex-col gap-1.5 rounded-lg border border-kumo-line bg-kumo-overlay p-2">
           {toolCalls.map((tool) => {
-            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.expandedId === tool.id
+            const toolExpanded = verbosity !== 'recent' || recentToolExpansion.isExpanded(tool.id)
             const inputSummary = summarizeToolInput(tool.name, tool.input)
             const header = (
               <ToolCallHeader
@@ -2344,7 +2350,10 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
                   <button
                     type="button"
                     aria-expanded={toolExpanded}
-                    onClick={() => recentToolExpansion.toggle(tool.id)}
+                    onClick={() => {
+                      if (!toolExpanded) onExpandRecent?.(message.id)
+                      recentToolExpansion.toggle(tool.id)
+                    }}
                     className="w-full min-w-0 rounded-md px-3 py-2.5 text-left hover:bg-kumo-fill/40 transition-colors"
                     title={inputSummary}
                   >
@@ -2388,7 +2397,8 @@ export const ToolGroupBubble = memo(function ToolGroupBubble({
   prev.message.toolCalls === next.message.toolCalls &&
   prev.verbosity === next.verbosity &&
   prev.recentExpanded === next.recentExpanded &&
-  prev.onToggleRecent === next.onToggleRecent
+  prev.onToggleRecent === next.onToggleRecent &&
+  prev.onExpandRecent === next.onExpandRecent
 )
 
 /**
