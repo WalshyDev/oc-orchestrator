@@ -870,7 +870,7 @@ export function FleetTable({
             {activeColumns.map((col) => (
               <col key={col.key} style={{ width: col.width }} />
             ))}
-            <col style={{ width: 140 }} />
+            <col style={{ width: 160 }} />
             <col style={{ width: 40 }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
