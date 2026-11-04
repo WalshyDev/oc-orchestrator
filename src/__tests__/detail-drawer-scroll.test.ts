@@ -64,13 +64,26 @@ it('follows a rolling window of collapsed tools until the user scrolls away', as
     expect(scrollTop).toBe(1600)
     expect(host.textContent).not.toContain('Jump to latest')
 
+    scrollTop = 1590
+    await act(async () => {
+      scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: -10 }))
+      messages = [...messages, toolMessage(111)]
+      root.render(createElement(DetailDrawer, { agent, messages, onClose: () => {} }))
+    })
+    expect(scrollTop).toBe(1590)
+    await act(async () => flushFrames())
+    scrollTop -= 10
+    messages = [...messages, toolMessage(112)]
+    await render()
+    expect(scrollTop).toBe(1580)
+
     scrollTop = 900
     await act(async () => {
-      scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: -700 }))
+      scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: -680 }))
       flushFrames()
     })
     scrollTop -= 67
-    messages = [...messages, toolMessage(111)]
+    messages = [...messages, toolMessage(113)]
     await render()
     expect(scrollTop).toBe(833)
     const jump = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Jump to latest'))!
@@ -79,7 +92,7 @@ it('follows a rolling window of collapsed tools until the user scrolls away', as
     await act(async () => jump.click())
     expect(scrollTop).toBe(1600)
     scrollTop -= 67
-    messages = [...messages, toolMessage(112)]
+    messages = [...messages, toolMessage(114)]
     await render()
     expect(scrollTop).toBe(1600)
     expect(host.textContent).not.toContain('Jump to latest')
