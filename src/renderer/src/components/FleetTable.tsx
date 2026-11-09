@@ -2008,6 +2008,11 @@ function FolderRowGroup({
         </tr>
       )}
       {children}
+      {expanded && childCount > 0 && (
+        <tr aria-hidden="true">
+          <td colSpan={colSpan} className="h-1.5 p-0 border-t-2 border-kumo-subtle/40 bg-kumo-fill/40" />
+        </tr>
+      )}
     </>
   )
 }
