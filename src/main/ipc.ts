@@ -1,7 +1,7 @@
 import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
 import os from 'os'
-import { agentController, type AgentHandle } from './services/agent-controller'
+import { agentController, LaunchRetryableError, type AgentHandle } from './services/agent-controller'
 import { runtimeManager } from './services/runtime-manager'
 import { workspaceManager, FileWriteConflictError } from './services/workspace-manager'
 import { database } from './services/database'
@@ -124,11 +124,12 @@ export function registerIpcHandlers(): void {
       const handle = await agentController.launchAgent(options)
       return {
         ok: true,
-        data: toAgentPayload(handle)
+        data: toAgentPayload(handle),
+        initialPromptError: handle.initialPromptError
       }
     } catch (error) {
       logIpcError('agent:launch', error)
-      return { ok: false, error: String(error) }
+      return { ok: false, error: String(error), retryable: error instanceof LaunchRetryableError }
     }
   })
 
@@ -460,7 +461,7 @@ export function registerIpcHandlers(): void {
       }
     } catch (error) {
       logIpcError('session:import', error)
-      return { ok: false, error: String(error) }
+      return { ok: false, error: String(error), retryable: error instanceof LaunchRetryableError }
     }
   })
 
@@ -661,7 +662,7 @@ export function registerIpcHandlers(): void {
     taskSlug: string
   }) => {
     try {
-      const result = workspaceManager.createWorktree(options.repoRoot, options.projectSlug, options.taskSlug)
+      const result = await workspaceManager.createWorktree(options.repoRoot, options.projectSlug, options.taskSlug)
       return { ok: true, data: result }
     } catch (error) {
       logIpcError('workspace:create', error)
@@ -676,7 +677,7 @@ export function registerIpcHandlers(): void {
     baseRef?: string
   }) => {
     try {
-      const result = workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug, options.baseRef)
+      const result = await workspaceManager.createFreshWorktree(options.repoRoot, options.projectSlug, options.taskSlug, options.baseRef)
       return { ok: true, data: result }
     } catch (error) {
       logIpcError('workspace:create-fresh', error)
@@ -686,7 +687,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('workspace:default-branch', async (_event, repoRoot: string) => {
     try {
-      const branch = workspaceManager.getDefaultBranch(repoRoot)
+      const branch = await workspaceManager.getDefaultBranch(repoRoot)
       return { ok: true, data: branch }
     } catch (error) {
       logIpcError('workspace:default-branch', error)

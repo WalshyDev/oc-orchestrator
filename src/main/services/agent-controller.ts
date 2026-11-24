@@ -9,6 +9,27 @@ import { workspaceManager } from './workspace-manager'
 import { leaseRegistry } from './lease-registry'
 import { getForkedTitle } from '../../shared/project'
 import type { SessionListPage } from '../../shared/session-browser'
+import { runOpenCodeStep } from './opencode-compat'
+
+export class LaunchRetryableError extends Error {}
+
+class LaunchSessionUnconfirmedError extends Error {
+  constructor(detail: string) {
+    super(`${detail}. OpenCode may have created the session. Check the Session Browser before launching again.`)
+  }
+}
+
+async function createLaunchSession(client: OpencodeClient, directory: string, title: string) {
+  const result = await runOpenCodeStep('OpenCode agent session creation', 30_000,
+    (options) => client.session.create({ directory, title }, { ...options, throwOnError: false })
+  ).catch((error) => {
+    throw new LaunchSessionUnconfirmedError(error instanceof Error ? error.message : String(error))
+  })
+  if (result.data) return result.data
+  const status = result.response?.status
+  if (status === 400) throw new LaunchRetryableError('OpenCode rejected the session creation request (HTTP 400)')
+  throw new LaunchSessionUnconfirmedError(`Could not confirm OpenCode session creation${status ? ` (HTTP ${status})` : ''}`)
+}
 
 interface Attachment {
   id?: string
@@ -373,29 +394,19 @@ class AgentController {
     /** Renderer-generated correlation id. Echoed back on `agent:launched` so the
      *  renderer can retire the optimistic placeholder row it created up front. */
     launchId?: string
-  }): Promise<AgentHandle> {
+  }): Promise<AgentHandle & { initialPromptError?: string }> {
     const { directory, prompt, title, model, modelVariant, attachments, launchId } = options
 
     // Ensure we have a runtime for this directory
-    const runtime = await this.ensureBridgeForDirectory(directory)
+    const { runtime, directoryContext } = await this.prepareLaunch(directory)
     const client = runtime.client
-    const directoryContext = workspaceManager.getDirectoryContext(directory)
-    runtimeManager.touchRuntimeActivity(runtime.id)
 
     // Derive a session title
     const projectSlug = directory.split('/').pop() ?? 'project'
     const sessionTitle = title ?? (prompt ? prompt.slice(0, 80) : `${projectSlug}-${this.nextId}`)
 
     // Create a new session
-    const sessionResult = await client.session.create({
-      directory,
-      title: sessionTitle
-    })
-
-    const session = sessionResult.data
-    if (!session) {
-      throw new Error('Failed to create session')
-    }
+    const session = await createLaunchSession(client, directory, sessionTitle)
 
     const agentId = `agent-${this.nextId++}`
     const modelOverride = model && model !== 'auto'
@@ -446,18 +457,22 @@ class AgentController {
       launchId
     })
 
-    // Only send the initial prompt if one was provided
-    if (prompt && prompt.trim()) {
+    if (prompt?.trim() || attachments?.length) {
       // Re-establish the SSE stream in case the server disposed between
       // session.create and now, so response events aren't lost.
-      await handle.bridge?.ensureStreaming()
-      await client.session.promptAsync({
-        sessionID: session.id,
-        directory,
-        parts: buildMessageParts(prompt, attachments),
-        ...(handle.modelOverride && { model: handle.modelOverride }),
-        ...(handle.variantOverride && { variant: handle.variantOverride })
-      })
+      try {
+        await handle.bridge?.ensureStreaming()
+        await runOpenCodeStep('OpenCode initial prompt submission', 30_000, (options) => client.session.promptAsync({
+          sessionID: session.id,
+          directory,
+          parts: buildMessageParts(prompt ?? '', attachments),
+          ...(handle.modelOverride && { model: handle.modelOverride }),
+          ...(handle.variantOverride && { variant: handle.variantOverride })
+        }, options))
+      } catch (error) {
+        console.error(`[AgentController] Initial prompt failed for ${session.id}:`, error)
+        return { ...handle, initialPromptError: String(error) }
+      }
     }
 
     console.log(`[AgentController] Launched agent ${agentId} (session ${session.id}) in ${directory}`)
@@ -582,14 +597,14 @@ class AgentController {
     runtimeManager.touchRuntimeActivity(runtime.id)
 
     await handle.bridge?.ensureStreaming()
-    await runtime.client.session.promptAsync({
+    await runOpenCodeStep('OpenCode prompt submission', 30_000, (options) => runtime.client.session.promptAsync({
       sessionID: handle.sessionId,
       directory: handle.directory,
       parts: buildMessageParts(text, attachments),
       ...(agent ? { agent } : {}),
       ...(handle.modelOverride && { model: handle.modelOverride }),
       ...(handle.variantOverride && { variant: handle.variantOverride })
-    })
+    }, options))
   }
 
   /**
@@ -1615,10 +1630,8 @@ class AgentController {
 
     // Target runtime hosts the new session. Source runtime only reads the
     // transcript. It may be the same runtime, but we do not rely on that.
-    const targetRuntime = await this.ensureBridgeForDirectory(targetDirectory)
+    const { runtime: targetRuntime, directoryContext } = await this.prepareLaunch(targetDirectory)
     const targetClient = targetRuntime.client
-    const directoryContext = workspaceManager.getDirectoryContext(targetDirectory)
-    runtimeManager.touchRuntimeActivity(targetRuntime.id)
 
     // Fetch source transcript best effort. If this fails, still create the
     // agent. An empty import is better than stranding a created worktree.
@@ -1645,12 +1658,7 @@ class AgentController {
 
     // The agent lives in this target session, so events arrive on the target
     // runtime's stream.
-    const created = await targetClient.session.create({
-      directory: targetDirectory,
-      title: sessionTitle
-    })
-    const newSession = created.data
-    if (!newSession) throw new Error('Failed to create imported session')
+    const newSession = await createLaunchSession(targetClient, targetDirectory, sessionTitle)
 
     const modelOverride = model && model !== 'auto' ? parseModelString(model) : undefined
     const variantOverride = modelVariant && modelVariant !== 'auto' ? modelVariant : undefined
@@ -1934,6 +1942,16 @@ class AgentController {
     }
 
     return runtime
+  }
+
+  private async prepareLaunch(directory: string) {
+    try {
+      const runtime = await this.ensureBridgeForDirectory(directory)
+      runtimeManager.touchRuntimeActivity(runtime.id)
+      return { runtime, directoryContext: workspaceManager.getDirectoryContext(directory) }
+    } catch (error) {
+      throw Object.assign(new LaunchRetryableError(error instanceof Error ? error.message : String(error)), { cause: error })
+    }
   }
 
   private recordSessionActivity(event: { type: string; properties: unknown }): void {

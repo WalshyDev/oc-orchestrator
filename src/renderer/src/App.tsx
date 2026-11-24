@@ -30,9 +30,22 @@ import {
 import { extractLastAssistantMessage } from './lib/last-message'
 import { getCurrentTaskProgress } from './lib/task-progress'
 import { buildToolGroupMessage } from './lib/transcript-metadata'
+import { OPTIMISTIC_PREFIX } from './lib/optimistic-message'
+import type { MessageAttachment } from './types/api'
 
 const NEW_AGENT_COMMAND = '/new'
 const AGENT_MENTION_REGEX = /@(\w+)/
+
+class UnconfirmedLaunchError extends Error {}
+
+async function requireLaunchSession<T>(request: Promise<{ ok: boolean; data?: T; error?: string; retryable?: boolean; initialPromptError?: string } | undefined>) {
+  const result = await request.catch((error) => {
+    throw new UnconfirmedLaunchError(`Could not confirm session creation: ${String(error)}. Check the Session Browser before launching again.`)
+  })
+  if (result?.ok && result.data) return { data: result.data, initialPromptError: result.initialPromptError }
+  if (result?.retryable) throw new Error(result.error || 'Failed to launch agent')
+  throw new UnconfirmedLaunchError(result?.error || 'Could not confirm session creation. Check the Session Browser before launching again.')
+}
 
 function openDirectoryInEditor(path: string): void {
   const settings = loadSettings()
@@ -99,6 +112,22 @@ export function App() {
   useEffect(() => { selectionEpochRef.current += 1 }, [selectedAgentId])
 
   const [showLaunchModal, setShowLaunchModal] = useState(false)
+  const [launchRetries, setLaunchRetries] = useState(() => new Map<string, () => void>())
+  const [launchDrafts, setLaunchDrafts] = useState(() => new Map<string, { text: string; attachments?: MessageAttachment[]; unconfirmed?: boolean }>())
+  const clearLaunchRecovery = useCallback((launchId: string) => {
+    setLaunchRetries((previous) => {
+      if (!previous.has(launchId)) return previous
+      const next = new Map(previous)
+      next.delete(launchId)
+      return next
+    })
+    setLaunchDrafts((previous) => {
+      if (!previous.has(launchId)) return previous
+      const next = new Map(previous)
+      next.delete(launchId)
+      return next
+    })
+  }, [])
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>('general')
   const [showCommandPalette, setShowCommandPalette] = useState(false)
@@ -557,6 +586,8 @@ export function App() {
       ?? null,
     [displayAgents, liveAgentsAsRuntimes, selectedAgentId]
   )
+  const selectedLaunchId = store.agents.find((agent) => agent.id === selectedAgentId)?.launchId
+  const selectedLaunchDraft = selectedLaunchId ? launchDrafts.get(selectedLaunchId) : undefined
 
   // ── Messages for selected agent ──
   const selectedMessages: Message[] = useMemo(() => {
@@ -877,11 +908,12 @@ export function App() {
     }
 
     storeRemoveAgent(agentId)
+    clearLaunchRecovery(liveAgent.launchId ?? agentId)
 
     if (selectedAgentId === agentId) {
       setSelectedAgentId(null)
     }
-  }, [findLiveAgent, selectedAgentId, storeRemoveAgent])
+  }, [findLiveAgent, selectedAgentId, storeRemoveAgent, clearLaunchRecovery])
 
   // ── Built-in command handlers ──
   const handleBuiltInCommand = useCallback(async (agentId: string, commandName: string, commandArgs: string): Promise<boolean> => {
@@ -1182,6 +1214,7 @@ Then give me a brief summary of what the previous session was working on and whe
    */
   const runLaunch = useCallback(async (
     launchId: string,
+    workspace: { directory?: string },
     directory: string,
     prompt?: string,
     title?: string,
@@ -1194,7 +1227,7 @@ Then give me a brief summary of what the previous session was working on and whe
     labelIds?: string[],
     prUrl?: string
   ) => {
-    let launchDirectory = directory
+    let launchDirectory = workspace.directory ?? directory
     // Auto-selecting the new agent is only welcome if the user hasn't moved on
     // while the launch ran.
     const epochAtStart = selectionEpochRef.current
@@ -1202,7 +1235,17 @@ Then give me a brief summary of what the previous session was working on and whe
       if (selectionEpochRef.current === epochAtStart) setSelectedAgentId(agentId)
     }
 
-    if (worktreeStrategy === 'new-worktree') {
+    const sendInitialPrompt = async (agentId: string, send: () => Promise<{ ok: boolean; error?: string } | undefined>) => {
+      try {
+        const result = await send()
+        if (!result?.ok) throw new Error(result?.error || 'Could not confirm prompt submission')
+      } catch (error) {
+        console.error('[App] Initial prompt failed for', agentId, error)
+        store.failInitialPrompt(agentId, String(error))
+      }
+    }
+
+    if (worktreeStrategy === 'new-worktree' && !workspace.directory) {
       const repoRootResult = await window.api.getRepoRoot(directory)
       if (!repoRootResult.ok || !repoRootResult.data) {
         throw new Error(repoRootResult.error || 'Failed to resolve repo root')
@@ -1231,8 +1274,9 @@ Then give me a brief summary of what the previous session was working on and whe
       }
 
       launchDirectory = worktreeResult.data.worktreePath
+      workspace.directory = launchDirectory
       // The worktree exists but no agent owns it yet. Record it so dismissing a
-      // failed launch takes the directory with it.
+      // confirmed failed launch takes the directory with it.
       store.noteLaunchWorktree(launchId, repoRootResult.data, launchDirectory)
     }
 
@@ -1241,7 +1285,7 @@ Then give me a brief summary of what the previous session was working on and whe
     // a target directory (the new session would inherit the source's cwd and
     // its events would never reach our renderer), so we replay instead.
     if (importSession) {
-      const importResult = await window.api.importSession({
+      const importResult = await requireLaunchSession(window.api.importSession({
         sourceSessionId: importSession.sessionId,
         sourceDirectory: importSession.sourceDirectory,
         targetDirectory: launchDirectory,
@@ -1249,11 +1293,7 @@ Then give me a brief summary of what the previous session was working on and whe
         model: model && model !== 'auto' ? model : undefined,
         modelVariant: modelVariant || undefined,
         launchId
-      })
-
-      if (!importResult?.ok || !importResult.data) {
-        throw new Error(importResult?.error || 'Failed to import session')
-      }
+      }))
 
       const agentId = importResult.data.id
       store.reconcileLaunch({ ...importResult.data, launchId })
@@ -1268,8 +1308,7 @@ Then give me a brief summary of what the previous session was working on and whe
       }
 
       if (prompt?.trim() || attachments?.length) {
-        try { await store.sendMessage(agentId, prompt?.trim() ?? '', undefined, attachments) }
-        catch (error) { console.error('[App] Post-import prompt failed:', error) }
+        await sendInitialPrompt(agentId, () => store.sendMessage(agentId, prompt?.trim() ?? '', undefined, attachments))
       }
 
       return
@@ -1286,18 +1325,10 @@ Then give me a brief summary of what the previous session was working on and whe
     // If the prompt needs special handling, launch without it — the
     // runtime must exist before we can route commands or agent mentions.
     const launchPrompt = needsPostLaunchHandling ? undefined : (prompt || undefined)
-    const result = await store.launchAgent(launchDirectory, launchPrompt, title, model, modelVariant, attachments, launchId)
-
-    if (!result?.ok) {
-      throw new Error(result?.error || 'Failed to launch agent')
-    }
-
-    if (!result.data) {
-      // Nothing to reconcile the placeholder against — drop it rather than
-      // leaving a row stuck at 'starting' forever.
-      store.discardLaunch(launchId)
-      return
-    }
+    const result = await requireLaunchSession(store.launchAgent(
+      launchDirectory, launchPrompt, title, model, modelVariant,
+      needsPostLaunchHandling ? undefined : attachments, launchId
+    ))
 
     const agentId = (result.data as { id: string }).id
     selectNewAgent(agentId)
@@ -1311,14 +1342,14 @@ Then give me a brief summary of what the previous session was working on and whe
       store.setAgentModel(agentId, model, modelVariant)
     }
 
+    if (result.initialPromptError) store.failInitialPrompt(agentId, result.initialPromptError)
+
     if (!needsPostLaunchHandling || !trimmedPrompt) return
 
     // Handle @agent mentions and /commands that were deferred from launch.
     // Only custom runtime commands apply — built-in drawer commands
     // (/new, /compact, /share, etc.) don't apply at launch time.
-    // Wrapped in try/catch so a failure here doesn't make the already-
-    // successful launch appear failed (which would keep the modal open).
-    try {
+    await sendInitialPrompt(agentId, async () => {
       if (isSlashCommand) {
         const spaceIndex = trimmedPrompt.indexOf(' ')
         const commandName = spaceIndex === -1 ? trimmedPrompt.slice(1) : trimmedPrompt.slice(1, spaceIndex)
@@ -1327,24 +1358,20 @@ Then give me a brief summary of what the previous session was working on and whe
         const runtimeCommands = await store.listCommands(agentId)
         const customCommand = runtimeCommands?.find((cmd: { name: string }) => cmd.name === commandName)
         if (customCommand) {
-          await store.executeCommand(agentId, commandName, commandArgs, customCommand.model)
-        } else {
-          await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
+          return store.executeCommand(agentId, commandName, commandArgs, customCommand.model)
         }
+        return store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
       } else if (leadingAgentMatch) {
         const mentionedAgent = leadingAgentMatch[1]
         const configs = await store.listAgentConfigs(agentId)
         const isKnownAgent = configs?.some((cfg: { name: string }) => cfg.name === mentionedAgent)
         if (isKnownAgent) {
           const cleanText = trimmedPrompt.slice(leadingAgentMatch[0].length).trim()
-          await store.sendMessage(agentId, cleanText || trimmedPrompt, mentionedAgent, attachments)
-        } else {
-          await store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
+          return store.sendMessage(agentId, cleanText || trimmedPrompt, mentionedAgent, attachments)
         }
+        return store.sendMessage(agentId, trimmedPrompt, undefined, attachments)
       }
-    } catch (error) {
-      console.error('[App] Post-launch command/agent handling failed:', error)
-    }
+    })
   }, [store])
 
   /**
@@ -1374,14 +1401,54 @@ Then give me a brief summary of what the previous session was working on and whe
       title: title || (importSession?.sessionTitle ? getForkedTitle(importSession.sessionTitle) : undefined)
     })
 
-    void runLaunch(
-      launchId, directory, prompt, title, model, modelVariant, worktreeStrategy,
-      attachments, freshWorktreeConfig, importSession, labelIds, prUrl
-    ).catch((error) => {
-      console.error('[App] Launch failed:', error)
-      store.failLaunch(launchId, error instanceof Error ? error.message : String(error))
-    })
+    if (prompt?.trim() || attachments?.length) {
+      setLaunchDrafts((previous) => new Map(previous).set(launchId, { text: prompt ?? '', attachments }))
+    }
+    const workspace: { directory?: string } = {}
+    const run = () => {
+      void runLaunch(
+        launchId, workspace, directory, prompt, title, model, modelVariant, worktreeStrategy,
+        attachments, freshWorktreeConfig, importSession, labelIds, prUrl
+      ).catch((error) => {
+        console.error('[App] Launch failed:', error)
+        const unconfirmed = error instanceof UnconfirmedLaunchError
+        const message = error instanceof Error ? error.message : String(error)
+        const placeholderFailed = store.failLaunch(launchId, message, unconfirmed)
+        if (unconfirmed) {
+          setLaunchDrafts((previous) => {
+            const draft = previous.get(launchId)
+            return draft ? new Map(previous).set(launchId, { ...draft, unconfirmed: true }) : previous
+          })
+        } else if (placeholderFailed) {
+          setLaunchRetries((previous) => new Map(previous).set(launchId, () => {
+            if (!store.restartLaunch(launchId)) return
+            setLaunchRetries((retries) => {
+              const next = new Map(retries)
+              next.delete(launchId)
+              return next
+            })
+            run()
+          }))
+        }
+      })
+    }
+    run()
   }, [store, runLaunch])
+
+  const { agents: liveAgents } = store
+  useEffect(() => {
+    for (const agent of liveAgents) {
+      if (!agent.launchId) continue
+      const draft = launchDrafts.get(agent.launchId)
+      if (!draft) continue
+      const confirmed = getMessagesForSession(agent.sessionId).some((message) => {
+        if (message.role !== 'user' || message.id.startsWith(OPTIMISTIC_PREFIX)) return false
+        const parts = message.parts.filter((part) => !part.synthetic && !part.id.startsWith(OPTIMISTIC_PREFIX))
+        return parts.length > 0 && parts.filter((part) => part.type === 'file').length >= (draft.attachments?.length ?? 0)
+      })
+      if (confirmed) clearLaunchRecovery(agent.launchId)
+    }
+  }, [liveAgents, getMessagesForSession, launchDrafts, clearLaunchRecovery])
 
   const handleQuickLaunch = useCallback(async () => {
     if (quickLaunching) return
@@ -1693,6 +1760,7 @@ Then give me a brief summary of what the previous session was working on and whe
           onStop={handleRowStop}
           onOpen={handleRowOpen}
           onRemove={handleRemoveAgent}
+          launchRetries={launchRetries}
           onRename={storeRenameAgent}
           onOpenTerminal={handleOpenTerminal}
           onOpenInEditor={handleOpenInEditorForAgent}
@@ -1740,6 +1808,7 @@ Then give me a brief summary of what the previous session was working on and whe
           scrollRequest={drawerScrollRequest}
           onClose={handleCloseDrawer}
           onSendMessage={handleSendMessage}
+          initialPromptDraft={selectedAgent.lastError || selectedLaunchDraft?.unconfirmed ? selectedLaunchDraft : undefined}
           onApprove={selectedPermission ? handleDrawerApprove : undefined}
           onApproveAlways={selectedPermission ? handleDrawerApproveAlways : undefined}
           onDeny={selectedPermission ? handleDrawerDeny : undefined}

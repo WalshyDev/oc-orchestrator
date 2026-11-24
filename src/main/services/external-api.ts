@@ -426,7 +426,8 @@ async function handleLaunch(
     directory: canonicalRoot,
     folderId: folderManager.getAgentFolder(agentId)?.id ?? null,
     leaseId: lease.id,
-    leaseExpiresAt: lease.expiresAt
+    leaseExpiresAt: lease.expiresAt,
+    ...('initialPromptError' in handle && { initialPromptError: handle.initialPromptError })
   })
 }
 

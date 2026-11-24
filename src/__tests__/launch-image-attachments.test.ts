@@ -7,7 +7,14 @@ import { App } from '../renderer/src/App'
 import { createDemoApi } from '../renderer/src/demoApi'
 
 vi.mock('../renderer/src/components/WorkspaceView', () => ({ WorkspaceView: () => null }))
-vi.mock('../renderer/src/components/DetailDrawer', () => ({ DetailDrawer: () => null }))
+vi.mock('../renderer/src/components/DetailDrawer', () => ({
+  DetailDrawer: ({ agent, onSendMessage, initialPromptDraft }: import('react').ComponentProps<typeof import('../renderer/src/components/DetailDrawer').DetailDrawer>) =>
+    createElement('section', { 'data-testid': 'drawer', 'data-agent': agent.id },
+      createElement('button', { onClick: () => onSendMessage?.('Still here') }, 'Send from drawer'),
+      initialPromptDraft?.text,
+      initialPromptDraft?.attachments?.map((attachment) => attachment.filename)
+    )
+}))
 vi.mock('../renderer/src/hooks/useModelOptions', async (importOriginal) => {
   const original = await importOriginal<typeof import('../renderer/src/hooks/useModelOptions')>()
   return {
@@ -70,6 +77,19 @@ async function selectSession(title = 'Session A') {
   await act(async () => entry.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
 }
 
+async function launchNewAgentWithDraft() {
+  await clickButton('Launch Agent')
+  await settle(550)
+  await pasteScreenshot()
+  const textarea = document.querySelector('textarea')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Check this screenshot')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  const buttons = Array.from(document.querySelectorAll('button')).filter((button) => button.textContent?.trim() === 'Launch Agent')
+  await act(async () => buttons.at(-1)!.click())
+}
+
 async function pasteScreenshot(deferDecode = false) {
   const textarea = document.querySelector('textarea')!
   const event = new Event('paste', { bubbles: true, cancelable: true })
@@ -103,6 +123,57 @@ async function renderModal() {
 }
 
 describe('launch prompt screenshot attachments', () => {
+  it('keeps the fleet usable during workspace startup and recovers the draft on either side of session creation', async () => {
+    const existingSession = { id: 'existing-agent', runtimeId: 'runtime', sessionId: 'existing-session', directory: '/tmp/repo', title: 'Existing conversation', prompt: '' }
+    window.api.listAgents = vi.fn().mockResolvedValue({ ok: true, data: [existingSession] })
+    let finishWorktree!: (value: { ok: true; data: { worktreePath: string; branchName: string } }) => void
+    window.api.createWorktree = vi.fn(() => new Promise((resolve) => { finishWorktree = resolve }))
+    let finishRuntime!: (value: { ok: false; error: string; retryable: true }) => void
+    const launch = vi.fn<typeof window.api.launchAgent>()
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRuntime = resolve }))
+      .mockResolvedValueOnce({
+        ok: true, initialPromptError: 'Lost the prompt response', data: {
+          ...existingSession, id: 'new-agent', sessionId: 'new-session', directory: '/tmp/slow-worktree',
+          title: 'Check this screenshot', prompt: 'Check this screenshot'
+        }
+      })
+    window.api.launchAgent = launch
+    await act(async () => root.render(createElement(App)))
+    await launchNewAgentWithDraft()
+    expect(window.api.createWorktree).toHaveBeenCalledTimes(1)
+    expect(launch).not.toHaveBeenCalled()
+
+    const existing = Array.from(document.querySelectorAll('tr')).find((row) => row.textContent?.includes('Existing conversation'))!
+    await act(async () => existing.click())
+    await clickButton('Send from drawer')
+    expect(window.api.sendMessage).toHaveBeenCalledWith('existing-agent', 'Still here', undefined, undefined)
+
+    await act(async () => finishWorktree({ ok: true, data: { worktreePath: '/tmp/slow-worktree', branchName: 'worktree' } }))
+    expect(document.querySelector('[data-testid="drawer"]')?.getAttribute('data-agent')).toBe('existing-agent')
+    await clickButton('Send from drawer')
+    expect(window.api.sendMessage).toHaveBeenCalledTimes(2)
+    await act(async () => finishRuntime({ ok: false, error: 'Workspace initialization timed out', retryable: true }))
+    expect(document.body.textContent).toContain('Workspace initialization timed out')
+
+    await clickButton('Retry launch')
+    expect(launch).toHaveBeenCalledTimes(2)
+    expect(launch.mock.calls[1]).toEqual(launch.mock.calls[0])
+    expect(window.api.createWorktree).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-testid="drawer"]')?.getAttribute('data-agent')).toBe('new-agent')
+    expect(document.querySelector('[data-testid="drawer"]')?.textContent).toContain('Check this screenshotScreenshot.png')
+    expect(window.api.sendMessage).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).not.toContain('Retry launch')
+  })
+
+  it('does not offer a launch retry when the session creation outcome is unknown', async () => {
+    window.api.launchAgent = vi.fn().mockRejectedValue(new Error('IPC connection lost'))
+    await act(async () => root.render(createElement(App)))
+    await launchNewAgentWithDraft()
+    expect(document.body.textContent).toContain('Check the Session Browser')
+    expect(document.body.textContent).not.toContain('Retry launch')
+    expect(window.api.launchAgent).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['', 'Check this screenshot'])('forwards import screenshots with prompt %j', async (prompt) => {
     const onLaunch = await renderModal()
     await selectSession()

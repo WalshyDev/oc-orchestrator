@@ -315,7 +315,7 @@ describe('AgentController.executeCommand', () => {
       sessionID: 'default-model-session',
       model: { providerID: 'opencode', modelID: 'luna' },
       variant: 'max',
-    }))
+    }), expect.objectContaining({ signal: expect.any(AbortSignal), throwOnError: true }))
   })
 
   it('launches a selected model without updating the shared directory config', async () => {
@@ -332,6 +332,38 @@ describe('AgentController.executeCommand', () => {
       variantOverride: 'high',
     }))
     expect(mocks.configUpdate).not.toHaveBeenCalled()
+  })
+
+  it('returns the created session when initial prompt delivery cannot be confirmed', async () => {
+    mocks.sessionPromptAsync.mockRejectedValueOnce(new Error('Connection closed'))
+    const handle = await agentController.launchAgent({ directory: '/tmp/project', prompt: 'Keep this draft' })
+
+    expect(mocks.sessionCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledTimes(1)
+    expect(handle.initialPromptError).toContain('Connection closed')
+    expect(agentController.getAgent(handle.id)?.sessionId).toBe(handle.sessionId)
+    expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
+      id: handle.id, sessionId: handle.sessionId, prompt: 'Keep this draft'
+    }))
+  })
+
+  it('bounds prompt submission without resending after the deadline', async () => {
+    vi.useFakeTimers()
+    mocks.sessionPromptAsync.mockImplementationOnce((_params, { signal }: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason))
+    }))
+    const send = agentController.sendMessage('agent-1', 'Keep this draft').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(await send).toMatchObject({ message: 'OpenCode prompt submission timed out after 30s' })
+    expect(mocks.sessionPromptAsync).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not submit a prompt when session creation cannot be confirmed', async () => {
+    mocks.sessionCreate.mockRejectedValueOnce(new Error('Connection closed'))
+    await expect(agentController.launchAgent({ directory: '/tmp/project', prompt: 'Keep this draft' }))
+      .rejects.toThrow('OpenCode may have created the session')
+    expect(mocks.sessionCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.sessionPromptAsync).not.toHaveBeenCalled()
   })
 
   it('includes selected model and effort in an imported session launch event', async () => {
@@ -428,7 +460,7 @@ describe('AgentController.executeCommand', () => {
       sessionID: 'attached-client-session',
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variant: 'high',
-    }))
+    }), expect.anything())
     expect(agentController.getAgent('agent-4')).toMatchObject({
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variantOverride: 'high',
@@ -466,7 +498,7 @@ describe('AgentController.executeCommand', () => {
       sessionID: 'max-effort-session',
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variant: 'max',
-    }))
+    }), expect.anything())
     expect(agentController.getAgent('agent-5')).toMatchObject({
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variantOverride: 'max',
@@ -511,7 +543,7 @@ describe('AgentController.executeCommand', () => {
       sessionID: 'command-model-session',
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variant: 'max',
-    }))
+    }), expect.anything())
     expect(agentController.getAgent('agent-6')).toMatchObject({
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
       variantOverride: 'max',
@@ -554,7 +586,7 @@ describe('AgentController.executeCommand', () => {
     expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionID: sessionId,
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
-    }))
+    }), expect.anything())
     expect(mocks.sendToRenderer).not.toHaveBeenCalledWith('agent:model-changed', expect.anything())
 
     mocks.sessionStatus.mockResolvedValueOnce({ data: { [sessionId]: { type: 'busy' } } })
@@ -672,7 +704,7 @@ describe('AgentController.executeCommand', () => {
     expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionID: 'historical-session',
       model: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
-    }))
+    }), expect.anything())
     expect(mocks.sendToRenderer).toHaveBeenCalledWith('agent:launched', expect.objectContaining({
       sessionId: 'historical-session',
       modelOverride: { providerID: 'openai', modelID: 'gpt-5.6-sol' },
@@ -820,7 +852,7 @@ describe('AgentController.executeCommand', () => {
     expect(mocks.sessionPromptAsync).toHaveBeenCalledOnce()
     expect(mocks.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       parts: [{ type: 'text', text: 'Real user prompt' }],
-    }))
+    }), expect.anything())
   })
 
   it('cancels recovery while checking session status', async () => {

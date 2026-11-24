@@ -193,6 +193,7 @@ interface DetailDrawerProps {
   scrollRequest?: { target: 'last-user-message' | 'last-assistant-message' | 'bottom'; seq: number } | null
   onClose: () => void
   onSendMessage?: (text: string, attachments?: Array<{ mime: string; dataUrl: string; filename?: string }>) => void
+  initialPromptDraft?: { text: string; attachments?: Array<{ id?: string; mime: string; dataUrl: string; filename?: string }> }
   onApprove?: () => void
   onApproveAlways?: () => void
   onDeny?: () => void
@@ -245,6 +246,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   scrollRequest,
   onClose,
   onSendMessage,
+  initialPromptDraft,
   onApprove,
   onApproveAlways,
   onDeny,
@@ -356,7 +358,7 @@ export const DetailDrawer = memo(function DetailDrawer({
   }, [agent.id])
   const {
     attachments, isDragOver, fileInputRef,
-    removeAttachment, clearAttachments,
+    removeAttachment, clearAttachments, restoreAttachments,
     handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop, handleFileInputChange
   } = useImageAttachments()
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
@@ -1162,6 +1164,23 @@ export const DetailDrawer = memo(function DetailDrawer({
           onStartFreshSession={onStartFreshSession}
           onDismissError={onDismissError}
         />
+        {initialPromptDraft && (
+          <div className="flex items-center gap-2 px-3 py-2 text-xs text-kumo-subtle">
+            <button
+              type="button"
+              disabled={!!inputText || attachments.length > 0}
+              className="underline disabled:opacity-50"
+              onClick={() => {
+                setInputText(initialPromptDraft.text)
+                restoreAttachments(initialPromptDraft.attachments ?? [])
+                textareaRef.current?.focus()
+              }}
+            >
+              Restore initial prompt
+            </button>
+            <span>Check the transcript before sending again. OpenCode may have received the original prompt.</span>
+          </div>
+        )}
 
         {/* Input row: text input left, action buttons + send right */}
         <div

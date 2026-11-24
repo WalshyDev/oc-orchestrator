@@ -1,10 +1,24 @@
-import { execSync, execFileSync, exec } from 'child_process'
+import { execSync, execFileSync, exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+const WORKTREE_GIT_TIMEOUT_MS = 120_000
+
+async function runWorkspaceGit(cwd: string, args: string[], step: string, timeout = WORKTREE_GIT_TIMEOUT_MS): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf-8', timeout })
+    return stdout.trim()
+  } catch (error) {
+    if (error instanceof Error && 'killed' in error && error.killed) {
+      throw Object.assign(new Error(`${step} timed out after ${timeout / 1000}s`), { cause: error })
+    }
+    throw error
+  }
+}
 
 export interface WorktreeInfo {
   worktreePath: string
@@ -134,6 +148,13 @@ function validateGitRef(ref: string): string {
  */
 class WorkspaceManager {
   private claimedWorktrees = new Set<string>()
+  private pendingFetches = new Map<string, Promise<void>>()
+  private lastWorktreeTimestamp = 0
+
+  private nextWorktreeTimestamp(): number {
+    this.lastWorktreeTimestamp = Math.max(Date.now(), this.lastWorktreeTimestamp + 1)
+    return this.lastWorktreeTimestamp
+  }
 
   /**
    * Returns the managed root directory for worktrees.
@@ -153,8 +174,8 @@ class WorkspaceManager {
    * The worktree gets its own branch based on HEAD so the agent
    * can work independently.
    */
-  createWorktree(repoRoot: string, projectSlug: string, taskSlug: string): WorktreeInfo {
-    const timestamp = Date.now()
+  async createWorktree(repoRoot: string, projectSlug: string, taskSlug: string): Promise<WorktreeInfo> {
+    const timestamp = this.nextWorktreeTimestamp()
     const safeProjSlug = projectSlug.slice(0, 50)
     const safeTaskSlug = taskSlug.slice(0, 50)
     const branchName = `${safeProjSlug}/${safeTaskSlug}-${timestamp}`
@@ -170,11 +191,7 @@ class WorkspaceManager {
 
       console.log(`[WorkspaceManager] Creating worktree at ${worktreePath} on branch ${branchName}`)
 
-      execSync(`git worktree add -b "${branchName}" "${worktreePath}" HEAD`, {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      })
+      await runWorkspaceGit(repoRoot, ['worktree', 'add', '-b', branchName, worktreePath, 'HEAD'], 'Git worktree checkout')
 
       console.log(`[WorkspaceManager] Worktree created successfully`)
 
@@ -192,12 +209,23 @@ class WorkspaceManager {
    * `jcabot/AAA-810` vs `jcabot/aaa-810`).  On failure, strips the
    * conflicting entries from packed-refs and retries once.
    */
-  private fetchOriginWithPrune(cwd: string): void {
-    const gitOpts = { cwd, encoding: 'utf-8' as const, stdio: 'pipe' as const }
+  private async fetchOriginWithPrune(cwd: string): Promise<void> {
+    const existing = this.pendingFetches.get(cwd)
+    if (existing) return existing
+    const fetch = this.fetchAndRepairOrigin(cwd)
+    this.pendingFetches.set(cwd, fetch)
+    try {
+      await fetch
+    } finally {
+      this.pendingFetches.delete(cwd)
+    }
+  }
+
+  private async fetchAndRepairOrigin(cwd: string): Promise<void> {
     const fetchArgs = ['fetch', 'origin', '--prune']
 
     try {
-      execFileSync('git', fetchArgs, gitOpts)
+      await runWorkspaceGit(cwd, fetchArgs, 'Git fetch origin')
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       if (!msg.includes('cannot lock ref')) {
@@ -205,16 +233,14 @@ class WorkspaceManager {
       }
 
       console.warn('[WorkspaceManager] Ref lock conflict during fetch --prune, repairing packed-refs')
-      this.repairPackedRefs(cwd, msg)
+      await this.repairPackedRefs(cwd, msg)
 
-      execFileSync('git', fetchArgs, gitOpts)
+      await runWorkspaceGit(cwd, fetchArgs, 'Git fetch origin after ref repair')
     }
   }
 
-  private repairPackedRefs(cwd: string, errorMessage: string): void {
-    const gitDir = execFileSync('git', ['rev-parse', '--git-dir'], {
-      cwd, encoding: 'utf-8', stdio: 'pipe'
-    }).trim()
+  private async repairPackedRefs(cwd: string, errorMessage: string): Promise<void> {
+    const gitDir = await runWorkspaceGit(cwd, ['rev-parse', '--git-dir'], 'Git directory lookup')
     const packedRefsPath = path.resolve(cwd, gitDir, 'packed-refs')
 
     const refMatch = errorMessage.match(/cannot lock ref '([^']+)'/)
@@ -241,8 +267,8 @@ class WorkspaceManager {
    * Fetches first, then resolves the base ref — so the branch name is always
    * up-to-date even when origin/HEAD has changed.
    */
-  createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string, explicitBaseRef?: string): FreshWorktreeInfo {
-    const timestamp = Date.now()
+  async createFreshWorktree(repoRoot: string, projectSlug: string, taskSlug: string, explicitBaseRef?: string): Promise<FreshWorktreeInfo> {
+    const timestamp = this.nextWorktreeTimestamp()
     const safeProjSlug = projectSlug.slice(0, 50)
     const safeTaskSlug = taskSlug.slice(0, 50)
     const branchName = `${safeProjSlug}/${safeTaskSlug}-${timestamp}`
@@ -255,20 +281,16 @@ class WorkspaceManager {
         fs.mkdirSync(parentDir, { recursive: true })
       }
 
-      this.fetchOriginWithPrune(repoRoot)
+      await this.fetchOriginWithPrune(repoRoot)
 
       // Resolve after fetch so origin/HEAD reflects the latest remote state
       const baseRef = explicitBaseRef
         ? validateGitRef(explicitBaseRef)
-        : this.getDefaultBranch(repoRoot)
+        : await this.getDefaultBranch(repoRoot)
 
       console.log(`[WorkspaceManager] Creating fresh worktree at ${worktreePath} from ${baseRef}`)
 
-      execFileSync('git', ['worktree', 'add', '-b', branchName, worktreePath, baseRef], {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      })
+      await runWorkspaceGit(repoRoot, ['worktree', 'add', '-b', branchName, worktreePath, baseRef], 'Git worktree checkout')
 
       console.log('[WorkspaceManager] Fresh worktree created successfully')
 
@@ -476,9 +498,9 @@ class WorkspaceManager {
   async resetToDefaultBranch(directory: string, projectSlug: string, taskSlug: string): Promise<string> {
     const repoRoot = await this.getCommonRepoRoot(directory)
 
-    this.fetchOriginWithPrune(directory)
+    await this.fetchOriginWithPrune(directory)
 
-    const baseRef = this.getDefaultBranch(repoRoot)
+    const baseRef = await this.getDefaultBranch(repoRoot)
     const timestamp = Date.now()
     const safeProjSlug = projectSlug.slice(0, 50)
     const safeTaskSlug = taskSlug.slice(0, 50)
@@ -500,13 +522,10 @@ class WorkspaceManager {
     return branchName
   }
 
-  getDefaultBranch(repoRoot: string): string {
-    const gitOpts = { cwd: repoRoot, encoding: 'utf-8' as const, stdio: 'pipe' as const }
-
-    const readOriginHead = (): string | null => {
+  async getDefaultBranch(repoRoot: string): Promise<string> {
+    const readOriginHead = async (): Promise<string | null> => {
       try {
-        return execSync('git symbolic-ref refs/remotes/origin/HEAD', gitOpts)
-          .trim()
+        return (await runWorkspaceGit(repoRoot, ['symbolic-ref', 'refs/remotes/origin/HEAD'], 'Git default branch lookup'))
           .replace('refs/remotes/', '')
       } catch {
         return null
@@ -514,13 +533,13 @@ class WorkspaceManager {
     }
 
     // Fast path: local symbolic-ref already cached
-    const cached = readOriginHead()
+    const cached = await readOriginHead()
     if (cached) return cached
 
     // Query the remote and cache locally
     try {
-      execSync('git remote set-head origin --auto', { ...gitOpts, timeout: 10_000 })
-      const resolved = readOriginHead()
+      await runWorkspaceGit(repoRoot, ['remote', 'set-head', 'origin', '--auto'], 'Git remote default branch lookup', 10_000)
+      const resolved = await readOriginHead()
       if (resolved) return resolved
     } catch {
       // Network unavailable or remote doesn't support it
@@ -529,7 +548,7 @@ class WorkspaceManager {
     // Last resort: probe for common branch names
     for (const name of ['main', 'master', 'staging', 'develop']) {
       try {
-        execSync(`git rev-parse --verify origin/${name}`, gitOpts)
+        await runWorkspaceGit(repoRoot, ['rev-parse', '--verify', `origin/${name}`], 'Git default branch fallback')
         return `origin/${name}`
       } catch {
         continue

@@ -126,6 +126,11 @@ export function useImageAttachments() {
     setAttachments([])
   }, [])
 
+  const restoreAttachments = useCallback((restored: MessageAttachment[]) => {
+    generationRef.current++
+    setAttachments(restored.map((attachment) => ({ ...attachment, id: attachment.id ?? generateAttachmentId() })))
+  }, [])
+
   const handlePaste = useCallback((event: React.ClipboardEvent) => {
     const items = event.clipboardData?.items
     if (!items) return
@@ -189,6 +194,7 @@ export function useImageAttachments() {
     fileInputRef,
     removeAttachment,
     clearAttachments,
+    restoreAttachments,
     handlePaste,
     handleDragOver,
     handleDragEnter,
