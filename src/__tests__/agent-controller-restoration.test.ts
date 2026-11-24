@@ -109,10 +109,20 @@ describe('AgentController restoration', () => {
 
     const recovered = runtimeFor('runtime-2', '/tmp/broken')
     mocks.ensureRuntime.mockResolvedValue(recovered)
-    await agentController.getMessages('agent-2')
+    recovered.client.session.messages.mockImplementationOnce((_params, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason))))
+    vi.useFakeTimers()
+    try {
+      const messages = agentController.getMessages('agent-2').catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(await messages).toMatchObject({ message: 'OpenCode transcript read timed out after 30s' })
+      mocks.getRuntime.mockReturnValue(recovered)
+      await expect(agentController.getMessages('agent-2')).resolves.toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
 
     expect(agentController.getAgent('agent-2')?.runtimeId).toBe('runtime-2')
-    expect(recovered.client.session.messages).toHaveBeenCalled()
   })
 
   it('keeps the whole fleet when every runtime fails to start', async () => {

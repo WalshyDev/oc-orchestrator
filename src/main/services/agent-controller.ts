@@ -1294,13 +1294,12 @@ class AgentController {
     const handle = this.agents.get(agentId)
     if (!handle) throw new Error(`Agent ${agentId} not found`)
 
+    const { sessionId, directory } = handle
     const runtime = await this.ensureRuntimeForAgent(handle)
     runtimeManager.touchRuntimeActivity(runtime.id)
 
-    const result = await runtime.client.session.messages({
-      sessionID: handle.sessionId,
-      directory: handle.directory
-    })
+    const result = await runOpenCodeStep('OpenCode transcript read', 30_000,
+      (options) => runtime.client.session.messages({ sessionID: sessionId, directory }, options))
 
     return result.data
   }
