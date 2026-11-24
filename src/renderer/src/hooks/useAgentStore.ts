@@ -116,6 +116,15 @@ interface HistoricalSessionMessage {
   parts: HistoricalMessagePart[]
 }
 
+interface HistoryReadOptions {
+  limit?: number
+  transcriptOnly?: boolean
+}
+
+interface HistoryRead extends HistoryReadOptions {
+  promise: Promise<boolean | undefined>
+}
+
 type ChildSessionInfo = ChildSessionDescriptor
 
 interface HydratedChildSession {
@@ -615,6 +624,7 @@ const childSessions = new Map<string, ChildSessionInfo>()
 const childHydrationRetryAgents = new Set<string>()
 const todoEventRevisions = new Map<string, number>()
 const todoFetchGenerations = new Map<string, number>()
+const historyReads = new Map<string, HistoryRead>()
 
 const listeners = new Set<() => void>()
 
@@ -1050,24 +1060,30 @@ function inferFileAction(before: string | undefined, after: string | undefined):
 
 // ── Optimistic User Messages ──
 
+const savedPromptPlaceholders = new WeakSet<LiveMessage>()
+
 function injectOptimisticUserMessage(
   sessionId: string,
   text: string,
   modelId?: string,
   attachments?: MessageAttachment[]
-): void {
+): LiveMessage | null {
   const message = createOptimisticUserMessage(sessionId, text, attachments, modelId)
-  if (!message) return
+  if (!message) return null
 
   const messages = state.messages.get(sessionId) ?? []
   messages.push(message)
   state.messages.set(sessionId, messages)
+  return message
 }
 
-function removeOptimisticUserMessages(sessionId: string): void {
+function removeOptimisticUserMessages(
+  sessionId: string,
+  canRemove: (message: LiveMessage) => boolean = () => true
+): void {
   const messages = state.messages.get(sessionId)
   if (!messages) return
-  state.messages.set(sessionId, messages.filter((msg) => !msg.id.startsWith(OPTIMISTIC_PREFIX)))
+  state.messages.set(sessionId, messages.filter((msg) => !msg.id.startsWith(OPTIMISTIC_PREFIX) || !canRemove(msg)))
 }
 
 /**
@@ -1150,7 +1166,14 @@ function upsertMessagePart(message: LiveMessage, nextPart: LiveMessagePart): voi
     return
   }
 
-  message.parts.push(nextPart)
+  if (message.role === 'user' && nextPart.type === 'text' && nextPart.text) {
+    const optimisticIndex = message.parts.findIndex((part) => part.type === 'text' && part.id.startsWith(OPTIMISTIC_PREFIX))
+    if (optimisticIndex >= 0) {
+      message.parts[optimisticIndex] = nextPart
+      return
+    }
+  }
+  if (!replaceNextOptimisticUserFilePart(message, nextPart)) message.parts.push(nextPart)
 }
 
 function mapHistoricalPart(part: HistoricalMessagePart): LiveMessagePart {
@@ -1242,13 +1265,13 @@ function computeContextTokens(tokens: {
   return sum > 0 ? sum : undefined
 }
 
-function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
+function hydrateHistoricalMessages(entries: unknown, { limit, transcriptOnly }: HistoryReadOptions = {}): void {
   if (!Array.isArray(entries)) return
 
   const history = entries as HistoricalSessionMessage[]
   const subAgentAssistantIds = identifySubAgentMessages(history)
   const typed = limit ? history.slice(-limit) : history
-  const optimisticsCleaned = new Set<string>()
+  const latestUserAt = new Map<string, number>()
 
   // Track the last assistant entry per session so we can lift a persisted
   // error (e.g. ContextOverflowError) onto the agent after hydration. This
@@ -1260,10 +1283,9 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
   for (const entry of typed) {
     if (!entry?.info?.id || !entry.info.sessionID || !Array.isArray(entry.parts)) continue
 
-    // Real messages replace optimistic placeholders (once per session)
-    if (entry.info.role === 'user' && !optimisticsCleaned.has(entry.info.sessionID)) {
-      optimisticsCleaned.add(entry.info.sessionID)
-      removeOptimisticUserMessages(entry.info.sessionID)
+    if (entry.info.role === 'user') {
+      const sessionId = entry.info.sessionID
+      latestUserAt.set(sessionId, Math.max(latestUserAt.get(sessionId) ?? -Infinity, entry.info.time?.created ?? -Infinity))
     }
 
     const createdAt = getMessageCreatedAt(entry.info)
@@ -1298,7 +1320,7 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
 
     associateKnownChildren(entry.info.sessionID)
 
-    if (!agent) continue
+    if (!agent || transcriptOnly) continue
 
     agent.lastActivityAt = Math.max(agent.lastActivityAt, createdAt)
 
@@ -1354,6 +1376,10 @@ function hydrateHistoricalMessages(entries: unknown, limit?: number): void {
         lastAssistantBySession.set(entry.info.sessionID, entry.info)
       }
     }
+  }
+
+  for (const [sessionId, createdAt] of latestUserAt) {
+    removeOptimisticUserMessages(sessionId, (msg) => savedPromptPlaceholders.has(msg) || msg.createdAt <= createdAt)
   }
 
   // Surface persisted errors on the most recent assistant message as the
@@ -1423,9 +1449,10 @@ function applyChildSessionHydration(result: unknown, parentAgentId: string): voi
 }
 
 async function refetchChildSessions(agentId: string): Promise<void> {
-  if (!window.api) return
+  const sessionId = state.agents.get(agentId)?.sessionId
+  if (!sessionId || !window.api) return
   const result = await window.api.getChildSessions(agentId)
-  if (!result.ok || !result.data) return
+  if (state.agents.get(agentId)?.sessionId !== sessionId || !result.ok || !result.data) return
   applyChildSessionHydration(result.data, agentId)
 }
 
@@ -2392,6 +2419,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const agent = findAgentBySession(sessionId)
       console.log('[session.compacted] received', { sessionId, agentId: agent?.id })
       if (agent) {
+        historyReads.delete(sessionId)
         state.messages.delete(sessionId)
         agent.lastActivityAt = Date.now()
         // Compaction resolves ContextOverflowError — the context window now
@@ -2411,6 +2439,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       // Remove it from local state so the UI stays in sync.
       const sessionId = props.sessionID as string
       const messageId = props.messageID as string
+      historyReads.delete(sessionId)
       const messages = state.messages.get(sessionId)
       if (messages) {
         const index = messages.findIndex((msg) => msg.id === messageId)
@@ -2428,6 +2457,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
       const sessionId = props.sessionID as string
       const messageId = props.messageID as string
       const partId = props.partID as string
+      historyReads.delete(sessionId)
       const messages = state.messages.get(sessionId)
       if (messages) {
         const message = messages.find((msg) => msg.id === messageId)
@@ -2492,6 +2522,7 @@ function processEvent(payload: OpenCodeEventPayload): void {
           if (permission.agentId === agent.id || permission.sessionId === sessionId) state.permissions.delete(permissionId)
         }
 
+        historyReads.delete(sessionId)
         state.messages.delete(sessionId)
         state.todos.delete(sessionId)
         todoEventRevisions.delete(sessionId)
@@ -2709,15 +2740,7 @@ function handleAgentLaunched(payload: AgentLaunchedPayload): void {
   if (window.api) {
     // Fetch historical messages so resumed sessions aren't blank.
     // Fire-and-forget — the initial upsert already emitted.
-    void window.api.getMessages(payload.id).then((result) => {
-      if (!result.ok || !result.data) return
-      const entries = result.data as HistoricalSessionMessage[]
-      console.debug(`[handleAgentLaunched:hydrate] id=${payload.id} session=${payload.sessionId.slice(-8)} historicalMsgs=${entries?.length ?? 0} currentStoreMsgs=${state.messages.get(payload.sessionId)?.length ?? 0}`)
-      if (!Array.isArray(entries) || entries.length === 0) return
-      hydrateHistoricalMessages(entries, RESUME_MESSAGE_LIMIT)
-      console.debug(`[handleAgentLaunched:hydrate] after hydration storeMsgs=${state.messages.get(payload.sessionId)?.length ?? 0} parts=${state.messages.get(payload.sessionId)?.map(m => `${m.role}:${m.parts.length}`).join(',')}`)
-      emit({ messages: true })
-    })
+    void hydrateSessionMessages(payload.id, { limit: RESUME_MESSAGE_LIMIT })
     void refetchTodos(payload.id).then((changed) => {
       if (changed) emit({ todos: true })
     })
@@ -2751,6 +2774,7 @@ function handleSessionReset(payload: { id: string; sessionId: string; oldSession
   if (!agent) return
 
   // Clear old session data
+  historyReads.delete(agent.sessionId)
   state.messages.delete(agent.sessionId)
   state.todos.delete(agent.sessionId)
   todoEventRevisions.delete(agent.sessionId)
@@ -2821,6 +2845,7 @@ function removeAgentState(agentId: string): void {
   clearChildSessionsForAgent(agentId)
   providerDataByAgent.delete(agentId)
   state.agents.delete(agentId)
+  historyReads.delete(agent.sessionId)
   state.messages.delete(agent.sessionId)
   state.todos.delete(agent.sessionId)
   todoEventRevisions.delete(agent.sessionId)
@@ -2926,7 +2951,8 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
   if (!state.eventLog.has(payload.sessionId)) state.eventLog.set(payload.sessionId, [])
 
   if (hasPrompt && !existingAgent) {
-    injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
+    const placeholder = injectOptimisticUserMessage(payload.sessionId, payload.prompt, agent.configuredModelPath)
+    if (placeholder) savedPromptPlaceholders.add(placeholder)
   }
 }
 
@@ -3688,23 +3714,44 @@ function waitForAgentSettled(agentId: string, timeoutMs: number): Promise<void> 
   })
 }
 
+function hydrateSessionMessages(agentId: string, options: HistoryReadOptions = {}): Promise<boolean | undefined> {
+  const agent = getMutableAgent(agentId)
+  if (!agent || !window.api) return Promise.resolve(undefined)
+  const { sessionId } = agent
+
+  const pending = historyReads.get(sessionId)
+  if (pending) {
+    if (options.limit === undefined) pending.limit = undefined
+    if (!options.transcriptOnly) pending.transcriptOnly = false
+    return pending.promise
+  }
+
+  const read: HistoryRead = {
+    ...options,
+    promise: Promise.resolve().then(async () => {
+      const result = await window.api.getMessages(agentId).catch(() => undefined)
+      if (historyReads.get(sessionId) !== read || state.agents.get(agentId)?.sessionId !== sessionId) return
+      if (!result?.ok || !Array.isArray(result.data)) return false
+      if (result.data.length > 0) {
+        hydrateHistoricalMessages(result.data, read)
+        emit({ agents: !read.transcriptOnly, messages: true })
+      }
+      return true
+    }).finally(() => {
+      if (historyReads.get(sessionId) === read) historyReads.delete(sessionId)
+    })
+  }
+  historyReads.set(sessionId, read)
+  return read.promise
+}
+
 /**
  * Re-fetch the session transcript from the server after compaction, since
  * compaction prunes messages server-side and our local cache needs to be
  * replaced with the post-compaction state.
  */
 async function refetchSessionMessages(agentId: string): Promise<void> {
-  const agent = state.agents.get(agentId)
-  if (!agent || !window.api) return
-
-  const result = await window.api.getMessages(agentId)
-  if (result.ok && result.data) {
-    const entries = result.data as HistoricalSessionMessage[]
-    if (Array.isArray(entries) && entries.length > 0) {
-      hydrateHistoricalMessages(entries)
-      emit({ messages: true })
-    }
-  }
+  if (await hydrateSessionMessages(agentId) === undefined) return
   await refetchChildSessions(agentId)
   emit({ messages: true })
 }
@@ -3816,7 +3863,7 @@ function extractToolCallsFromMessages(messages: LiveMessage[]): ToolCallInfo[] {
 
 // ── Public Hook ──
 
-export function useAgentStore() {
+export function useAgentStore(selectedAgentId: string | null = null) {
   const storeState = useSyncExternalStore(subscribe, getSnapshot)
 
   // Set up event listeners on mount.
@@ -3877,26 +3924,22 @@ export function useAgentStore() {
 
         const hydrationResults = await Promise.all(
           agentsResult.data.map(async (agent) => {
-            const [messages, todosChanged, children, config, providers] = await Promise.all([
-              window.api.getMessages(agent.id),
+            const [, todosChanged, children, config, providers] = await Promise.all([
+              hydrateSessionMessages(agent.id),
               refetchTodos(agent.id),
               window.api.getChildSessions(agent.id),
               window.api.getConfig(agent.id),
               window.api.getProviders(agent.id)
             ])
-            return { agentId: agent.id, messages, todosChanged, children, config, providers }
+            return { agentId: agent.id, todosChanged, children, config, providers }
           })
         )
 
         if (cancelled) return
 
-        for (const { agentId, messages, todosChanged, children, config, providers } of hydrationResults) {
+        for (const { agentId, todosChanged, children, config, providers } of hydrationResults) {
           if (providers.ok && providers.data) {
             providerDataByAgent.set(agentId, providers.data as ProviderData)
-          }
-          if (messages.ok) {
-            hydrateHistoricalMessages(messages.data)
-            shouldEmit = true
           }
           if (todosChanged) shouldEmit = true
           if (children.ok) {
@@ -4183,6 +4226,40 @@ export function useAgentStore() {
       for (const cleanup of cleanups) cleanup()
     }
   }, [])
+
+  const selectedAgent = selectedAgentId ? storeState.agents.get(selectedAgentId) : undefined
+  const selectedSessionId = selectedAgent?.pending ? undefined : selectedAgent?.sessionId
+  useEffect(() => {
+    if (!selectedAgentId || !selectedSessionId || !window.api) return
+
+    let cancelled = false
+    let refreshing = false
+    const isCurrent = () => !cancelled && state.agents.get(selectedAgentId)?.sessionId === selectedSessionId
+    const refresh = async (): Promise<void> => {
+      if (refreshing || !isCurrent()) return
+      refreshing = true
+      try {
+        if (await hydrateSessionMessages(selectedAgentId, { transcriptOnly: true }) === false && isCurrent()) {
+          await new Promise((resolve) => setTimeout(resolve, 1_000))
+          if (isCurrent()) await hydrateSessionMessages(selectedAgentId, { transcriptOnly: true })
+        }
+      } finally {
+        refreshing = false
+      }
+    }
+
+    window.addEventListener('focus', refresh)
+    const unsubscribe = window.api.onEventReconnected(({ runtimeId }) => {
+      if (state.agents.get(selectedAgentId)?.runtimeId === runtimeId) void refresh()
+    })
+    void refresh()
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', refresh)
+      unsubscribe()
+    }
+  }, [selectedAgentId, selectedSessionId])
 
   // Stabilize array references: only create new arrays when the underlying Map
   // contents actually change. Without this, every SSE event creates new arrays →

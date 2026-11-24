@@ -181,7 +181,7 @@ export function App() {
     })
   }, [])
 
-  const store = useAgentStore()
+  const store = useAgentStore(selectedAgentId)
   const { allLabels, createLabel, deleteLabel } = useCustomLabels()
 
   // Destructure stable callbacks (all use useCallback(fn, [])) to avoid
