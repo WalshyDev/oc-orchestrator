@@ -25,7 +25,7 @@ export interface MessageAttachment {
 }
 
 export interface OrchestratorApi {
-  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: MessageAttachment[]; launchId?: string }) => Promise<IpcResult>
+  launchAgent: (options: { directory: string; prompt?: string; title?: string; model?: string; modelVariant?: string; attachments?: MessageAttachment[]; launchId?: string }) => Promise<IpcResult & { retryable?: boolean; initialPromptError?: string }>
   sendMessage: (agentId: string, text: string, agent?: string, attachments?: MessageAttachment[]) => Promise<IpcResult>
   respondToPermission: (agentId: string, permissionId: string, response: 'once' | 'always' | 'reject') => Promise<IpcResult>
   abortAgent: (agentId: string) => Promise<IpcResult>
@@ -59,7 +59,7 @@ export interface OrchestratorApi {
     model?: string
     modelVariant?: string
     launchId?: string
-  }) => Promise<IpcResult<{ id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string }>>
+  }) => Promise<IpcResult<{ id: string; runtimeId: string; sessionId: string; directory: string; projectName: string; branchName: string; isWorktree: boolean; workspaceName: string; prompt: string; title: string }> & { retryable?: boolean }>
   resumeAgent: (options: { directory: string; sessionId: string; title?: string }) => Promise<IpcResult>
   listAgents: () => Promise<IpcResult<ListAgentsPayload>>
   isAgentsRestored: () => Promise<IpcResult<boolean>>

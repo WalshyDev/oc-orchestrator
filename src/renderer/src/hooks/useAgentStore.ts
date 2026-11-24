@@ -216,6 +216,7 @@ export interface LiveAgent {
    *  handleAgentLaunched once the real agent arrives, or flipped to 'errored'
    *  in place if the launch fails. */
   pending?: boolean
+  launchId?: string
   /** Worktree created for a placeholder before the launch reached main. If the
    *  launch then fails, no agent will ever own this directory, so dismissing the
    *  row has to clean it up. */
@@ -2655,13 +2656,14 @@ function notePlaceholderWorktree(launchId: string, repoRoot: string, worktreePat
  * Keeps a failed placeholder on screen as an errored row so the user sees why
  * the launch never produced an agent, rather than the row silently vanishing.
  */
-function failPlaceholderAgent(launchId: string, message: string): void {
-  advanceLaunch(launchId, { type: 'failed' })
+function failPlaceholderAgent(launchId: string, message: string, unconfirmed?: boolean): boolean {
+  advanceLaunch(launchId, { type: unconfirmed ? 'unconfirmed' : 'failed' })
 
   const agent = state.agents.get(launchId)
-  if (!agent?.pending) return
+  if (!agent?.pending) return false
   applyLaunchFailure(agent, message)
   emit({ agents: true })
+  return true
 }
 
 function handleAgentLaunched(payload: AgentLaunchedPayload): void {
@@ -2882,6 +2884,7 @@ function upsertAgent(payload: AgentLaunchedPayload, initialStatus?: AgentStatus)
 
   const agent: LiveAgent = {
     id: payload.id,
+    launchId: payload.launchId ?? existingAgent?.launchId,
     runtimeId: payload.runtimeId,
     sessionId: payload.sessionId,
     directory: payload.directory,
@@ -4208,8 +4211,28 @@ export function useAgentStore() {
     return createPlaceholderAgent(options)
   }, [])
 
-  const failLaunch = useCallback((launchId: string, message: string) => {
-    failPlaceholderAgent(launchId, message)
+  const failLaunch = useCallback((launchId: string, message: string, unconfirmed?: boolean) => {
+    return failPlaceholderAgent(launchId, message, unconfirmed)
+  }, [])
+
+  const restartLaunch = useCallback((launchId: string) => {
+    const agent = state.agents.get(launchId)
+    if (!agent?.pending || agent.status !== 'errored') return false
+    advanceLaunch(launchId, { type: 'retried' })
+    agent.status = 'starting'
+    agent.taskSummary = 'Starting agent...'
+    agent.lastError = undefined
+    emit({ agents: true })
+    return true
+  }, [])
+
+  const failInitialPrompt = useCallback((agentId: string, message: string) => {
+    const agent = state.agents.get(agentId)
+    if (!agent) return
+    removeOptimisticUserMessages(agent.sessionId)
+    agent.lastError = { name: 'InitialPromptError', message, sessionId: agent.sessionId, occurredAt: Date.now() }
+    if (agent.status === 'running' || agent.status === 'idle') agent.status = 'errored'
+    emit({ agents: true, messages: true })
   }, [])
 
   const discardLaunch = useCallback((launchId: string) => {
@@ -4849,6 +4872,8 @@ export function useAgentStore() {
     launchAgent,
     beginLaunch,
     failLaunch,
+    restartLaunch,
+    failInitialPrompt,
     discardLaunch,
     noteLaunchWorktree,
     reconcileLaunch,
@@ -4881,7 +4906,7 @@ export function useAgentStore() {
     hydrateFileChangesFromGit
   }), [
     agents, permissions, questions, storeState.healthy, storeState.initializing,
-    launchAgent, beginLaunch, failLaunch, discardLaunch, noteLaunchWorktree, reconcileLaunch,
+    launchAgent, beginLaunch, failLaunch, restartLaunch, failInitialPrompt, discardLaunch, noteLaunchWorktree, reconcileLaunch,
     sendMessage, listCommands, listAgentConfigs,
     executeCommand, prepareFreshAgent, resetSession,
     respondToPermission, replyToQuestion, rejectQuestion,

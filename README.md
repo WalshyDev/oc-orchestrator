@@ -177,7 +177,7 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | `GET` | `/health` | — | `{ ok, version, pid }` |
-| `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume?, folderId? }` | `{ agentId, sessionId, runtimeUrl, directory, folderId, leaseId, leaseExpiresAt }` |
+| `POST` | `/sessions` | `{ dir, prompt?, model?, title?, resume?, folderId? }` | `{ agentId, sessionId, runtimeUrl, directory, folderId, leaseId, leaseExpiresAt, initialPromptError? }` |
 | `GET` | `/sessions` | — | `{ sessions: [{ agentId, sessionId, directory, title, folderId }] }` |
 | `GET` | `/folders` | — | `{ folders: [{ id, name, sortOrder }] }` |
 | `POST` | `/folders` | `{ name }` | `{ id, name, sortOrder }` (201) |
@@ -193,6 +193,8 @@ Every request except `GET /health` requires `Authorization: Bearer <token>` wher
 | `DELETE` | `/leases/:leaseId` | — | `{ ok }` |
 
 `POST /sessions` requires `dir` to be a git repository — non-git paths are rejected with `400 not_a_git_repo`. The directory is normalized to its canonical repo root before any agent or project work happens, and that canonical root is what gets returned in the response (and is what you should pass to `opencode attach --dir`).
+
+Check `initialPromptError` even when `POST /sessions` succeeds. If present, the session was created but OCO couldn't confirm the initial prompt submission. Attach to the returned session and check its transcript before sending the prompt again. Creating another session or automatically resending may duplicate work.
 
 `resume` is mutually exclusive with `prompt` and `model`; combining them returns `400 bad_request`. To resume and then send a message, call `POST /sessions { dir, resume }` followed by `POST /sessions/:sessionId/prompt { text }`.
 

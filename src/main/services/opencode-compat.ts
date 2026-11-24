@@ -3,9 +3,30 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
+import { setTimeout as delay } from 'node:timers/promises'
 
 const runFile = promisify(execFile)
 const PROBE_TEXT = 'OCO message persistence check'
+const WORKSPACE_BOOTSTRAP_TIMEOUT_MS = 120_000
+const SQLITE_BUSY = 5
+
+export async function runOpenCodeStep<T>(
+  step: string,
+  timeout: number,
+  run: (options: { signal: AbortSignal; throwOnError: true }) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController()
+  const { signal } = controller
+  const timer = setTimeout(() => controller.abort(), timeout)
+  try {
+    return await run({ signal, throwOnError: true })
+  } catch (error) {
+    if (signal.aborted) throw Object.assign(new Error(`${step} timed out after ${timeout / 1000}s`), { cause: error })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 export function createCompatTransport(onError: (sessionID: string, error: unknown) => void): {
   fetch: typeof fetch
@@ -42,13 +63,11 @@ export function createCompatTransport(onError: (sessionID: string, error: unknow
 }
 
 export async function readRuntimeHealth(serverUrl: string): Promise<string> {
-  const response = await fetch(`${serverUrl}/global/health`, {
-    signal: AbortSignal.timeout(5_000)
+  const health: unknown = await runOpenCodeStep('OpenCode runtime health check', 5_000, async ({ signal }) => {
+    const response = await fetch(`${serverUrl}/global/health`, { signal })
+    if (!response.ok) throw new Error(`OpenCode health check returned status ${response.status}`)
+    return response.json()
   })
-  if (!response.ok) {
-    throw new Error(`OpenCode health check returned status ${response.status}`)
-  }
-  const health: unknown = await response.json()
   if (
     !health ||
     typeof health !== 'object' ||
@@ -64,11 +83,8 @@ export async function readRuntimeHealth(serverUrl: string): Promise<string> {
 }
 
 export async function hasMessagePersistence(client: OpencodeClient): Promise<boolean> {
-  const options = () => ({
-    throwOnError: true as const,
-    signal: AbortSignal.timeout(15_000)
-  })
-  const session = await client.session.create({ title: 'OCO compatibility check' }, options())
+  const session = await runOpenCodeStep('OpenCode workspace initialization (compatibility session creation)', WORKSPACE_BOOTSTRAP_TIMEOUT_MS,
+    (options) => client.session.create({ title: 'OCO compatibility check' }, options))
   if (!session.data) {
     throw new Error('OpenCode did not create the compatibility check session')
   }
@@ -77,19 +93,20 @@ export async function hasMessagePersistence(client: OpencodeClient): Promise<boo
   let probeFailure: { error: unknown } | undefined
   try {
     // noReply stores a user message without contacting a model
-    const prompt = await client.session.prompt(
+    const prompt = await runOpenCodeStep('OpenCode compatibility prompt', 15_000, (options) => client.session.prompt(
       {
         sessionID,
         noReply: true,
         parts: [{ type: 'text', text: PROBE_TEXT }]
       },
-      options()
-    )
+      options
+    ))
     const sent = prompt.data?.parts.find((part) => part.type === 'text')
     if (!sent || sent.type !== 'text') {
       throw new Error('OpenCode did not return the compatibility check message part')
     }
-    const messages = await client.session.messages({ sessionID }, options())
+    const messages = await runOpenCodeStep('OpenCode compatibility history read', 15_000,
+      (options) => client.session.messages({ sessionID }, options))
     persisted = !!messages.data?.some((message) =>
       message.parts.some((part) => part.id === sent.id && part.type === 'text' && part.text === sent.text)
     )
@@ -97,10 +114,11 @@ export async function hasMessagePersistence(client: OpencodeClient): Promise<boo
     probeFailure = { error }
   }
   try {
-    await client.session.delete({ sessionID }, options())
+    await runOpenCodeStep('OpenCode compatibility cleanup', 15_000,
+      (options) => client.session.delete({ sessionID }, options))
   } catch (error) {
     if (probeFailure) {
-      throw Object.assign(new Error('OpenCode compatibility check and cleanup failed'), {
+      throw Object.assign(new Error(`OpenCode compatibility check and cleanup failed: ${String(probeFailure.error)}; ${String(error)}`), {
         errors: [probeFailure.error, error],
         cause: probeFailure.error
       })
@@ -135,7 +153,8 @@ export async function installMessagePersistenceCompat(
   command: string,
   env: NodeJS.ProcessEnv
 ): Promise<string> {
-  const { stdout } = await runFile(command, ['db', 'path'], { env, timeout: 15_000 })
+  const { stdout } = await runOpenCodeStep('OpenCode compatibility database path lookup', 15_000,
+    ({ signal }) => runFile(command, ['db', 'path'], { env, signal }))
   const databasePath = stdout.trim()
   await installPartCompatTrigger(databasePath)
   return databasePath
@@ -147,8 +166,24 @@ export async function installPartCompatTrigger(databasePath: string): Promise<vo
   }
   const { DatabaseSync } = await import('node:sqlite')
   const db = new DatabaseSync(databasePath, { open: true })
+  const execWithLockRetry = async (sql: string) => {
+    const deadline = Date.now() + 5_000
+    let backoff = 50
+    for (;;) {
+      try {
+        db.exec(sql)
+        return
+      } catch (error) {
+        if (!(error instanceof Error) || !('errcode' in error) || error.errcode !== SQLITE_BUSY) throw error
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) throw new Error('OpenCode compatibility database lock timed out after 5s')
+        await delay(Math.min(remaining, backoff + Math.random() * backoff))
+        backoff = Math.min(backoff * 2, 400)
+      }
+    }
+  }
   try {
-    db.exec('PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;')
+    await execWithLockRetry('BEGIN IMMEDIATE;')
     for (const [table, columns] of Object.entries({
       event: ['id', 'aggregate_id', 'seq', 'type', 'data'],
       message: ['id', 'session_id'],
@@ -161,7 +196,7 @@ export async function installPartCompatTrigger(databasePath: string): Promise<vo
     }
     // The trigger stores parts inside OpenCode's transaction, before its next history read
     db.exec(PART_COMPAT_TRIGGER)
-    db.exec('COMMIT;')
+    await execWithLockRetry('COMMIT;')
   } finally {
     db.close()
   }

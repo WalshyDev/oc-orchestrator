@@ -93,6 +93,7 @@ interface FleetTableProps {
   onStop?: (agentId: string) => void
   onOpen?: (agentId: string) => void
   onRemove?: (agentId: string) => void
+  launchRetries?: ReadonlyMap<string, () => void>
   onRename?: (agentId: string, newName: string) => void
   onOpenTerminal?: (agentId: string) => void
   onOpenInEditor?: (agentId: string) => void
@@ -257,6 +258,7 @@ export function FleetTable({
   onStop,
   onOpen,
   onRemove,
+  launchRetries,
   onRename,
   onOpenTerminal,
   onOpenInEditor,
@@ -797,7 +799,6 @@ export function FleetTable({
     // additionally hides the controls that would otherwise render dead. The
     // store refuses pending ids too (getMutableAgent) — that is the real
     // guarantee, and this layer is what keeps the row from looking operable.
-    // Dismiss is the deliberate exception and rides `onRemove`.
     const pending = agent.pending === true
     const noop = (): void => {}
 
@@ -824,6 +825,7 @@ export function FleetTable({
         // the Dismiss link; the row wires Dismiss to onDismiss instead.
         onRemove={onRemove && !pending ? () => onRemove(agent.id) : undefined}
         onDismiss={onRemove && pending ? () => onRemove(agent.id) : undefined}
+        onRetryLaunch={pending && agent.status === 'errored' ? launchRetries?.get(agent.id) : undefined}
         onChangeModel={onChangeModel && !pending ? () => onChangeModel(agent.id) : undefined}
         onToggleLabel={onToggleLabel && !pending ? (labelId: string) => onToggleLabel(agent.id, labelId) : undefined}
         onClearLabels={onClearLabels && !pending ? () => onClearLabels(agent.id) : undefined}
@@ -1306,6 +1308,7 @@ function AgentRow({
   onOpen,
   onRemove,
   onDismiss,
+  onRetryLaunch,
   onChangeModel,
   onToggleLabel,
   onClearLabels,
@@ -1349,6 +1352,7 @@ function AgentRow({
   /** Removal for a pending row. Separate from onRemove so the two never render
    *  side by side as competing labels for the same operation. */
   onDismiss?: () => void
+  onRetryLaunch?: () => void
   onChangeModel?: () => void
   onToggleLabel?: (labelId: string) => void
   onClearLabels?: () => void
@@ -1540,6 +1544,14 @@ function AgentRow({
               <span className="truncate" title={agent.lastError?.message || agent.taskSummary}>
                 {agent.taskSummary}
               </span>
+              {onRetryLaunch && (
+                <button
+                  onClick={(event) => { event.stopPropagation(); onRetryLaunch() }}
+                  className="shrink-0 text-[10px] text-kumo-subtle hover:text-kumo-default underline"
+                >
+                  Retry launch
+                </button>
+              )}
               {onDismiss && (
                 <button
                   onClick={(event) => { event.stopPropagation(); onDismiss() }}

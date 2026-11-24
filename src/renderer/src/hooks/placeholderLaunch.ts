@@ -209,8 +209,10 @@ export type LaunchCleanup =
 
 export type LaunchEvent =
   | { type: 'worktree-created'; worktree: WorktreeRef }
+  | { type: 'retried' }
   | { type: 'dismissed' }
   | { type: 'failed' }
+  | { type: 'unconfirmed' }
   | { type: 'succeeded' }
 
 export type LaunchEffect =
@@ -220,9 +222,9 @@ export type LaunchEffect =
   | { type: 'release-to-main' }
 
 /**
- * Decides who deletes a worktree created for a launch, given that the four
- * things that settle it — the worktree appearing, the user dismissing the row,
- * the launch failing, and the launch succeeding — arrive in any order.
+ * Decides who deletes a worktree created for a launch, given that worktree
+ * creation, dismissal, and confirmed or unconfirmed launch outcomes can
+ * arrive in any order.
  *
  * This lives here as a reducer rather than as branches in the store because the
  * rule is not obvious and has been wrong three times: the dismiss handler can't
@@ -243,6 +245,9 @@ export function advanceLaunchCleanup(
       // Recorded whatever the row is doing, including after a dismissal — this is
       // the ordering that used to strand the directory.
       return { state: { ...state, worktree: event.worktree } }
+
+    case 'retried':
+      return state.phase === 'failed' ? { state: { phase: 'live', worktree: state.worktree } } : { state }
 
     case 'dismissed':
       // A dismissal after the failure is the last word: the launch already
@@ -267,5 +272,9 @@ export function advanceLaunchCleanup(
       return state.phase === 'dismissed'
         ? { state: { phase: 'settled' }, effect: { type: 'release-to-main' } }
         : { state: { phase: 'settled' } }
+
+    case 'unconfirmed':
+      // A session may already own the worktree
+      return { state: { phase: 'settled' } }
   }
 }

@@ -13,6 +13,7 @@ import {
 } from '../main/services/opencode-compat'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -99,6 +100,19 @@ describe('OpenCode compatibility', () => {
       .mockResolvedValueOnce(Response.json([{ parts: [{ id: 'prt_probe', type: 'text', text: 'probe' }] }]))
       .mockRejectedValueOnce(cleanupError)
     await expect(hasMessagePersistence(client)).rejects.toBe(cleanupError)
+  })
+
+  it('allows slow workspace initialization and names the step if its deadline expires', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((request: Request) => new Promise<Response>((_resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason))
+    }))
+    const client = createOpencodeClient({ baseUrl: 'http://localhost:4096', fetch: fetchMock })
+    const probe = hasMessagePersistence(client).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(fetchMock.mock.calls[0][0].signal.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(await probe).toMatchObject({ message: 'OpenCode workspace initialization (compatibility session creation) timed out after 120s' })
   })
 
   it('projects all part types atomically and ignores updates for removed messages', () => {
